@@ -158,6 +158,9 @@ pub(crate) struct Tracker {
     /// The agent reports its own state through worki hooks; output timing is then ignored.
     hooked: bool,
     hook_working: bool,
+    /// The current wait was skipped; repeats of it (e.g. Claude's delayed notification for the
+    /// same prompt) stay hidden until the agent works again or the user types.
+    dismissed: bool,
 }
 
 impl Tracker {
@@ -170,31 +173,45 @@ impl Tracker {
         }
         for signal in signals {
             match signal {
-                Signal::Bell => self.waiting = true,
+                Signal::Bell => self.waiting = !self.dismissed,
                 Signal::Notify(text) => {
-                    self.waiting = true;
-                    self.message = Some(text.clone()).filter(|t| !t.is_empty());
+                    if !self.dismissed {
+                        self.waiting = true;
+                        self.message = Some(text.clone()).filter(|t| !t.is_empty());
+                    }
                 }
                 Signal::HookWorking => {
                     self.hooked = true;
                     self.hook_working = true;
                     self.waiting = false;
+                    self.dismissed = false;
                     self.message = None;
                 }
                 Signal::HookWaiting => {
                     self.hooked = true;
                     self.hook_working = false;
-                    self.waiting = true;
+                    self.waiting = !self.dismissed;
                 }
                 Signal::Usage(_) => {}
             }
         }
     }
 
-    /// Typing answers whatever the agent was waiting for.
-    pub fn on_input(&mut self, now: Instant) {
+    /// Typing answers whatever the agent was waiting for. Input that is only escape sequences
+    /// (focus changes, the terminal's replies to queries, arrow keys) doesn't count.
+    pub fn on_input(&mut self, now: Instant, data: &[u8]) {
         self.last_input = Some(now);
+        if typed(data) {
+            self.waiting = false;
+            self.dismissed = false;
+            self.message = None;
+        }
+    }
+
+    /// The user chose not to answer for now; the agent stays where it is.
+    pub fn dismiss(&mut self) {
         self.waiting = false;
+        self.dismissed = true;
         self.message = None;
     }
 
@@ -218,6 +235,39 @@ impl Tracker {
     pub fn message(&self) -> Option<String> {
         self.message.clone()
     }
+}
+
+/// Whether `data` has anything besides escape sequences (CSI, SS3, OSC/DCS strings).
+fn typed(data: &[u8]) -> bool {
+    let mut i = 0;
+    while i < data.len() {
+        if data[i] != 0x1b {
+            return true;
+        }
+        match data.get(i + 1) {
+            Some(b'[') => {
+                i += 2;
+                while i < data.len() && !(0x40..=0x7e).contains(&data[i]) {
+                    i += 1;
+                }
+                i += 1;
+            }
+            Some(b'O') => i += 3,
+            Some(b']' | b'P' | b'_' | b'^') => {
+                i += 2;
+                while i < data.len()
+                    && data[i] != 0x07
+                    && !(data[i] == 0x1b && data.get(i + 1) == Some(&b'\\'))
+                {
+                    i += 1;
+                }
+                i += if data.get(i) == Some(&0x07) { 1 } else { 2 };
+            }
+            Some(_) => i += 2,
+            None => return true,
+        }
+    }
+    false
 }
 
 #[cfg(test)]
@@ -302,7 +352,7 @@ mod tests {
     fn echo_of_typing_is_not_working() {
         let t0 = Instant::now();
         let mut t = Tracker::default();
-        t.on_input(t0);
+        t.on_input(t0, b"y");
         t.on_output(t0 + Duration::from_millis(50), &[]);
         assert_eq!(t.activity(t0 + Duration::from_millis(100)), Activity::Idle);
     }
@@ -314,9 +364,42 @@ mod tests {
         t.on_output(t0, &[Signal::Notify("Needs approval".into())]);
         assert_eq!(t.activity(t0 + Duration::from_secs(10)), Activity::Waiting);
         assert_eq!(t.message().as_deref(), Some("Needs approval"));
-        t.on_input(t0 + Duration::from_secs(11));
+        t.on_input(
+            t0 + Duration::from_secs(10),
+            b"\x1b[I\x1b[O\x1b[A\x1b]11;rgb:1c1c/1c1c/1e1e\x07\x1b[12;1R",
+        );
+        assert_eq!(
+            t.activity(t0 + Duration::from_secs(10)),
+            Activity::Waiting,
+            "focus changes, arrow keys and terminal replies don't answer"
+        );
+        t.on_input(t0 + Duration::from_secs(11), b"\r");
         assert_eq!(t.activity(t0 + Duration::from_secs(12)), Activity::Idle);
         assert_eq!(t.message(), None);
+    }
+
+    #[test]
+    fn a_skipped_wait_stays_skipped_until_the_agent_moves_on() {
+        let t0 = Instant::now();
+        let mut t = Tracker::default();
+        t.on_output(t0, &[Signal::HookWaiting]);
+        t.dismiss();
+        t.on_output(
+            t0 + Duration::from_secs(6),
+            &[Signal::HookWaiting, Signal::Notify("Needs approval".into())],
+        );
+        assert_eq!(
+            t.activity(t0 + Duration::from_secs(7)),
+            Activity::Idle,
+            "the same prompt notifying again"
+        );
+        t.on_output(t0 + Duration::from_secs(8), &[Signal::HookWorking]);
+        t.on_output(t0 + Duration::from_secs(9), &[Signal::HookWaiting]);
+        assert_eq!(
+            t.activity(t0 + Duration::from_secs(9)),
+            Activity::Waiting,
+            "a new question shows again"
+        );
     }
 
     #[test]
@@ -331,7 +414,7 @@ mod tests {
         );
         t.on_output(t0 + Duration::from_secs(61), &[Signal::HookWaiting]);
         assert_eq!(t.activity(t0 + Duration::from_secs(62)), Activity::Waiting);
-        t.on_input(t0 + Duration::from_secs(63));
+        t.on_input(t0 + Duration::from_secs(63), b"ok\r");
         t.on_output(t0 + Duration::from_secs(64), &[]);
         assert_eq!(
             t.activity(t0 + Duration::from_secs(64)),

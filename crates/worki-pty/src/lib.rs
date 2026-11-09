@@ -224,7 +224,15 @@ impl SessionHost {
             writer.write_all(data)?;
             writer.flush()?;
         }
-        lock(&session.tracker).on_input(Instant::now());
+        lock(&session.tracker).on_input(Instant::now(), data);
+        refresh(&session, &self.on_change);
+        Ok(())
+    }
+
+    /// Stops showing the session as waiting, without sending it anything.
+    pub fn dismiss_attention(&self, id: &str) -> Result<()> {
+        let session = self.get(id)?;
+        lock(&session.tracker).dismiss();
         refresh(&session, &self.on_change);
         Ok(())
     }
