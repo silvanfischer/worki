@@ -39,11 +39,40 @@ pub struct Remote {
     pub port: Option<u16>,
     /// Run sessions in tmux on the host so they outlive worki and the connection.
     pub keep_alive: bool,
+    /// The saved host these connection settings come from; they follow its changes.
+    #[serde(default)]
+    pub host_id: Option<String>,
 }
 
 impl Remote {
     pub fn target(&self) -> worki_isolation::ssh::SshTarget {
         worki_isolation::ssh::SshTarget::new(self.host.clone(), self.user.clone(), self.port)
+    }
+}
+
+/// Connection settings saved once and shared by remote projects.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SshHost {
+    pub id: String,
+    pub name: String,
+    pub host: String,
+    #[serde(default)]
+    pub user: Option<String>,
+    #[serde(default)]
+    pub port: Option<u16>,
+}
+
+impl SshHost {
+    pub fn target(&self) -> worki_isolation::ssh::SshTarget {
+        worki_isolation::ssh::SshTarget::new(self.host.clone(), self.user.clone(), self.port)
+    }
+
+    pub fn apply(&self, remote: &mut Remote) {
+        remote.host = self.host.clone();
+        remote.user = self.user.clone();
+        remote.port = self.port;
+        remote.host_id = Some(self.id.clone());
     }
 }
 

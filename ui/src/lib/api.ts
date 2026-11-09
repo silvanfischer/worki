@@ -18,6 +18,18 @@ export interface Remote {
   /** Unset uses ~/.ssh/config or 22. */
   port: number | null;
   keepAlive: boolean;
+  /** The saved host the connection settings come from. */
+  hostId?: string | null;
+}
+
+export type SshAddress = Pick<Remote, "host" | "user" | "port">;
+
+export interface SshHost {
+  id: string;
+  name: string;
+  host: string;
+  user: string | null;
+  port: number | null;
 }
 
 /** `user@host:port`, leaving out what isn't set (matches the backend's naming). */
@@ -187,8 +199,12 @@ export const api = {
   addProject: (path: string) => invoke<Project>("add_project", { path }),
   addRemoteProject: (remote: Remote, path: string, password: string | null) =>
     invoke<Project>("add_remote_project", { remote, path, password }),
-  sshPasswordSet: (remote: Remote) => invoke<boolean>("ssh_password_set", { remote }),
-  setSshPassword: (remote: Remote, password: string | null) => invoke<void>("set_ssh_password", { remote, password }),
+  sshHosts: () => invoke<SshHost[]>("ssh_hosts"),
+  saveSshHost: (host: SshHost, password: string | null) => invoke<SshHost>("save_ssh_host", { host, password }),
+  deleteSshHost: (id: string) => invoke<void>("delete_ssh_host", { id }),
+  sshPasswordSet: ({ host, user, port }: SshAddress) => invoke<boolean>("ssh_password_set", { host, user, port }),
+  setSshPassword: ({ host, user, port }: SshAddress, password: string | null) =>
+    invoke<void>("set_ssh_password", { host, user, port, password }),
   updateProject: (id: string, patch: ProjectPatch) => invoke<Project>("update_project", { id, patch }),
   /** Resolves to a warning when the isolation cleanup had to be skipped. */
   removeProject: (id: string) => invoke<string | null>("remove_project", { id }),

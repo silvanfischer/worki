@@ -210,3 +210,59 @@ async fn rejects_non_repo() {
         Err(Error::NotARepo(_))
     ));
 }
+
+#[test]
+fn saved_ssh_hosts_follow_into_projects() {
+    let store = Store::in_memory().unwrap();
+    let remote_project = |id: &str, host_id: Option<&str>| Project {
+        id: id.into(),
+        name: id.into(),
+        repo_path: "/src/app".into(),
+        worktree_root: "/src/wt".into(),
+        default_base: "main".into(),
+        isolation: Default::default(),
+        setup_script: None,
+        remote: Some(Remote {
+            host: "old".into(),
+            user: None,
+            port: None,
+            keep_alive: true,
+            host_id: host_id.map(Into::into),
+        }),
+    };
+    store
+        .insert_project(&remote_project("linked", Some("h1")))
+        .unwrap();
+    store.insert_project(&remote_project("own", None)).unwrap();
+    let svc = ProjectService::new(store);
+    let saved = svc
+        .save_ssh_host(SshHost {
+            id: "h1".into(),
+            name: " ".into(),
+            host: "devbox".into(),
+            user: Some("".into()),
+            port: None,
+        })
+        .unwrap();
+    assert_eq!(
+        (saved.name.as_str(), saved.user.as_deref()),
+        ("devbox", None)
+    );
+    svc.save_ssh_host(SshHost {
+        port: Some(2222),
+        user: Some("me".into()),
+        ..saved.clone()
+    })
+    .unwrap();
+    let linked = svc.project("linked").unwrap().remote.unwrap();
+    assert_eq!(
+        (linked.host.as_str(), linked.user.as_deref(), linked.port),
+        ("devbox", Some("me"), Some(2222))
+    );
+    assert_eq!(svc.project("own").unwrap().remote.unwrap().host, "old");
+
+    svc.delete_ssh_host(&saved.id).unwrap();
+    assert!(svc.ssh_hosts().unwrap().is_empty());
+    let kept = svc.project("linked").unwrap().remote.unwrap();
+    assert_eq!((kept.host.as_str(), kept.host_id), ("devbox", None));
+}

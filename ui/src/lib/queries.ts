@@ -21,7 +21,9 @@ export const keys = {
   agentStatuses: (isolation: Isolation) => ["agentStatuses", isolation] as const,
   allSecretStatus: ["secretStatus"] as const,
   secretStatus: (scope: string, names: string[]) => ["secretStatus", scope, names] as const,
-  sshPasswordSet: (remote: Remote | null) => ["sshPassword", remote] as const,
+  sshPasswordSet: (remote: Pick<Remote, "host" | "user" | "port"> | null) =>
+    ["sshPassword", remote && { host: remote.host, user: remote.user, port: remote.port }] as const,
+  sshHosts: ["sshHosts"] as const,
   openers: ["openers"] as const,
   appIcon: (app: string) => ["appIcon", app] as const,
 };
@@ -51,7 +53,9 @@ export function useProjectDefaultIsolation(project: Project): Isolation | undefi
 export const useAgentStatuses = (isolation: Isolation) =>
   useQuery({ queryKey: keys.agentStatuses(isolation), queryFn: () => api.agentStatuses(isolation), staleTime: 0 });
 
-export const useSshPasswordSet = (remote: Remote | null) =>
+export const useSshHosts = () => useQuery({ queryKey: keys.sshHosts, queryFn: api.sshHosts });
+
+export const useSshPasswordSet = (remote: Pick<Remote, "host" | "user" | "port"> | null) =>
   useQuery({
     queryKey: keys.sshPasswordSet(remote),
     queryFn: () => api.sshPasswordSet(remote!),

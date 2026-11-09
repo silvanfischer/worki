@@ -9,7 +9,7 @@ export type DialogState =
   | { kind: "settings"; tab: SettingsTab }
   | null;
 
-export type SettingsTab = "agents" | "secrets" | "isolation" | "openIn";
+export type SettingsTab = "agents" | "secrets" | "isolation" | "sshHosts" | "openIn";
 
 export type Panel = "sidebar" | "diff" | "changes";
 

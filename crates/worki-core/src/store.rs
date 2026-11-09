@@ -241,6 +241,7 @@ mod tests {
             user: None,
             port: None,
             keep_alive: true,
+            host_id: None,
         });
         store.insert_project(&remote).unwrap();
         assert_eq!(

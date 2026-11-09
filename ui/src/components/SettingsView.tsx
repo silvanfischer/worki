@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { AppWindow, Bot, KeyRound, Shield, X } from "lucide-react";
+import { AppWindow, Bot, KeyRound, Server, Shield, X } from "lucide-react";
 import { type ReactNode, useEffect } from "react";
 
 import { useAgentSettings, useIsolationSettings } from "../lib/queries";
@@ -8,12 +8,14 @@ import { AgentSettingsDialog } from "./AgentSettingsDialog";
 import { IsolationDialog } from "./IsolationDialog";
 import { OpenInSettings } from "./OpenInSettings";
 import { SecretsEditor } from "./SecretsEditor";
+import { SshHostsSettings } from "./SshHostsSettings";
 import { EmbeddedDialog, IconButton } from "./ui";
 
 const tabs: { id: SettingsTab; label: string; icon: ReactNode }[] = [
   { id: "agents", label: "Agents", icon: <Bot size={14} /> },
   { id: "secrets", label: "Secrets", icon: <KeyRound size={14} /> },
   { id: "isolation", label: "Isolation", icon: <Shield size={14} /> },
+  { id: "sshHosts", label: "SSH hosts", icon: <Server size={14} /> },
   { id: "openIn", label: "Open in", icon: <AppWindow size={14} /> },
 ];
 
@@ -75,6 +77,7 @@ export function SettingsView({ tab }: { tab: SettingsTab }) {
             {tab === "isolation" && isolation && (
               <IsolationDialog current={isolation.default} onClose={closeDialog} />
             )}
+            {tab === "sshHosts" && <SshHostsSettings />}
             {tab === "openIn" && <OpenInSettings />}
           </EmbeddedDialog.Provider>
         </div>

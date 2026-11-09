@@ -17,6 +17,7 @@ use crate::{git, paths, secrets, Error, Host, Result};
 const AGENT_SETTINGS_KEY: &str = "agents";
 const ISOLATION_SETTINGS_KEY: &str = "isolation";
 const OPENER_SETTINGS_KEY: &str = "openers";
+const SSH_HOSTS_KEY: &str = "sshHosts";
 /// Per-worktree isolation choices, keyed by worktree path.
 const WORKTREE_ISOLATION_KEY: &str = "worktreeIsolation";
 
@@ -73,6 +74,7 @@ impl ProjectService {
 
     /// Adds a repository that lives on `remote.host`; `path` is a path on that host.
     pub async fn add_remote_project(&self, remote: Remote, path: &Path) -> Result<Project> {
+        let remote = self.with_saved_host(remote)?;
         remote.target().validate().map_err(Error::isolation)?;
         self.add_project_on(Host::Ssh(remote.target()), Some(remote), path)
             .await
@@ -157,6 +159,7 @@ impl ProjectService {
             p.setup_script = Some(script).filter(|s| !s.trim().is_empty());
         }
         if let (Some(remote), true) = (patch.remote, p.remote.is_some()) {
+            let remote = self.with_saved_host(remote)?;
             remote.target().validate().map_err(Error::isolation)?;
             p.remote = Some(remote);
         }
@@ -299,6 +302,74 @@ impl ProjectService {
 
     pub fn save_opener_settings(&self, settings: &OpenerSettings) -> Result<()> {
         self.store.set_setting(OPENER_SETTINGS_KEY, settings)
+    }
+
+    pub fn ssh_hosts(&self) -> Result<Vec<SshHost>> {
+        self.setting(SSH_HOSTS_KEY)
+    }
+
+    pub fn ssh_host(&self, id: &str) -> Result<SshHost> {
+        self.ssh_hosts()?
+            .into_iter()
+            .find(|h| h.id == id)
+            .ok_or_else(|| Error::SshHostNotFound(id.into()))
+    }
+
+    /// Adds or replaces a saved host (a new one when `id` is empty) and updates the projects
+    /// connecting through it.
+    pub fn save_ssh_host(&self, mut host: SshHost) -> Result<SshHost> {
+        host.name = host.name.trim().into();
+        host.host = host.host.trim().into();
+        host.user = host.user.filter(|u| !u.trim().is_empty());
+        if host.name.is_empty() {
+            host.name = host.host.clone();
+        }
+        host.target().validate().map_err(Error::isolation)?;
+        if host.id.is_empty() {
+            host.id = uuid::Uuid::new_v4().to_string();
+        }
+        let mut hosts = self.ssh_hosts()?;
+        match hosts.iter_mut().find(|h| h.id == host.id) {
+            Some(existing) => *existing = host.clone(),
+            None => hosts.push(host.clone()),
+        }
+        self.store.set_setting(SSH_HOSTS_KEY, &hosts)?;
+        for mut p in self.store.list_projects()? {
+            if let Some(remote) = p
+                .remote
+                .as_mut()
+                .filter(|r| r.host_id.as_deref() == Some(&host.id))
+            {
+                host.apply(remote);
+                self.store.update_project(&p)?;
+            }
+        }
+        Ok(host)
+    }
+
+    /// Removes a saved host. Projects using it keep its connection settings as their own.
+    pub fn delete_ssh_host(&self, id: &str) -> Result<()> {
+        let mut hosts = self.ssh_hosts()?;
+        hosts.retain(|h| h.id != id);
+        self.store.set_setting(SSH_HOSTS_KEY, &hosts)?;
+        for mut p in self.store.list_projects()? {
+            if let Some(remote) = p
+                .remote
+                .as_mut()
+                .filter(|r| r.host_id.as_deref() == Some(id))
+            {
+                remote.host_id = None;
+                self.store.update_project(&p)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn with_saved_host(&self, mut remote: Remote) -> Result<Remote> {
+        if let Some(id) = remote.host_id.clone() {
+            self.ssh_host(&id)?.apply(&mut remote);
+        }
+        Ok(remote)
     }
 
     pub fn isolation_settings(&self) -> Result<IsolationSettings> {

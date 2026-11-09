@@ -26,6 +26,14 @@ pub async fn add_remote_project(
     path: PathBuf,
     password: Option<String>,
 ) -> CmdResult<Project> {
+    let remote = match &remote.host_id {
+        Some(id) => {
+            let mut r = remote.clone();
+            state.projects.ssh_host(id).map_err(err)?.apply(&mut r);
+            r
+        }
+        None => remote,
+    };
     remote.target().validate().map_err(err_chain)?;
     if let Some(password) = password.as_deref().filter(|p| !p.is_empty()) {
         ssh::set_password(&remote.target(), Some(password)).map_err(err_chain)?;
@@ -63,15 +71,58 @@ pub fn update_project(
 }
 
 #[tauri::command]
-pub fn ssh_password_set(remote: Remote) -> bool {
-    ssh::has_password(&remote.target())
+pub fn ssh_hosts(state: State<'_, AppState>) -> CmdResult<Vec<SshHost>> {
+    state.projects.ssh_hosts().map_err(err)
+}
+
+/// Saves a host profile; its stored password moves along when host, user or port change, and
+/// `password`, when given, replaces it.
+#[tauri::command]
+pub fn save_ssh_host(
+    state: State<'_, AppState>,
+    host: SshHost,
+    password: Option<String>,
+) -> CmdResult<SshHost> {
+    let before = (!host.id.is_empty())
+        .then(|| state.projects.ssh_host(&host.id).ok())
+        .flatten()
+        .map(|h| h.target());
+    let saved = state.projects.save_ssh_host(host).map_err(err)?;
+    let after = saved.target();
+    if let Some(old) = before.filter(|old| *old != after) {
+        if ssh::has_password(&old) && !ssh::has_password(&after) {
+            let moved = ssh::password(&old);
+            ssh::set_password(&after, moved.as_deref()).map_err(err_chain)?;
+            ssh::set_password(&old, None).map_err(err_chain)?;
+        }
+    }
+    if let Some(password) = password.as_deref().filter(|p| !p.is_empty()) {
+        ssh::set_password(&after, Some(password)).map_err(err_chain)?;
+    }
+    Ok(saved)
+}
+
+#[tauri::command]
+pub fn delete_ssh_host(state: State<'_, AppState>, id: String) -> CmdResult<()> {
+    state.projects.delete_ssh_host(&id).map_err(err)
+}
+
+#[tauri::command]
+pub fn ssh_password_set(host: String, user: Option<String>, port: Option<u16>) -> bool {
+    ssh::has_password(&ssh::SshTarget::new(host, user, port))
 }
 
 /// Stores the login password for `remote`, or removes it with `None`.
 #[tauri::command]
-pub fn set_ssh_password(remote: Remote, password: Option<String>) -> CmdResult<()> {
-    remote.target().validate().map_err(err_chain)?;
-    ssh::set_password(&remote.target(), password.as_deref()).map_err(err_chain)
+pub fn set_ssh_password(
+    host: String,
+    user: Option<String>,
+    port: Option<u16>,
+    password: Option<String>,
+) -> CmdResult<()> {
+    let target = ssh::SshTarget::new(host, user, port);
+    target.validate().map_err(err_chain)?;
+    ssh::set_password(&target, password.as_deref()).map_err(err_chain)
 }
 
 #[tauri::command]
