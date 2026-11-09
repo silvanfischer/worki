@@ -32,8 +32,13 @@ pub enum Isolation {
     None,
     #[serde(alias = "user")]
     MacUser { user: String },
-    /// A Docker Sandbox (`sbx`) per worktree, created from a built-in agent image.
-    DockerSandbox { image: String },
+    /// A Docker Sandbox (`sbx`) per worktree for a built-in agent (`image`), optionally created
+    /// from a saved template instead of the agent's default image.
+    DockerSandbox {
+        image: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        template: Option<String>,
+    },
     /// A Docker container per worktree.
     Docker { image: String },
     /// A Podman container per worktree (in the Podman machine VM).
@@ -65,6 +70,8 @@ pub enum ProjectIsolation {
     },
     DockerSandbox {
         image: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        template: Option<String>,
     },
     Docker {
         image: String,
@@ -80,8 +87,9 @@ impl ProjectIsolation {
             Self::Inherit => global.clone(),
             Self::None => Isolation::None,
             Self::MacUser { user } => Isolation::MacUser { user: user.clone() },
-            Self::DockerSandbox { image } => Isolation::DockerSandbox {
+            Self::DockerSandbox { image, template } => Isolation::DockerSandbox {
                 image: image.clone(),
+                template: template.clone(),
             },
             Self::Docker { image } => Isolation::Docker {
                 image: image.clone(),
@@ -98,7 +106,9 @@ impl Isolation {
         match self {
             Self::None => Box::new(NoIsolation),
             Self::MacUser { user } => Box::new(MacUser::new(user.clone())),
-            Self::DockerSandbox { image } => Box::new(Container::new(Engine::Sbx, image.clone())),
+            Self::DockerSandbox { image, template } => {
+                Box::new(Container::new(Engine::Sbx, image.clone()).with_template(template.clone()))
+            }
             Self::Docker { image } => Box::new(Container::new(Engine::Docker, image.clone())),
             Self::Podman { image } => Box::new(Container::new(Engine::Podman, image.clone())),
             Self::Ssh { keep_alive, .. } => {
@@ -120,25 +130,19 @@ impl Isolation {
                 anyhow::ensure!(valid, "invalid user name: {user}");
                 Ok(())
             }
-            Self::DockerSandbox { image } => {
+            Self::DockerSandbox { image, template } => {
                 let valid = !image.is_empty()
                     && image.len() <= 40
                     && image
                         .bytes()
                         .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
                 anyhow::ensure!(valid, "invalid sandbox image: {image}");
+                if let Some(template) = template {
+                    validate_image_ref(template)?;
+                }
                 Ok(())
             }
-            Self::Docker { image } | Self::Podman { image } => {
-                let valid = !image.is_empty()
-                    && image.len() <= 200
-                    && !image.starts_with('-')
-                    && image
-                        .bytes()
-                        .all(|b| b.is_ascii_alphanumeric() || b"._/:@-".contains(&b));
-                anyhow::ensure!(valid, "invalid image reference: {image}");
-                Ok(())
-            }
+            Self::Docker { image } | Self::Podman { image } => validate_image_ref(image),
             Self::Ssh { .. } => self.ssh_target().unwrap_or_default().validate(),
         }
     }
@@ -174,6 +178,17 @@ impl Isolation {
             Self::Ssh { .. } => self.ssh_target().unwrap_or_default().display(),
         }
     }
+}
+
+pub fn validate_image_ref(image: &str) -> anyhow::Result<()> {
+    let valid = !image.is_empty()
+        && image.len() <= 200
+        && !image.starts_with('-')
+        && image
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._/:@-".contains(&b));
+    anyhow::ensure!(valid, "invalid image reference: {image}");
+    Ok(())
 }
 
 /// What to run, independent of the isolation mechanism.
@@ -285,6 +300,17 @@ pub trait Backend: Send + Sync {
 
     /// Makes sure the environment can work in `ws`. Cheap when already done; may block.
     fn grant_access(&self, ws: &Workspace) -> anyhow::Result<()>;
+
+    /// Saves the worktree's environment, with everything installed in it, as an image or template
+    /// named `tag`, and returns the isolation that creates new environments from it.
+    fn save_template(&self, _worktree: &Path, _tag: &str) -> anyhow::Result<Isolation> {
+        anyhow::bail!("only container isolations can be saved as a snapshot")
+    }
+
+    /// Images or sbx templates on this machine that new environments could start from.
+    fn templates(&self) -> anyhow::Result<Vec<String>> {
+        Ok(Vec::new())
+    }
 
     /// What the Agents panel may offer for this isolation.
     fn capabilities(&self) -> Capabilities {
@@ -495,6 +521,30 @@ pub fn current_user() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sandbox_template_is_optional_and_validated() {
+        let old: Isolation =
+            serde_json::from_str(r#"{"kind":"dockerSandbox","image":"claude"}"#).unwrap();
+        assert_eq!(
+            old,
+            Isolation::DockerSandbox {
+                image: "claude".into(),
+                template: None
+            }
+        );
+        let saved = Isolation::DockerSandbox {
+            image: "claude".into(),
+            template: Some("worki-app:20261109-1200".into()),
+        };
+        assert!(saved.validate().is_ok());
+        assert!(Isolation::DockerSandbox {
+            image: "claude".into(),
+            template: Some("--privileged".into()),
+        }
+        .validate()
+        .is_err());
+    }
 
     #[test]
     fn reads_legacy_run_as_values() {

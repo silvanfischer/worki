@@ -200,6 +200,7 @@ fn pull(engine: &str) {
 fn sbx_lifecycle() {
     lifecycle(Isolation::DockerSandbox {
         image: "shell".into(),
+        template: None,
     });
 }
 

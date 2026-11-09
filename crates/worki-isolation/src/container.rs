@@ -88,6 +88,8 @@ impl Engine {
 pub struct Container {
     engine: Engine,
     image: String,
+    /// sbx only: saved template new sandboxes start from.
+    template: Option<String>,
     /// Set for an instance bound to one environment (see [`Backend::instances`]).
     bound: Option<Bound>,
 }
@@ -111,8 +113,14 @@ impl Container {
         Self {
             engine,
             image,
+            template: None,
             bound: None,
         }
+    }
+
+    pub fn with_template(mut self, template: Option<String>) -> Self {
+        self.template = template;
+        self
     }
 
     /// Removes the worktree's environments from every installed, running engine, whichever
@@ -138,6 +146,7 @@ impl Container {
         Self {
             engine: self.engine,
             image: self.image.clone(),
+            template: self.template.clone(),
             bound: Some(Bound {
                 name: listed.name.clone(),
                 workdir,
@@ -209,18 +218,17 @@ impl Container {
         let mut args: Vec<String> = Vec::new();
         match self.engine {
             Engine::Sbx => {
-                args.extend(
-                    [
-                        "create",
-                        "--name",
-                        name,
-                        "--pull",
-                        "missing",
-                        "-q",
-                        &self.image,
-                    ]
-                    .map(String::from),
-                );
+                args.extend(["create", "--name", name, "-q"].map(String::from));
+                match &self.template {
+                    Some(template) => args.extend([
+                        "-t".into(),
+                        template.clone(),
+                        "--pull".into(),
+                        "never".into(),
+                    ]),
+                    None => args.extend(["--pull", "missing"].map(String::from)),
+                }
+                args.push(self.image.clone());
                 args.extend(mounts.iter().map(Mount::sbx_arg));
             }
             _ => {
@@ -469,31 +477,94 @@ impl Mount {
     }
 }
 
-/// The worktree and the shared git data writable; anything git would execute or follow on the
-/// host read-only.
+/// The worktree writable, and of the repository's `.git` only what committing and fetching
+/// write: objects, refs, reflogs and the worktree's own admin folder (HEAD, index, FETCH_HEAD).
+/// Everything else in `.git` is read-only, above all config files (including
+/// submodules' and other worktrees') that your own git would run commands from.
 fn mounts(repo: &Path, worktree: &Path, admin_dir: Option<&Path>) -> Vec<Mount> {
     let git = repo.join(".git");
-    let mut rw = vec![worktree.to_path_buf()];
-    if worktree != repo {
-        rw.push(git.clone());
+    let mount = |path: PathBuf, read_only| Mount { path, read_only };
+    if worktree == repo {
+        return [
+            mount(worktree.to_path_buf(), false),
+            mount(git.join("hooks"), true),
+            mount(git.join("config"), true),
+        ]
+        .into_iter()
+        .filter(|m| m.path.exists())
+        .collect();
     }
-    let mut ro = vec![git.join("hooks"), git.join("config")];
-    if worktree != repo {
-        ro.push(worktree.join(".git"));
-        if let Some(admin) = admin_dir {
-            ro.extend([admin.join("gitdir"), admin.join("commondir")]);
+    let mut writable = vec![git.join("objects"), git.join("refs"), git.join("logs")];
+    writable.extend(admin_dir.map(Path::to_path_buf));
+    for dir in &writable {
+        std::fs::create_dir_all(dir).ok();
+    }
+    let mut pinned = vec![worktree.join(".git")];
+    if let Some(admin) = admin_dir {
+        pinned.extend([admin.join("gitdir"), admin.join("commondir")]);
+    }
+    [mount(worktree.to_path_buf(), false), mount(git, true)]
+        .into_iter()
+        .chain(writable.into_iter().map(|p| mount(p, false)))
+        .chain(pinned.into_iter().map(|p| mount(p, true)))
+        .filter(|m| m.path.exists())
+        .collect()
+}
+
+/// `docker.io/library/app:1` and `localhost/app:1` are the same image as `app:1`.
+fn short_image_name(tag: &str) -> String {
+    let tag = tag.strip_prefix("docker.io/").unwrap_or(tag);
+    let tag = tag.strip_prefix("library/").unwrap_or(tag);
+    let tag = tag.strip_prefix("localhost/").unwrap_or(tag);
+    if tag.contains(':') || tag.contains('@') {
+        tag.to_owned()
+    } else {
+        format!("{tag}:latest")
+    }
+}
+
+/// Tags from `sbx template ls --json`: a list (or `{"templates"|"images": [...]}`) of entries with
+/// `repository` and `tag`, a `tags` list, or a single `tag`/`name`/`reference`.
+fn parse_template_listing(json: &str) -> Vec<String> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(json) else {
+        return Vec::new();
+    };
+    let entries = match &value {
+        serde_json::Value::Array(a) => a.clone(),
+        serde_json::Value::Object(o) => ["templates", "images", "items"]
+            .iter()
+            .find_map(|k| o.get(*k).and_then(|v| v.as_array()).cloned())
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    };
+    let field = |e: &serde_json::Value, keys: &[&str]| {
+        e.as_object().and_then(|o| {
+            o.iter()
+                .find(|(k, _)| keys.iter().any(|w| k.eq_ignore_ascii_case(w)))
+                .and_then(|(_, v)| v.as_str())
+                .map(str::to_owned)
+        })
+    };
+    let mut tags = Vec::new();
+    for e in &entries {
+        if let Some(list) = e
+            .as_object()
+            .and_then(|o| o.iter().find(|(k, _)| k.eq_ignore_ascii_case("tags")))
+            .and_then(|(_, v)| v.as_array())
+        {
+            tags.extend(list.iter().filter_map(|t| t.as_str()).map(str::to_owned));
+        } else if let (Some(repo), Some(tag)) =
+            (field(e, &["repository", "repo"]), field(e, &["tag"]))
+        {
+            tags.push(format!("{repo}:{tag}"));
+        } else if let Some(tag) = field(e, &["tag", "name", "reference", "ref"]) {
+            tags.push(tag);
+        } else if let Some(tag) = e.as_str() {
+            tags.push(tag.to_owned());
         }
     }
-    rw.into_iter()
-        .map(|path| Mount {
-            path,
-            read_only: false,
-        })
-        .chain(ro.into_iter().filter(|p| p.exists()).map(|path| Mount {
-            path,
-            read_only: true,
-        }))
-        .collect()
+    tags.retain(|t| !t.is_empty() && !t.contains("<none>"));
+    tags
 }
 
 fn admin_dir(worktree: &Path) -> Option<PathBuf> {
@@ -527,6 +598,7 @@ impl Backend for Container {
         match self.engine {
             Engine::Sbx => Isolation::DockerSandbox {
                 image: self.image.clone(),
+                template: self.template.clone(),
             },
             Engine::Docker => Isolation::Docker {
                 image: self.image.clone(),
@@ -580,6 +652,66 @@ impl Backend for Container {
             worktree,
             &mounts(&ws.repo, worktree, admin.as_deref()),
         )
+    }
+
+    fn save_template(&self, worktree: &Path, tag: &str) -> Result<Isolation> {
+        crate::validate_image_ref(tag)?;
+        let name = sandbox_name(worktree);
+        let Some(listed) = self.list()?.into_iter().find(|l| l.name == name) else {
+            bail!(
+                "this worktree has no {} yet; start a session in it first",
+                self.engine.noun()
+            );
+        };
+        // sbx only saves stopped sandboxes; the next session starts it again.
+        if self.engine == Engine::Sbx && listed.running {
+            self.checked(["stop", name.as_str()], "stopping the sandbox")?;
+        }
+        let args: Vec<&str> = match self.engine {
+            Engine::Sbx => vec!["template", "save", &name, tag],
+            _ => vec!["commit", &name, tag],
+        };
+        self.checked(
+            &args,
+            &format!("saving a snapshot of the {} as {tag}", self.engine.noun()),
+        )?;
+        Ok(match self.engine {
+            Engine::Sbx => Isolation::DockerSandbox {
+                image: self.image.clone(),
+                template: Some(tag.to_owned()),
+            },
+            Engine::Docker => Isolation::Docker {
+                image: tag.to_owned(),
+            },
+            Engine::Podman => Isolation::Podman {
+                image: tag.to_owned(),
+            },
+        })
+    }
+
+    fn templates(&self) -> Result<Vec<String>> {
+        if self.engine.binary().is_err() || !self.engine_running() {
+            return Ok(Vec::new());
+        }
+        let tags = match self.engine {
+            Engine::Sbx => parse_template_listing(
+                &self.checked(["template", "ls", "--json"], "listing templates")?,
+            ),
+            _ => self
+                .checked(
+                    ["image", "ls", "--format", "{{.Repository}}:{{.Tag}}"],
+                    "listing images",
+                )?
+                .lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty() && !l.contains("<none>"))
+                .map(String::from)
+                .collect(),
+        };
+        let mut tags: Vec<String> = tags.iter().map(|t| short_image_name(t)).collect();
+        tags.sort();
+        tags.dedup();
+        Ok(tags)
     }
 
     fn release(&self, ws: &Workspace) -> Result<()> {
@@ -921,22 +1053,31 @@ mod tests {
             m[1],
             Mount {
                 path: repo.join(".git"),
-                read_only: false
+                read_only: true
             }
         );
+        for rw in [
+            repo.join(".git/objects"),
+            repo.join(".git/refs"),
+            repo.join(".git/logs"),
+            admin.clone(),
+        ] {
+            let at = m.iter().position(|x| x.path == rw);
+            assert!(
+                at.is_some_and(|i| !m[i].read_only && i > 1),
+                "{rw:?} not writable after .git in {m:?}"
+            );
+        }
+        let admin_at = m.iter().position(|x| x.path == admin).unwrap();
         for ro in [
-            repo.join(".git/hooks"),
-            repo.join(".git/config"),
             wt.join(".git"),
             admin.join("gitdir"),
             admin.join("commondir"),
         ] {
+            let at = m.iter().position(|x| x.path == ro);
             assert!(
-                m.contains(&Mount {
-                    path: ro.clone(),
-                    read_only: true
-                }),
-                "{ro:?} not read-only in {m:?}"
+                at.is_some_and(|i| m[i].read_only && i > admin_at),
+                "{ro:?} not read-only over the admin folder in {m:?}"
             );
         }
         let hooks = Mount {
@@ -967,6 +1108,34 @@ mod tests {
             }),
             "main checkout already contains .git"
         );
+    }
+
+    #[test]
+    fn shortens_image_names() {
+        assert_eq!(
+            short_image_name("docker.io/library/worki-sam:1"),
+            "worki-sam:1"
+        );
+        assert_eq!(short_image_name("localhost/worki-sam:1"), "worki-sam:1");
+        assert_eq!(short_image_name("ghcr.io/me/app:2"), "ghcr.io/me/app:2");
+        assert_eq!(short_image_name("app"), "app:latest");
+    }
+
+    #[test]
+    fn reads_template_listings() {
+        assert_eq!(
+            parse_template_listing(
+                r#"[{"Repository":"worki-app","Tag":"1"},{"tags":["a:1","b:2"]}]"#
+            ),
+            ["worki-app:1", "a:1", "b:2"]
+        );
+        assert_eq!(
+            parse_template_listing(
+                r#"{"images":[{"tag":"myimage:v1.0","id":"abc"},{"repository":"<none>","tag":"<none>"}]}"#
+            ),
+            ["myimage:v1.0"]
+        );
+        assert!(parse_template_listing("not json").is_empty());
     }
 
     #[test]
