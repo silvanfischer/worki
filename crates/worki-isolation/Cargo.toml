@@ -1,0 +1,17 @@
+[package]
+name = "worki-isolation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3"
+core-foundation = "0.10"
+
+[dev-dependencies]
+tempfile.workspace = true
