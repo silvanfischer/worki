@@ -1,0 +1,21 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Main window permissions",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "dialog:allow-open",
+    "dialog:allow-ask",
+    "opener:allow-reveal-item-in-dir",
+    "opener:allow-open-url",
+    "notification:default",
+    "core:window:allow-set-badge-count",
+    "core:window:allow-set-focus",
+    "core:window:allow-unminimize",
+    "dialog:allow-message"
+  ]
+}
