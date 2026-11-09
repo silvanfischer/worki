@@ -1,11 +1,11 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import clsx from "clsx";
 import {
+  BellRing,
   ChevronRight,
-  Copy,
+  X,
+  MessageSquare,
   FolderGit2,
-  FolderOpen,
   GitBranch,
   House,
   MoreHorizontal,
@@ -13,15 +13,16 @@ import {
   Server,
   Settings,
   Settings2,
-  Trash2,
 } from "lucide-react";
 
-import { type Project, type Worktree, worktreeLabel } from "../lib/api";
+import { api, type Project, type Worktree, worktreeLabel } from "../lib/api";
+import { useWorktreeComments } from "../lib/review";
 import { keys, useAddProject, useProjects, useSessions, useWorktrees, useWorktreeStatus } from "../lib/queries";
 import { useUi } from "../lib/store";
 import { ActivityDot, summarize } from "./ActivityDot";
 import { ResizeHandle } from "./ResizeHandle";
 import { DiffStat, ErrorText, IconButton, Menu } from "./ui";
+import { worktreeActions } from "./worktreeActions";
 
 export function Sidebar() {
   const { data: projects = [] } = useProjects();
@@ -57,6 +58,7 @@ export function Sidebar() {
         </div>
       )}
       <nav className="flex-1 overflow-y-auto px-2 pb-3">
+        <NeedsYou projects={projects} />
         {projects.map((p) => (
           <ProjectNode key={p.id} project={p} />
         ))}
@@ -68,7 +70,7 @@ export function Sidebar() {
       </nav>
       <div className="flex shrink-0 items-center border-t border-line px-2 py-1.5">
         <button
-          onClick={() => openDialog({ kind: "settings", tab: "agents" })}
+          onClick={() => openDialog({ kind: "settings", tab: "general" })}
           title="Settings (⌘,)"
           className="flex h-7 items-center gap-2 rounded-md px-2 text-muted hover:bg-hover hover:text-fg"
         >
@@ -139,6 +141,7 @@ function WorktreeRow({ project, worktree }: { project: Project; worktree: Worktr
   const mine = sessions.filter((s) => s.worktreePath === worktree.path);
   const activity = summarize(mine);
   const waitingOn = mine.find((s) => s.state.kind === "running" && s.activity === "waiting");
+  const comments = useWorktreeComments(worktree.path).length;
 
   return (
     <div
@@ -165,6 +168,15 @@ function WorktreeRow({ project, worktree }: { project: Project; worktree: Worktr
           title={waitingOn ? `${waitingOn.title} is waiting${waitingOn.attention ? `: ${waitingOn.attention}` : ""}` : undefined}
         />
       )}
+      {comments > 0 && (
+        <span
+          className="flex items-center gap-0.5 text-[11px] text-accent group-hover:hidden"
+          title={`${comments} review comment${comments === 1 ? "" : "s"} not sent yet`}
+        >
+          <MessageSquare size={11} />
+          {comments}
+        </span>
+      )}
       {status && (status.insertions > 0 || status.deletions > 0) ? (
         <DiffStat insertions={status.insertions} deletions={status.deletions} className="group-hover:hidden" />
       ) : dirty > 0 ? (
@@ -177,24 +189,54 @@ function WorktreeRow({ project, worktree }: { project: Project; worktree: Worktr
               <MoreHorizontal size={14} />
             </IconButton>
           )}
-          items={[
-            ...(project.remote
-              ? []
-              : [{ label: "Reveal in Finder", icon: <FolderOpen size={13} />, onSelect: () => revealItemInDir(worktree.path) }]),
-            { label: "Copy path", icon: <Copy size={13} />, onSelect: () => navigator.clipboard.writeText(worktree.path) },
-            ...(worktree.isMain
-              ? []
-              : [
-                  {
-                    label: "Remove worktree…",
-                    icon: <Trash2 size={13} />,
-                    danger: true,
-                    onSelect: () => openDialog({ kind: "removeWorktree", projectId: project.id, path: worktree.path }),
-                  },
-                ]),
-          ]}
+          items={worktreeActions(project, worktree, openDialog)}
         />
       </div>
+    </div>
+  );
+}
+
+/** Agents waiting for an answer, across all projects, so none of them sits unnoticed. */
+function NeedsYou({ projects }: { projects: Project[] }) {
+  const { data: sessions = [] } = useSessions();
+  const select = useUi((s) => s.select);
+  const setActive = useUi((s) => s.setActiveSession);
+  const waiting = sessions.filter((s) => s.state.kind === "running" && s.activity === "waiting");
+  if (waiting.length === 0) return null;
+  return (
+    <div className="mb-2 rounded-lg bg-warn/8 p-1">
+      <div className="flex items-center gap-1.5 px-2 pt-1 pb-1 text-[11px] font-semibold tracking-wide text-warn uppercase">
+        <BellRing size={11} />
+        Needs you
+      </div>
+      {waiting.map((s) => {
+        const project = projects.find((p) => s.worktreePath.startsWith(p.worktreeRoot) || s.worktreePath === p.repoPath);
+        const name = s.worktreePath.split("/").pop();
+        return (
+          <div key={s.id} className="group/need flex items-start rounded-md hover:bg-hover">
+            <button
+              onClick={() => {
+                if (project) select(project.id, s.worktreePath);
+                setActive(s.worktreePath, s.id);
+              }}
+              title={s.attention ?? `${s.title} is waiting for you`}
+              className="flex min-w-0 flex-1 flex-col px-2 py-1 text-left"
+            >
+              <span className="truncate text-[13px]">
+                {s.title} <span className="text-faint">· {name}</span>
+              </span>
+              {s.attention && <span className="truncate text-[11px] text-muted">{s.attention}</span>}
+            </button>
+            <IconButton
+              label="Skip for now: hides this without answering"
+              onClick={() => api.dismissAttention(s.id).catch(() => {})}
+              className="mt-1 mr-1 size-5 opacity-0 group-hover/need:opacity-100"
+            >
+              <X size={12} />
+            </IconButton>
+          </div>
+        );
+      })}
     </div>
   );
 }

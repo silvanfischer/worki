@@ -9,8 +9,10 @@ import { type ITheme, Terminal } from "@xterm/xterm";
 import { useEffect, useRef } from "react";
 
 import { api } from "../lib/api";
+import { useUi } from "../lib/store";
+import { useIsDark } from "../lib/theme";
 
-const dark: ITheme = {
+const darkTheme: ITheme = {
   background: "#1c1c1e",
   foreground: "#e5e5ea",
   cursor: "#e5e5ea",
@@ -34,7 +36,7 @@ const dark: ITheme = {
   brightWhite: "#ffffff",
 };
 
-const light: ITheme = {
+const lightTheme: ITheme = {
   background: "#ffffff",
   foreground: "#1d1d1f",
   cursor: "#1d1d1f",
@@ -58,21 +60,22 @@ const light: ITheme = {
   brightWhite: "#8c959f",
 };
 
-const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
-
 export function TerminalView({ sessionId, active }: { sessionId: string; active: boolean }) {
   const container = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
+  const dark = useIsDark();
+  const fontSize = useUi((s) => s.terminalFontSize);
+  const initial = useRef({ dark, fontSize });
 
   useEffect(() => {
     const term = new Terminal({
       allowProposedApi: true,
       fontFamily: '"SF Mono", Menlo, Monaco, monospace',
-      fontSize: 13,
+      fontSize: initial.current.fontSize,
       lineHeight: 1.15,
       cursorBlink: true,
       scrollback: 10_000,
-      theme: darkQuery.matches ? dark : light,
+      theme: initial.current.dark ? darkTheme : lightTheme,
       macOptionClickForcesSelection: true,
     });
     termRef.current = term;
@@ -99,6 +102,32 @@ export function TerminalView({ sessionId, active }: { sessionId: string; active:
     });
 
     let disposed = false;
+    let lastSize = "";
+    const fitNow = () => {
+      if (disposed || !container.current?.offsetWidth || !fit.proposeDimensions()) return false;
+      fit.fit();
+      const size = `${term.cols}x${term.rows}`;
+      if (size !== lastSize) {
+        lastSize = size;
+        api.resizeSession(sessionId, term.cols, term.rows).catch(() => {});
+      }
+      return true;
+    };
+    // Right after mounting, the renderer may not have measured the font yet; a fit then does
+    // nothing, and no later resize comes to retry it.
+    fitNow();
+    let frame = 0;
+    let tries = 0;
+    const settle = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        fitNow();
+        if (++tries < 10) settle();
+      });
+    };
+    settle();
+    document.fonts?.ready.then(() => fitNow());
+
     let sinkId: number | null = null;
     api
       .attachSession(sessionId, (bytes) => term.write(bytes))
@@ -110,30 +139,26 @@ export function TerminalView({ sessionId, active }: { sessionId: string; active:
 
     const input = term.onData((data) => api.writeSession(sessionId, data).catch(() => {}));
 
-    let lastSize = "";
-    let frame = 0;
+    let resizeFrame = 0;
     const observer = new ResizeObserver(() => {
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() => {
-        if (!container.current?.offsetWidth) return;
-        fit.fit();
-        const size = `${term.cols}x${term.rows}`;
-        if (size !== lastSize) {
-          lastSize = size;
-          api.resizeSession(sessionId, term.cols, term.rows).catch(() => {});
-        }
-      });
+      cancelAnimationFrame(resizeFrame);
+      resizeFrame = requestAnimationFrame(fitNow);
     });
     observer.observe(container.current!);
+    const el = container.current!;
+    const refit = () => {
+      cancelAnimationFrame(resizeFrame);
+      resizeFrame = requestAnimationFrame(fitNow);
+    };
+    el.addEventListener("worki-refit", refit);
 
-    const onScheme = () => (term.options.theme = darkQuery.matches ? dark : light);
-    darkQuery.addEventListener("change", onScheme);
 
     return () => {
       disposed = true;
       cancelAnimationFrame(frame);
+      cancelAnimationFrame(resizeFrame);
       observer.disconnect();
-      darkQuery.removeEventListener("change", onScheme);
+      el.removeEventListener("worki-refit", refit);
       input.dispose();
       if (sinkId !== null) api.detachSession(sessionId, sinkId);
       term.dispose();
@@ -144,6 +169,18 @@ export function TerminalView({ sessionId, active }: { sessionId: string; active:
   useEffect(() => {
     if (active) termRef.current?.focus();
   }, [active]);
+
+  useEffect(() => {
+    const term = termRef.current;
+    if (term) term.options.theme = dark ? darkTheme : lightTheme;
+  }, [dark]);
+
+  useEffect(() => {
+    const term = termRef.current;
+    if (!term || term.options.fontSize === fontSize) return;
+    term.options.fontSize = fontSize;
+    container.current?.dispatchEvent(new Event("worki-refit"));
+  }, [fontSize]);
 
   return (
     <div className="h-full w-full bg-panel pt-1.5 pl-2">

@@ -4,7 +4,7 @@ import { LoaderCircle, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { api, errorMessage, type Isolation, type LocalIsolation } from "../lib/api";
-import { keys, useDoctor } from "../lib/queries";
+import { keys, useDoctor, useIsolationSettings } from "../lib/queries";
 import { AgentsPanel } from "./AgentsPanel";
 import { DoctorPanel } from "./DoctorPanel";
 import { IsolationPicker } from "./IsolationPicker";
@@ -19,6 +19,9 @@ export function IsolationDialog({ current, onClose }: { current: Isolation; onCl
   const ready = isolation.kind === "none" || (!!checks?.length && !checks.some((c) => c.fix === "provision"));
   const userExists = isolation.kind === "macUser" && !!checks?.find((c) => c.id === "user")?.ok;
   const [removing, setRemoving] = useState(false);
+  const { data: settings } = useIsolationSettings();
+  const stopOnQuit = settings?.stopOnQuit ?? false;
+
 
   async function removeUser() {
     if (isolation.kind !== "macUser") return;
@@ -50,7 +53,7 @@ export function IsolationDialog({ current, onClose }: { current: Isolation; onCl
     if (!pending || !valid || !ready || removing) return;
     const timer = setTimeout(async () => {
       try {
-        await api.saveIsolationSettings({ default: isolation });
+        await api.saveIsolationSettings({ default: isolation, stopOnQuit });
         setError(null);
         await qc.invalidateQueries({ queryKey: keys.isolationSettings });
       } catch (e) {
@@ -58,7 +61,7 @@ export function IsolationDialog({ current, onClose }: { current: Isolation; onCl
       }
     }, 400);
     return () => clearTimeout(timer);
-  }, [isolation, pending, valid, ready, removing, qc]);
+  }, [isolation, pending, valid, ready, removing, stopOnQuit, qc]);
 
   return (
     <Dialog

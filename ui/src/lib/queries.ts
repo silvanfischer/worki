@@ -25,6 +25,7 @@ export const keys = {
   sshPasswordSet: (remote: Pick<Remote, "host" | "user" | "port"> | null) =>
     ["sshPassword", remote && { host: remote.host, user: remote.user, port: remote.port }] as const,
   sshHosts: ["sshHosts"] as const,
+  environmentTemplates: (kind: string) => ["environmentTemplates", kind] as const,
   openers: ["openers"] as const,
   appIcon: (app: string) => ["appIcon", app] as const,
 };
@@ -33,6 +34,13 @@ export const useOpenerSettings = () => useQuery({ queryKey: keys.openers, queryF
 
 export const useAppIcon = (app: string) =>
   useQuery({ queryKey: keys.appIcon(app), queryFn: () => api.appIcon(app), staleTime: Infinity });
+
+export const useEnvironmentTemplates = (isolation: Isolation) =>
+  useQuery({
+    queryKey: keys.environmentTemplates(isolation.kind),
+    queryFn: () => api.environmentTemplates(isolation),
+    staleTime: 30_000,
+  });
 
 export const useIsolationSettings = () =>
   useQuery({ queryKey: keys.isolationSettings, queryFn: api.isolationSettings });

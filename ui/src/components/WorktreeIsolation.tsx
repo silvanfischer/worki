@@ -1,8 +1,17 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { Shield } from "lucide-react";
+import clsx from "clsx";
+import { Camera, ChevronDown, Shield } from "lucide-react";
 import { useState } from "react";
 
-import { api, isolationLabel, projectIsolation, type Project, type ProjectIsolation, type Worktree } from "../lib/api";
+import {
+  api,
+  type Isolation,
+  isolationLabel,
+  projectIsolation,
+  type Project,
+  type ProjectIsolation,
+  type Worktree,
+} from "../lib/api";
 import {
   keys,
   useIsolationSettings,
@@ -10,10 +19,26 @@ import {
   useSessions,
   useWorktreeIsolation,
 } from "../lib/queries";
+import { useUi } from "../lib/store";
 import { useAsyncAction } from "../lib/useAsyncAction";
 import { DoctorPanel } from "./DoctorPanel";
 import { IsolationPicker } from "./IsolationPicker";
 import { Button, Dialog, ErrorText, Field, WarnText } from "./ui";
+
+/** Where this worktree's agents run, once the settings have loaded. */
+export function useEffectiveIsolation(project: Project, worktree: Worktree): Isolation | undefined {
+  const { data } = useWorktreeIsolation(project.id, worktree.path);
+  const { data: settings } = useIsolationSettings();
+  if (!data || !settings) return undefined;
+  return data.choice.kind === "inherit" || project.remote ? projectIsolation(project, settings.default) : data.choice;
+}
+
+/** Which setting decides the worktree's isolation. */
+function isolationSource(project: Project, choice: ProjectIsolation): string {
+  if (choice.kind !== "inherit" && !project.remote) return "set for this worktree";
+  if (project.isolation.kind !== "inherit" || project.remote) return `from project ${project.name}`;
+  return "from the default in Settings › Isolation";
+}
 
 /** Header badge showing where this worktree's agents run; opens a dialog to change it. */
 export function WorktreeIsolationBadge({ project, worktree }: { project: Project; worktree: Worktree }) {
@@ -27,11 +52,17 @@ export function WorktreeIsolationBadge({ project, worktree }: { project: Project
     <>
       <button
         onClick={() => !project.remote && setOpen(true)}
-        title={project.remote ? "Remote project" : "Change this worktree's isolation"}
-        className="flex h-7 max-w-52 items-center gap-1.5 rounded-md px-2 text-xs text-muted hover:bg-hover hover:text-fg"
+        disabled={!!project.remote}
+        title={
+          project.remote
+            ? `Remote project · ${isolationLabel(effective)}`
+            : `${effective.kind === "none" ? "No isolation" : isolationLabel(effective)} · ${isolationSource(project, data.choice)} · click to change or save a snapshot`
+        }
+        className="flex h-7 max-w-40 items-center gap-1.5 rounded-md border border-line px-2 text-xs text-muted enabled:hover:border-muted enabled:hover:bg-hover enabled:hover:text-fg disabled:border-transparent"
       >
-        <Shield size={13} className={effective.kind === "none" ? "text-faint" : "text-accent"} />
-        <span className="truncate">{effective.kind === "none" ? "No isolation" : isolationLabel(effective)}</span>
+        <Shield size={13} className={clsx("shrink-0", effective.kind === "none" ? "text-faint" : "text-accent")} />
+        <span className="truncate">{shortIsolationLabel(effective)}</span>
+        {!project.remote && <ChevronDown size={12} className="shrink-0 text-faint" />}
       </button>
       {open && <WorktreeIsolationDialog project={project} worktree={worktree} current={data.choice} onClose={() => setOpen(false)} />}
     </>
@@ -50,6 +81,7 @@ function WorktreeIsolationDialog({
   onClose: () => void;
 }) {
   const qc = useQueryClient();
+  const openDialog = useUi((s) => s.openDialog);
   const [choice, setChoice] = useState<ProjectIsolation>(current);
   const { busy: saving, error, run } = useAsyncAction();
   const { data: sessions = [] } = useSessions();
@@ -67,6 +99,7 @@ function WorktreeIsolationDialog({
         await Promise.all([
           qc.invalidateQueries({ queryKey: keys.worktreeIsolation(worktree.path) }),
           qc.invalidateQueries({ queryKey: keys.sessions }),
+        qc.invalidateQueries({ queryKey: ["environmentTemplates"] }),
         ]);
       }
     });
@@ -96,6 +129,22 @@ function WorktreeIsolationDialog({
           inheritLabel={projectDefault ? isolationLabel(projectDefault) : undefined}
         />
       </Field>
+      {!changed && isContainer(current.kind === "inherit" ? projectDefault : current) && (
+        <div className="flex items-center gap-3 rounded-md border border-line p-3">
+          <p className="flex-1 text-xs leading-relaxed text-muted">
+            Save what's installed in this worktree's environment, so new worktrees start with it.
+          </p>
+          <Button
+            onClick={() => {
+              onClose();
+              openDialog({ kind: "saveEnvironment", projectId: project.id, path: worktree.path });
+            }}
+          >
+            <Camera size={13} />
+            Save snapshot…
+          </Button>
+        </div>
+      )}
       {changed && (
         <WarnText>
           {running > 0 ? `${running} running session${running === 1 ? "" : "s"} will be closed. ` : ""}
@@ -109,4 +158,25 @@ function WorktreeIsolationDialog({
       <ErrorText>{error}</ErrorText>
     </Dialog>
   );
+}
+
+export function isContainer(i: Isolation | ProjectIsolation | null | undefined): boolean {
+  return i?.kind === "dockerSandbox" || i?.kind === "docker" || i?.kind === "podman";
+}
+
+function shortIsolationLabel(i: Isolation): string {
+  switch (i.kind) {
+    case "none":
+      return "No isolation";
+    case "macUser":
+      return i.user;
+    case "dockerSandbox":
+      return "Sandbox";
+    case "docker":
+      return "Docker";
+    case "podman":
+      return "Podman";
+    case "ssh":
+      return i.host;
+  }
 }

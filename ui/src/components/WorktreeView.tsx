@@ -1,7 +1,6 @@
-import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import clsx from "clsx";
 import { useState } from "react";
-import { ArrowDown, ArrowUp, Coins, Copy, FolderOpen, GitBranch, PanelRight, Send, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Coins, GitBranch, MoreHorizontal, PanelRight, Send } from "lucide-react";
 
 import { type ChangedFile, errorMessage, type Project, type Worktree, worktreeLabel } from "../lib/api";
 import { useBranchChanges, useSessions, useWorktreeStatus } from "../lib/queries";
@@ -12,8 +11,9 @@ import { DiffView } from "./DiffView";
 import { OpenInMenu } from "./OpenInMenu";
 import { ResizeHandle } from "./ResizeHandle";
 import { SessionArea } from "./SessionArea";
-import { Button, DiffStat, ErrorText, IconButton } from "./ui";
+import { Button, DiffStat, ErrorText, IconButton, Menu, Select } from "./ui";
 import { WorktreeIsolationBadge } from "./WorktreeIsolation";
+import { worktreeActions } from "./worktreeActions";
 
 export function WorktreeView({ project, worktree }: { project: Project; worktree: Worktree }) {
   const openDialog = useUi((s) => s.openDialog);
@@ -31,6 +31,7 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
   const files = branchScope ? branch.data?.files : status?.changedFiles;
   const stats = branchScope ? branch.data : status;
   const listError = branchScope ? branch.error : error;
+  const pending = comments.length;
 
   return (
     <div className="flex h-full flex-col">
@@ -51,26 +52,25 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
         <WorktreeUsage worktreePath={worktree.path} />
         <WorktreeIsolationBadge project={project} worktree={worktree} />
         <OpenInMenu path={worktree.path} />
-        <IconButton label="Copy path" onClick={() => navigator.clipboard.writeText(worktree.path)}>
-          <Copy size={14} />
-        </IconButton>
-        <IconButton label="Reveal in Finder" onClick={() => revealItemInDir(worktree.path)}>
-          <FolderOpen size={14} />
-        </IconButton>
-        {!worktree.isMain && (
-          <IconButton
-            label="Remove worktree"
-            onClick={() => openDialog({ kind: "removeWorktree", projectId: project.id, path: worktree.path })}
-          >
-            <Trash2 size={14} />
-          </IconButton>
-        )}
+        <Menu
+          trigger={(toggle) => (
+            <IconButton label="More actions" onClick={toggle}>
+              <MoreHorizontal size={15} />
+            </IconButton>
+          )}
+          items={worktreeActions(project, worktree, openDialog)}
+        />
         <IconButton
-          label={showChanges ? "Hide changes" : "Show changes"}
+          label={`${showChanges ? "Hide" : "Show"} changes (⌘J)${pending > 0 ? ` · ${pending} review comment${pending === 1 ? "" : "s"}` : ""}`}
           onClick={toggleChanges}
-          className={clsx(showChanges && "text-fg")}
+          className={clsx("relative", showChanges && "text-fg")}
         >
           <PanelRight size={14} />
+          {pending > 0 && (
+            <span className="absolute -top-0.5 -right-0.5 flex size-3.5 items-center justify-center rounded-full bg-accent text-[9px] font-semibold text-accent-fg">
+              {pending}
+            </span>
+          )}
         </IconButton>
       </header>
 
@@ -83,6 +83,7 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
           <section className="relative min-h-0 shrink-0 border-l border-line" style={{ width: widths.diff }}>
             <ResizeHandle panel="diff" edge="left" />
             <DiffView
+              key={`${diffFile}:${branchScope}`}
               worktreePath={worktree.path}
               file={diffFile}
               base={branchScope ? base : null}
@@ -169,13 +170,12 @@ function ReviewBar({ worktreePath, onOpen }: { worktreePath: string; onOpen: (fi
   const activeId = useUi((s) => s.activeSession[worktreePath]);
   const setActive = useUi((s) => s.setActiveSession);
   const [error, setError] = useState<string | null>(null);
+  const [picked, setPicked] = useState<string | null>(null);
   if (comments.length === 0)
     return <p className="border-t border-line px-3 py-2 text-[11px] text-faint">Hover a line in a diff to comment on it.</p>;
 
-  const target = reviewTarget(
-    sessions.filter((s) => s.worktreePath === worktreePath),
-    activeId,
-  );
+  const agents = sessions.filter((s) => s.worktreePath === worktreePath && s.profileId && s.state.kind === "running");
+  const target = agents.find((s) => s.id === picked) ?? reviewTarget(agents, activeId);
   const files = [...new Set(comments.map((c) => c.file))];
 
   async function send() {
@@ -207,6 +207,23 @@ function ReviewBar({ worktreePath, onOpen }: { worktreePath: string; onOpen: (fi
           </button>
         ))}
       </div>
+      {agents.length > 1 && target && (
+        <label className="flex items-center gap-2 text-[11px] text-muted">
+          To
+          <Select
+            value={target.id}
+            onChange={(e) => setPicked(e.target.value)}
+            className="h-7 min-w-0 flex-1 text-xs"
+          >
+            {agents.map((a, i) => (
+              <option key={a.id} value={a.id}>
+                {a.title} {i + 1}
+                {a.id === activeId ? " (open tab)" : ""}
+              </option>
+            ))}
+          </Select>
+        </label>
+      )}
       <Button
         variant="primary"
         onClick={send}

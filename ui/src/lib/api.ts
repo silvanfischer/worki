@@ -3,7 +3,7 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 export type Isolation =
   | { kind: "none" }
   | { kind: "macUser"; user: string }
-  | { kind: "dockerSandbox"; image: string }
+  | { kind: "dockerSandbox"; image: string; template?: string | null }
   | { kind: "docker"; image: string }
   | { kind: "podman"; image: string }
   | ({ kind: "ssh" } & Remote);
@@ -39,6 +39,7 @@ export function remoteLabel(r: Pick<Remote, "host" | "user" | "port">): string {
 
 export interface IsolationSettings {
   default: Isolation;
+  stopOnQuit: boolean;
 }
 
 export type Fix = "provision" | "prepare" | "grantAccess" | "buildImage";
@@ -86,7 +87,7 @@ export function isolationLabel(i: Isolation): string {
   if (i.kind === "ssh") return `SSH · ${remoteLabel(i)}`;
   if (i.kind === "docker") return `Docker · ${i.image}`;
   if (i.kind === "podman") return `Podman · ${i.image}`;
-  return `Docker Sandbox · ${i.image}`;
+  return `Docker Sandbox · ${i.template ?? i.image}`;
 }
 
 export interface Project {
@@ -168,6 +169,22 @@ export interface AgentProfile {
   install: string | null;
 }
 
+/** The flag an agent takes to run without permission prompts, for agents that have one. */
+export function skipPermissionsFlag(command: string): string | null {
+  const exe = command.trim().split(/\s+/)[0];
+  if (exe === "claude") return "--dangerously-skip-permissions";
+  if (exe === "codex") return "--dangerously-bypass-approvals-and-sandbox";
+  return null;
+}
+
+/** `command` with the agent's skip-permissions flag added or removed. */
+export function withSkipPermissions(command: string, on: boolean): string {
+  const flag = skipPermissionsFlag(command);
+  if (!flag) return command;
+  const words = command.trim().split(/\s+/).filter((w) => w !== flag);
+  return (on ? [...words, flag] : words).join(" ");
+}
+
 export interface AgentSettings {
   profiles: AgentProfile[];
   defaultProfile: string | null;
@@ -234,6 +251,9 @@ export const api = {
   worktreeStatus: (path: string) => invoke<WorktreeStatus>("worktree_status", { path }),
   fileDiff: (worktreePath: string, file: string, base: string | null) =>
     invoke<string>("file_diff", { worktreePath, file, base }),
+  environmentTemplates: (isolation: Isolation) => invoke<string[]>("environment_templates", { isolation }),
+  saveEnvironmentTemplate: (projectId: string, worktreePath: string, tag: string, useForProject: boolean) =>
+    invoke<Project>("save_environment_template", { projectId, worktreePath, tag, useForProject }),
   branchChanges: (worktreePath: string, base: string) =>
     invoke<BranchChanges>("branch_changes", { worktreePath, base }),
   createWorktree: (
@@ -251,8 +271,14 @@ export const api = {
   saveAgentSettings: (settings: AgentSettings) => invoke<void>("save_agent_settings", { settings }),
 
   listSessions: () => invoke<SessionInfo[]>("list_sessions"),
-  spawnSession: (projectId: string, worktreePath: string, profileId: string | null, cols: number, rows: number) =>
-    invoke<SessionInfo>("spawn_session", { projectId, worktreePath, profileId, cols, rows }),
+  spawnSession: (
+    projectId: string,
+    worktreePath: string,
+    profileId: string | null,
+    cols: number,
+    rows: number,
+    resumeId: string | null = null,
+  ) => invoke<SessionInfo>("spawn_session", { projectId, worktreePath, profileId, resumeId, cols, rows }),
   attachSession: (id: string, onData: (bytes: Uint8Array) => void) => {
     const channel = new Channel<ArrayBuffer | number[]>();
     channel.onmessage = (data) => onData(new Uint8Array(data));
@@ -265,6 +291,8 @@ export const api = {
   reconnectSession: (id: string, cols: number, rows: number) =>
     invoke<SessionInfo>("reconnect_session", { id, cols, rows }),
   restoreRemoteSessions: () => invoke<number>("restore_remote_sessions"),
+  dismissAttention: (id: string) => invoke<void>("dismiss_attention", { id }),
+  restoreAgentSessions: () => invoke<{ started: number; failed: string[] }>("restore_agent_sessions"),
 
   isolationSettings: () => invoke<IsolationSettings>("isolation_settings"),
   saveIsolationSettings: (settings: IsolationSettings) => invoke<void>("save_isolation_settings", { settings }),

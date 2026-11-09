@@ -1,9 +1,10 @@
 import { useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { Bot, Plus, RotateCcw, SquareTerminal, X } from "lucide-react";
+import { Bot, LoaderCircle, Plus, RotateCcw, SquareTerminal, X } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 
-import { api, errorMessage, type Project, type SessionInfo, type Worktree } from "../lib/api";
+import { api, errorMessage, type Project, type SessionInfo, skipPermissionsFlag, type Worktree } from "../lib/api";
+import { onCommand } from "../lib/commands";
 import { keys, useAgentSettings, useSessions } from "../lib/queries";
 import { useUi } from "../lib/store";
 import { formatTokens, totalUsage, usageDetails } from "../lib/usage";
@@ -21,7 +22,7 @@ export function SessionArea({ project, worktree }: { project: Project; worktree:
   const activeId = useUi((s) => s.activeSession[worktree.path]);
   const setActive = useUi((s) => s.setActiveSession);
   const [error, setError] = useState<string | null>(null);
-  const [starting, setStarting] = useState(false);
+  const [starting, setStarting] = useState<string | null>(null);
 
   const sessions = allSessions.filter((s) => s.worktreePath === worktree.path);
   const active = sessions.find((s) => s.id === activeId) ?? sessions[sessions.length - 1];
@@ -29,11 +30,20 @@ export function SessionArea({ project, worktree }: { project: Project; worktree:
   const defaultProfile = profiles.find((p) => p.id === agents?.defaultProfile) ?? profiles[0];
 
   const spawn = useCallback(
-    async (profileId: string | null) => {
+    async (profileId: string | null, resumeId: string | null = null) => {
       setError(null);
-      setStarting(true);
+      setStarting(
+        resumeId ? "Resuming…" : `Starting ${profiles.find((p) => p.id === profileId)?.name ?? "shell"}…`,
+      );
       try {
-        const info = await api.spawnSession(project.id, worktree.path, profileId, INITIAL_COLS, INITIAL_ROWS);
+        const info = await api.spawnSession(
+          project.id,
+          worktree.path,
+          profileId,
+          INITIAL_COLS,
+          INITIAL_ROWS,
+          resumeId,
+        );
         qc.setQueryData<SessionInfo[]>(keys.sessions, (old = []) =>
           old.some((s) => s.id === info.id) ? old : [...old, info],
         );
@@ -41,10 +51,10 @@ export function SessionArea({ project, worktree }: { project: Project; worktree:
       } catch (e) {
         setError(errorMessage(e));
       } finally {
-        setStarting(false);
+        setStarting(null);
       }
     },
-    [project.id, worktree.path, qc, setActive],
+    [project.id, worktree.path, qc, setActive, profiles],
   );
 
   async function close(session: SessionInfo) {
@@ -52,9 +62,12 @@ export function SessionArea({ project, worktree }: { project: Project; worktree:
     qc.setQueryData<SessionInfo[]>(keys.sessions, (old = []) => old.filter((s) => s.id !== session.id));
   }
 
+  const resumes = (session: SessionInfo) =>
+    profiles.find((p) => p.id === session.profileId)?.command.trim().split(/\s+/)[0] === "claude";
+
   async function restart(session: SessionInfo) {
     await close(session);
-    await spawn(session.profileId);
+    await spawn(session.profileId, resumes(session) ? session.id : null);
   }
 
   async function reconnect(session: SessionInfo) {
@@ -67,16 +80,37 @@ export function SessionArea({ project, worktree }: { project: Project; worktree:
     }
   }
 
+  const sessionIds = sessions.map((s) => s.id).join(",");
   useEffect(() => {
+    const ids = sessionIds ? sessionIds.split(",") : [];
+    const step = (by: number) => {
+      if (ids.length === 0) return;
+      const at = Math.max(0, ids.indexOf(active?.id ?? ""));
+      setActive(worktree.path, ids[(at + by + ids.length) % ids.length]);
+    };
+    const offCommand = onCommand((c) => {
+      if (c.kind === "newSession") spawn(c.profileId);
+      else if (c.kind === "nextTab") step(c.step);
+    });
     const onKey = (e: KeyboardEvent) => {
-      if (e.metaKey && !e.shiftKey && e.key === "t") {
+      if (!e.metaKey) return;
+      if (e.key.toLowerCase() === "t") {
         e.preventDefault();
-        spawn(null);
+        spawn(e.shiftKey ? null : (defaultProfile?.id ?? null));
+      } else if (e.shiftKey && (e.key === "[" || e.key === "{")) {
+        e.preventDefault();
+        step(-1);
+      } else if (e.shiftKey && (e.key === "]" || e.key === "}")) {
+        e.preventDefault();
+        step(1);
       }
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [spawn]);
+    return () => {
+      offCommand();
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [spawn, sessionIds, active?.id, defaultProfile?.id, setActive, worktree.path]);
 
   const newMenu = [
     ...profiles.map((p) => ({ label: p.name, icon: <Bot size={13} />, onSelect: () => spawn(p.id) })),
@@ -107,7 +141,13 @@ export function SessionArea({ project, worktree }: { project: Project; worktree:
             Shell
           </Button>
         </div>
-        {starting && <p className="text-xs text-faint">Starting…</p>}
+        <p className="text-[11px] text-faint">
+          {starting ?? (
+            <>
+              <Kbd>⌘T</Kbd> starts {defaultProfile?.name ?? "an agent"}, <Kbd>⌘⇧T</Kbd> a shell
+            </>
+          )}
+        </p>
         <ErrorText>{error}</ErrorText>
       </div>
     );
@@ -121,11 +161,18 @@ export function SessionArea({ project, worktree }: { project: Project; worktree:
             <SessionTab
               key={s.id}
               session={s}
+              yolo={isYolo(profiles.find((p) => p.id === s.profileId)?.command)}
               selected={s.id === active?.id}
               onSelect={() => setActive(worktree.path, s.id)}
               onClose={() => close(s)}
             />
           ))}
+          {starting && (
+            <span className="flex h-7 shrink-0 items-center gap-2 rounded-md px-2.5 text-muted">
+              <LoaderCircle size={12} className="animate-spin" />
+              {starting}
+            </span>
+          )}
         </div>
         <Menu
           trigger={(toggle) => (
@@ -162,9 +209,13 @@ export function SessionArea({ project, worktree }: { project: Project; worktree:
                 </>
               }
             >
-              <Button onClick={() => restart(active)}>
+              <Button
+                variant="primary"
+                onClick={() => restart(active)}
+                title={resumes(active) ? "Starts Claude again in this conversation" : undefined}
+              >
                 <RotateCcw size={12} />
-                Restart
+                {resumes(active) ? "Continue conversation" : "Start again"}
               </Button>
               <Button variant="ghost" onClick={() => close(active)}>
                 Close
@@ -185,13 +236,24 @@ function ExitBanner({ message, children }: { message: ReactNode; children: React
   );
 }
 
+function isYolo(command: string | undefined): boolean {
+  const flag = command && skipPermissionsFlag(command);
+  return !!flag && command.split(/\s+/).includes(flag);
+}
+
+function Kbd({ children }: { children: ReactNode }) {
+  return <kbd className="rounded border border-line px-1 font-sans text-[10px] text-muted">{children}</kbd>;
+}
+
 function SessionTab({
   session,
+  yolo,
   selected,
   onSelect,
   onClose,
 }: {
   session: SessionInfo;
+  yolo: boolean;
   selected: boolean;
   onSelect: () => void;
   onClose: () => void;
@@ -211,6 +273,14 @@ function SessionTab({
         title={session.attention ? `Waiting: ${session.attention}` : stateLabel[sessionState(session)]}
       />
       <span className="max-w-40 truncate">{session.title}</span>
+      {yolo && (
+        <span
+          className="rounded bg-warn/15 px-1 text-[10px] font-semibold text-warn"
+          title="YOLO mode: runs commands and edits without asking"
+        >
+          YOLO
+        </span>
+      )}
       <UsageBadge session={session} />
       {session.runAs && (
         <span className="rounded bg-hover px-1 font-mono text-[10px] text-faint" title={`Runs as ${session.runAs}`}>

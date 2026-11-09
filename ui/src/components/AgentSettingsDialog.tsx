@@ -2,9 +2,9 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-import { type AgentProfile, type AgentSettings, api, errorMessage } from "../lib/api";
+import { type AgentProfile, type AgentSettings, api, errorMessage, skipPermissionsFlag, withSkipPermissions } from "../lib/api";
 import { keys } from "../lib/queries";
-import { Button, Dialog, ErrorText, IconButton, Input } from "./ui";
+import { Button, Checkbox, Dialog, ErrorText, IconButton, Input } from "./ui";
 
 /** Saved as you type; rows missing a name or command are kept here until they're complete. */
 export function AgentSettingsDialog({ settings, onClose }: { settings: AgentSettings; onClose: () => void }) {
@@ -80,6 +80,23 @@ export function AgentSettingsDialog({ settings, onClose }: { settings: AgentSett
               className="h-7 font-mono text-[11px]"
             />
             <span />
+            {skipPermissionsFlag(p.command) && (
+              <>
+                <span />
+                <span />
+                <Checkbox
+                  checked={p.command.split(/\s+/).includes(skipPermissionsFlag(p.command)!)}
+                  onChange={(on) => update(i, { command: withSkipPermissions(p.command, on) })}
+                >
+                  <span className="text-[13px]">YOLO mode</span>
+                  <span className="block text-xs text-faint">
+                    Adds <span className="font-mono">{skipPermissionsFlag(p.command)}</span> to the command: the agent
+                    runs every command and edit without asking. Best used with isolation.
+                  </span>
+                </Checkbox>
+                <span />
+              </>
+            )}
           </div>
         ))}
       </div>
