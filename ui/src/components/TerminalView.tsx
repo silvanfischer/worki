@@ -1,0 +1,153 @@
+import "@xterm/xterm/css/xterm.css";
+
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { FitAddon } from "@xterm/addon-fit";
+import { Unicode11Addon } from "@xterm/addon-unicode11";
+import { WebLinksAddon } from "@xterm/addon-web-links";
+import { WebglAddon } from "@xterm/addon-webgl";
+import { type ITheme, Terminal } from "@xterm/xterm";
+import { useEffect, useRef } from "react";
+
+import { api } from "../lib/api";
+
+const dark: ITheme = {
+  background: "#1c1c1e",
+  foreground: "#e5e5ea",
+  cursor: "#e5e5ea",
+  cursorAccent: "#1c1c1e",
+  selectionBackground: "#3a3a5c",
+  black: "#1c1c1e",
+  red: "#ff6b6b",
+  green: "#3fb950",
+  yellow: "#e3b341",
+  blue: "#6cb6ff",
+  magenta: "#c297ff",
+  cyan: "#56d4dd",
+  white: "#e5e5ea",
+  brightBlack: "#6e6e73",
+  brightRed: "#ff8787",
+  brightGreen: "#56d364",
+  brightYellow: "#f2cc60",
+  brightBlue: "#91cbff",
+  brightMagenta: "#d2a8ff",
+  brightCyan: "#76e3ea",
+  brightWhite: "#ffffff",
+};
+
+const light: ITheme = {
+  background: "#ffffff",
+  foreground: "#1d1d1f",
+  cursor: "#1d1d1f",
+  cursorAccent: "#ffffff",
+  selectionBackground: "#c7d2fe",
+  black: "#1d1d1f",
+  red: "#cf222e",
+  green: "#1a7f37",
+  yellow: "#9a6700",
+  blue: "#0969da",
+  magenta: "#8250df",
+  cyan: "#1b7c83",
+  white: "#6e7781",
+  brightBlack: "#57606a",
+  brightRed: "#a40e26",
+  brightGreen: "#2da44e",
+  brightYellow: "#bf8700",
+  brightBlue: "#218bff",
+  brightMagenta: "#a475f9",
+  brightCyan: "#3192aa",
+  brightWhite: "#8c959f",
+};
+
+const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
+
+export function TerminalView({ sessionId, active }: { sessionId: string; active: boolean }) {
+  const container = useRef<HTMLDivElement>(null);
+  const termRef = useRef<Terminal | null>(null);
+
+  useEffect(() => {
+    const term = new Terminal({
+      allowProposedApi: true,
+      fontFamily: '"SF Mono", Menlo, Monaco, monospace',
+      fontSize: 13,
+      lineHeight: 1.15,
+      cursorBlink: true,
+      scrollback: 10_000,
+      theme: darkQuery.matches ? dark : light,
+      macOptionClickForcesSelection: true,
+    });
+    termRef.current = term;
+    const fit = new FitAddon();
+    term.loadAddon(fit);
+    term.loadAddon(new Unicode11Addon());
+    term.unicode.activeVersion = "11";
+    term.loadAddon(new WebLinksAddon((_e, uri) => openUrl(uri)));
+    term.open(container.current!);
+    try {
+      const webgl = new WebglAddon();
+      webgl.onContextLoss(() => webgl.dispose());
+      term.loadAddon(webgl);
+    } catch {
+      // Falls back to the DOM renderer.
+    }
+
+    term.attachCustomKeyEventHandler((e) => {
+      if (e.type === "keydown" && e.metaKey && e.key === "k") {
+        term.clear();
+        return false;
+      }
+      return true;
+    });
+
+    let disposed = false;
+    let sinkId: number | null = null;
+    api
+      .attachSession(sessionId, (bytes) => term.write(bytes))
+      .then((id) => {
+        if (disposed) api.detachSession(sessionId, id);
+        else sinkId = id;
+      })
+      .catch((e) => term.write(`\r\n\x1b[31m${String(e)}\x1b[0m\r\n`));
+
+    const input = term.onData((data) => api.writeSession(sessionId, data).catch(() => {}));
+
+    let lastSize = "";
+    let frame = 0;
+    const observer = new ResizeObserver(() => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        if (!container.current?.offsetWidth) return;
+        fit.fit();
+        const size = `${term.cols}x${term.rows}`;
+        if (size !== lastSize) {
+          lastSize = size;
+          api.resizeSession(sessionId, term.cols, term.rows).catch(() => {});
+        }
+      });
+    });
+    observer.observe(container.current!);
+
+    const onScheme = () => (term.options.theme = darkQuery.matches ? dark : light);
+    darkQuery.addEventListener("change", onScheme);
+
+    return () => {
+      disposed = true;
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+      darkQuery.removeEventListener("change", onScheme);
+      input.dispose();
+      if (sinkId !== null) api.detachSession(sessionId, sinkId);
+      term.dispose();
+      termRef.current = null;
+    };
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (active) termRef.current?.focus();
+  }, [active]);
+
+  return (
+    <div className="h-full w-full bg-panel pt-1.5 pl-2">
+      <div ref={container} className="h-full w-full" />
+    </div>
+  );
+}
