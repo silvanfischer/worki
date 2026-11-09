@@ -76,6 +76,16 @@ impl SshHost {
     }
 }
 
+/// An agent session to start again, resuming its conversation, when worki restarts.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedSession {
+    pub id: String,
+    pub project_id: String,
+    pub worktree_path: PathBuf,
+    pub profile_id: String,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectPatch {
@@ -311,6 +321,9 @@ impl AgentSettings {
 pub struct IsolationSettings {
     /// Used by projects whose isolation is `inherit`.
     pub default: Isolation,
+    /// Stop worktree containers and sandboxes when worki quits instead of leaving them running.
+    #[serde(default)]
+    pub stop_on_quit: bool,
 }
 
 #[cfg(test)]

@@ -1,9 +1,10 @@
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use tauri::ipc::{Channel, InvokeResponseBody};
-use tauri::State;
+use tauri::{Manager, State};
 use worki_core::launch::{session_env, session_request};
-use worki_core::{Host, Isolation, Project};
+use worki_core::{Host, Isolation, Project, SavedSession};
 use worki_isolation::ssh::{Ssh, SshTarget};
 use worki_isolation::SessionMeta;
 use worki_pty::{SessionInfo, SessionState, SpawnSpec};
@@ -15,13 +16,42 @@ pub fn list_sessions(state: State<'_, AppState>) -> Vec<SessionInfo> {
     state.sessions.list()
 }
 
-/// `profile_id: None` opens a plain shell. Runs inside the project's isolation.
+/// `profile_id: None` opens a plain shell. Runs inside the project's isolation. `resume_id`
+/// reuses a closed session's id, so a Claude session continues its conversation.
 #[tauri::command]
 pub async fn spawn_session(
     state: State<'_, AppState>,
     project_id: String,
     worktree_path: PathBuf,
     profile_id: Option<String>,
+    resume_id: Option<String>,
+    cols: u16,
+    rows: u16,
+) -> CmdResult<SessionInfo> {
+    if let Some(id) = &resume_id {
+        if state.sessions.list().iter().any(|s| &s.id == id) {
+            return Err(format!("session {id} is still open"));
+        }
+    }
+    start_session(
+        &state,
+        project_id,
+        worktree_path,
+        profile_id,
+        resume_id,
+        cols,
+        rows,
+    )
+    .await
+}
+
+/// Starts a session, under `id` when it is one worki ran before and should resume.
+async fn start_session(
+    state: &AppState,
+    project_id: String,
+    worktree_path: PathBuf,
+    profile_id: Option<String>,
+    id: Option<String>,
     cols: u16,
     rows: u16,
 ) -> CmdResult<SessionInfo> {
@@ -78,7 +108,7 @@ pub async fn spawn_session(
         .await
         .map_err(err)?;
 
-    let id = uuid::Uuid::new_v4().to_string();
+    let id = id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let title = profile
         .as_ref()
         .map(|p| p.name.clone())
@@ -90,12 +120,31 @@ pub async fn spawn_session(
         title: title.clone(),
         profile_id: profile_id.clone(),
     };
-    let req = session_request(profile.as_ref(), &worktree_path, env, Some(meta));
+    let confined = !matches!(isolation, Isolation::None | Isolation::Ssh { .. });
+    let req = session_request(profile.as_ref(), &worktree_path, env, Some(meta), confined);
     let backend_isolation = isolation.clone();
     let launch = blocking(move || backend_isolation.backend().launch(&req)).await?;
 
     let remote = project.remote.is_some();
-    state
+    let resumable = matches!(
+        isolation,
+        Isolation::Ssh {
+            keep_alive: true,
+            ..
+        }
+    );
+    let saved = match (&profile, &profile_id) {
+        (Some(p), Some(profile_id)) if p.executable() == Some("claude") && !resumable => {
+            Some(SavedSession {
+                id: id.clone(),
+                project_id: project.id.clone(),
+                worktree_path: worktree_path.clone(),
+                profile_id: profile_id.clone(),
+            })
+        }
+        _ => None,
+    };
+    let info = state
         .sessions
         .spawn(SpawnSpec {
             id,
@@ -108,17 +157,77 @@ pub async fn spawn_session(
             clear_env: launch.clear_env,
             run_as: (isolation != Isolation::None).then(|| isolation.label()),
             cwd: remote.then_some(launch.cwd),
-            resumable: matches!(
-                isolation,
-                Isolation::Ssh {
-                    keep_alive: true,
-                    ..
-                }
-            ),
+            resumable,
             cols,
             rows,
         })
-        .map_err(err)
+        .map_err(err)?;
+    if let Some(saved) = saved {
+        if let Err(e) = projects.save_session(saved) {
+            tracing::warn!("saving session {}: {e:#}", info.id);
+        }
+    }
+    Ok(info)
+}
+
+/// Starts the Claude sessions that were open when worki last quit again, all at once, resuming
+/// their conversations.
+#[tauri::command]
+pub async fn restore_agent_sessions(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> CmdResult<RestoreReport> {
+    static RESTORED: AtomicBool = AtomicBool::new(false);
+    if RESTORED.swap(true, Ordering::SeqCst) {
+        return Ok(RestoreReport::default());
+    }
+    let saved = state.projects.saved_sessions().map_err(err)?;
+    let running = state.sessions.list();
+    let mut tasks = Vec::new();
+    for s in saved {
+        if running.iter().any(|r| r.id == s.id) {
+            continue;
+        }
+        let gone = match state.projects.project(&s.project_id) {
+            Ok(p) => p.remote.is_none() && !s.worktree_path.is_dir(),
+            Err(_) => true,
+        };
+        if gone {
+            state.projects.forget_session(&s.id).ok();
+            continue;
+        }
+        let app = app.clone();
+        tasks.push(tauri::async_runtime::spawn(async move {
+            let state = app.state::<AppState>();
+            let id = s.id.clone();
+            start_session(
+                &state,
+                s.project_id,
+                s.worktree_path,
+                Some(s.profile_id),
+                Some(s.id),
+                120,
+                32,
+            )
+            .await
+            .map(drop)
+            .inspect_err(|e| tracing::warn!("resuming session {id}: {e}"))
+        }));
+    }
+    let mut report = RestoreReport::default();
+    for task in tasks {
+        match task.await.map_err(err).and_then(|r| r) {
+            Ok(()) => report.started += 1,
+            Err(e) => report.failed.push(e),
+        }
+    }
+    Ok(report)
+}
+
+#[derive(Default, serde::Serialize)]
+pub struct RestoreReport {
+    started: usize,
+    failed: Vec<String>,
 }
 
 /// The kept-alive remote session behind `info`, if it has one.
@@ -333,13 +442,20 @@ pub fn resize_session(
 }
 
 #[tauri::command]
+pub fn dismiss_attention(state: State<'_, AppState>, id: String) -> CmdResult<()> {
+    state.sessions.dismiss_attention(&id).map_err(err)
+}
+
+#[tauri::command]
 pub fn kill_session(state: State<'_, AppState>, id: String) -> CmdResult<()> {
     end_remote(&state, &id);
+    state.projects.forget_session(&id).ok();
     state.sessions.kill(&id).map_err(err)
 }
 
 #[tauri::command]
 pub fn close_session(state: State<'_, AppState>, id: String) -> CmdResult<()> {
     end_remote(&state, &id);
+    state.projects.forget_session(&id).ok();
     state.sessions.close(&id).map_err(err)
 }

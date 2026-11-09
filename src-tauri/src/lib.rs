@@ -124,9 +124,13 @@ pub fn run() {
             sessions::write_session,
             sessions::resize_session,
             sessions::kill_session,
+            sessions::dismiss_attention,
             sessions::close_session,
             sessions::reconnect_session,
             sessions::restore_remote_sessions,
+            sessions::restore_agent_sessions,
+            commands::save_environment_template,
+            commands::environment_templates,
         ])
         .build(tauri::generate_context!())
         .expect("error while building worki");
@@ -135,10 +139,15 @@ pub fn run() {
         if let RunEvent::Exit = event {
             let state = app.state::<AppState>();
             state.sessions.kill_all();
-            // Pause per-worktree environments (Docker sandboxes); the next session resumes them.
-            for isolation in state.projects.isolations_in_use().unwrap_or_default() {
-                if let Err(e) = isolation.backend().shutdown() {
-                    tracing::warn!("stopping {}: {e:#}", isolation.label());
+            let stop = state
+                .projects
+                .isolation_settings()
+                .is_ok_and(|s| s.stop_on_quit);
+            if stop {
+                for isolation in state.projects.isolations_in_use().unwrap_or_default() {
+                    if let Err(e) = isolation.backend().shutdown() {
+                        tracing::warn!("stopping {}: {e:#}", isolation.label());
+                    }
                 }
             }
         }

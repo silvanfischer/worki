@@ -185,6 +185,33 @@ pub async fn file_diff(
 }
 
 #[tauri::command]
+pub async fn environment_templates(
+    state: State<'_, AppState>,
+    isolation: Isolation,
+) -> CmdResult<Vec<String>> {
+    state
+        .projects
+        .environment_templates(isolation)
+        .await
+        .map_err(err)
+}
+
+#[tauri::command]
+pub async fn save_environment_template(
+    state: State<'_, AppState>,
+    project_id: String,
+    worktree_path: PathBuf,
+    tag: String,
+    use_for_project: bool,
+) -> CmdResult<Project> {
+    state
+        .projects
+        .save_environment_template(&project_id, &worktree_path, &tag, use_for_project)
+        .await
+        .map_err(err)
+}
+
+#[tauri::command]
 pub async fn branch_changes(
     state: State<'_, AppState>,
     worktree_path: PathBuf,

@@ -29,27 +29,49 @@ pub fn session_request(
     cwd: &Path,
     env: Vec<(String, String)>,
     session: Option<SessionMeta>,
+    confined: bool,
 ) -> LaunchRequest {
     LaunchRequest {
         cwd: cwd.into(),
-        command: profile.map(agent_command),
+        command: profile
+            .map(|p| agent_command(p, session.as_ref().map(|s| s.id.as_str()), confined)),
         interactive: true,
         env,
         session,
     }
 }
 
-fn agent_command(profile: &AgentProfile) -> String {
+/// `confined`: worki's isolation already keeps the agent in its worktree, so Claude Code's own
+/// sandbox is turned off; it only got in the way there (e.g. it hides the system CA bundle).
+fn agent_command(profile: &AgentProfile, session_id: Option<&str>, confined: bool) -> String {
     match profile.executable() {
         // Claude runs hooks without a controlling terminal, so the shell records the session's
         // terminal device first and the hooks write there.
-        Some("claude") => format!(
-            "export WORKI_TTY=\"$(tty)\"; exec {} --settings {}",
-            profile.command,
-            shell_quote(&claude_status_hooks())
-        ),
+        Some("claude") => {
+            let hooks = shell_quote(&claude_settings(confined));
+            match session_id {
+                Some(id) => format!(
+                    "export WORKI_TTY=\"$(tty)\"; {} exec {} --settings {hooks} \"$@\"",
+                    claude_conversation(id),
+                    profile.command,
+                ),
+                None => format!(
+                    "export WORKI_TTY=\"$(tty)\"; exec {} --settings {hooks}",
+                    profile.command
+                ),
+            }
+        }
         _ => format!("exec {}", profile.command),
     }
+}
+
+/// Names Claude's conversation after the worki session, so starting the session again (after
+/// worki restarted) resumes it once Claude has saved a transcript for it.
+fn claude_conversation(id: &str) -> String {
+    let id = shell_quote(id);
+    format!(
+        "if ls \"${{CLAUDE_CONFIG_DIR:-$HOME/.claude}}\"/projects/*/{id}.jsonl >/dev/null 2>&1; then set -- --resume {id}; else set -- --session-id {id}; fi;"
+    )
 }
 
 /// Extra Claude Code settings (passed with `--settings`, so the user's own settings files stay
@@ -57,27 +79,34 @@ fn agent_command(profile: &AgentProfile) -> String {
 /// where the PTY reader picks it up. Going through the terminal works the same for every
 /// isolation: as the user, as an agent user, inside a sandbox. Inside tmux (kept-alive remote
 /// sessions) the marker is wrapped so tmux passes it through.
-fn claude_status_hooks() -> String {
-    let marker = |state: &str| {
-        serde_json::json!([{ "hooks": [{
-            "type": "command",
-            "command": format!(
-                "[ -n \"$WORKI_TTY\" ] && {{ if [ -n \"$TMUX\" ]; then printf '\\033Ptmux;\\033\\033]777;worki;{state}\\007\\033\\\\'; else printf '\\033]777;worki;{state}\\007'; fi; }} > \"$WORKI_TTY\" 2>/dev/null || true"
-            ),
-        }]}])
-    };
+fn claude_settings(confined: bool) -> String {
+    // `$s` holds the state; the marker is wrapped for tmux when the session runs inside it.
+    let print = "[ -n \"$WORKI_TTY\" ] && { if [ -n \"$TMUX\" ]; then printf '\\033Ptmux;\\033\\033]777;worki;%s\\007\\033\\\\' \"$s\"; else printf '\\033]777;worki;%s\\007' \"$s\"; fi; } > \"$WORKI_TTY\" 2>/dev/null || true";
+    let hook = |command: String| serde_json::json!({ "type": "command", "command": command });
+    let marker =
+        |state: &str| serde_json::json!([{ "hooks": [hook(format!("s={state}; {print}"))] }]);
+    // A question to the user arrives as a tool call; it waits for an answer rather than working.
+    let before_tool = serde_json::json!([{ "hooks": [hook(format!(
+        "s=working; grep -q '\"tool_name\" *: *\"AskUserQuestion\"' && s=waiting; {print}"
+    ))] }]);
     let mut stop = marker("waiting");
     stop[0]["hooks"]
         .as_array_mut()
         .expect("marker hooks")
-        .push(serde_json::json!({ "type": "command", "command": USAGE_HOOK }));
-    serde_json::json!({ "hooks": {
+        .push(hook(USAGE_HOOK.into()));
+    let mut settings = serde_json::json!({ "hooks": {
         "UserPromptSubmit": marker("working"),
-        "PreToolUse": marker("working"),
+        "PreToolUse": before_tool,
+        // Fires as the permission prompt appears; Notification only follows about 6 s later.
+        "PermissionRequest": marker("waiting"),
+        "PostToolUse": marker("working"),
         "Stop": stop,
         "Notification": marker("waiting"),
-    }})
-    .to_string()
+    }});
+    if confined {
+        settings["sandbox"] = serde_json::json!({ "enabled": false });
+    }
+    settings.to_string()
 }
 
 /// Adds up the token usage in the conversation's transcript (path from the hook's JSON input)
@@ -156,13 +185,50 @@ mod tests {
             Path::new("/w"),
             session_env("s1", Path::new("/w")),
             None,
+            false,
         );
         assert_eq!(req.command.as_deref(), Some("exec aider --verbose"));
         assert!(req.env.contains(&("WORKI_SESSION_ID".into(), "s1".into())));
         assert_eq!(
-            session_request(None, Path::new("/w"), vec![], None).command,
+            session_request(None, Path::new("/w"), vec![], None, false).command,
             None
         );
+    }
+
+    #[test]
+    fn claude_resumes_its_conversation_once_saved() {
+        let p = AgentProfile {
+            id: "c".into(),
+            name: "C".into(),
+            command: "claude".into(),
+            install: None,
+        };
+        let meta = SessionMeta {
+            id: "abc".into(),
+            title: "C".into(),
+            profile_id: None,
+        };
+        let command = session_request(Some(&p), Path::new("/w"), vec![], Some(meta), false)
+            .command
+            .unwrap();
+        let run = |home: &Path| {
+            let out = std::process::Command::new("/bin/sh")
+                .args([
+                    "-c",
+                    &command.replacen("exec claude --settings", "printf '%s ' x", 1),
+                ])
+                .env("HOME", home)
+                .env_remove("CLAUDE_CONFIG_DIR")
+                .output()
+                .unwrap();
+            String::from_utf8(out.stdout).unwrap()
+        };
+        let home = tempfile::tempdir().unwrap();
+        assert!(run(home.path()).ends_with("--session-id abc "));
+        let project = home.path().join(".claude/projects/-w");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(project.join("abc.jsonl"), "").unwrap();
+        assert!(run(home.path()).ends_with("--resume abc "));
     }
 
     #[test]
@@ -173,7 +239,7 @@ mod tests {
             command: "claude".into(),
             install: None,
         };
-        let command = session_request(Some(&p), Path::new("/w"), vec![], None)
+        let command = session_request(Some(&p), Path::new("/w"), vec![], None, false)
             .command
             .unwrap();
         assert!(command.starts_with("export WORKI_TTY=\"$(tty)\"; exec claude --settings '"));
@@ -186,6 +252,10 @@ mod tests {
             .output()
             .unwrap();
         let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert!(json.get("sandbox").is_none());
+        let confined: serde_json::Value =
+            serde_json::from_str(&super::claude_settings(true)).unwrap();
+        assert_eq!(confined["sandbox"]["enabled"], false);
         let hook = json["hooks"]["Stop"][0]["hooks"][0]["command"]
             .as_str()
             .unwrap();
@@ -205,6 +275,43 @@ mod tests {
         assert_eq!(
             wrapped.stdout,
             b"\x1bPtmux;\x1b\x1b]777;worki;waiting\x07\x1b\\"
+        );
+    }
+
+    #[test]
+    fn tool_calls_mark_working_except_questions() {
+        use std::io::Write;
+        let settings: serde_json::Value =
+            serde_json::from_str(&super::claude_settings(false)).unwrap();
+        let hooks = &settings["hooks"];
+        assert!(hooks["PermissionRequest"].is_array() && hooks["PostToolUse"].is_array());
+        let hook = hooks["PreToolUse"][0]["hooks"][0]["command"]
+            .as_str()
+            .unwrap();
+        let run = |input: &str| {
+            let mut child = std::process::Command::new("/bin/sh")
+                .args(["-c", &hook.replace("> \"$WORKI_TTY\"", "")])
+                .env("WORKI_TTY", "/dev/ttys-test")
+                .env_remove("TMUX")
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .spawn()
+                .unwrap();
+            child
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(input.as_bytes())
+                .unwrap();
+            child.wait_with_output().unwrap().stdout
+        };
+        assert_eq!(
+            run(r#"{"tool_name":"Bash"}"#),
+            b"\x1b]777;worki;working\x07"
+        );
+        assert_eq!(
+            run(r#"{"tool_name": "AskUserQuestion"}"#),
+            b"\x1b]777;worki;waiting\x07"
         );
     }
 }

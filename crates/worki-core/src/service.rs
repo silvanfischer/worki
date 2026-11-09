@@ -18,6 +18,7 @@ const AGENT_SETTINGS_KEY: &str = "agents";
 const ISOLATION_SETTINGS_KEY: &str = "isolation";
 const OPENER_SETTINGS_KEY: &str = "openers";
 const SSH_HOSTS_KEY: &str = "sshHosts";
+const SAVED_SESSIONS_KEY: &str = "agentSessions";
 /// Per-worktree isolation choices, keyed by worktree path.
 const WORKTREE_ISOLATION_KEY: &str = "worktreeIsolation";
 
@@ -304,6 +305,27 @@ impl ProjectService {
         self.store.set_setting(OPENER_SETTINGS_KEY, settings)
     }
 
+    pub fn saved_sessions(&self) -> Result<Vec<SavedSession>> {
+        self.setting(SAVED_SESSIONS_KEY)
+    }
+
+    pub fn save_session(&self, session: SavedSession) -> Result<()> {
+        let mut saved = self.saved_sessions()?;
+        saved.retain(|s| s.id != session.id);
+        saved.push(session);
+        self.store.set_setting(SAVED_SESSIONS_KEY, &saved)
+    }
+
+    pub fn forget_session(&self, id: &str) -> Result<()> {
+        let mut saved = self.saved_sessions()?;
+        let before = saved.len();
+        saved.retain(|s| s.id != id);
+        if saved.len() == before {
+            return Ok(());
+        }
+        self.store.set_setting(SAVED_SESSIONS_KEY, &saved)
+    }
+
     pub fn ssh_hosts(&self) -> Result<Vec<SshHost>> {
         self.setting(SSH_HOSTS_KEY)
     }
@@ -428,6 +450,49 @@ impl ProjectService {
 
     /// Isolation a worktree runs in: its own choice, else the project default, else the global
     /// default. Remote projects always use their SSH connection.
+    /// Saves the worktree's container as an image or sbx template named `tag`, and with
+    /// `use_for_project` makes the project create new worktree environments from it.
+    pub async fn save_environment_template(
+        &self,
+        project_id: &str,
+        worktree: &Path,
+        tag: &str,
+        use_for_project: bool,
+    ) -> Result<Project> {
+        let project = self.store.get_project(project_id)?;
+        let backend = self.isolation_for_worktree(&project, worktree)?.backend();
+        let worktree = worktree.to_path_buf();
+        let tag = tag.trim().to_owned();
+        let saved = blocking(move || backend.save_template(&worktree, &tag)).await?;
+        if !use_for_project {
+            return Ok(project);
+        }
+        let isolation = match saved {
+            Isolation::DockerSandbox { image, template } => {
+                ProjectIsolation::DockerSandbox { image, template }
+            }
+            Isolation::Docker { image } => ProjectIsolation::Docker { image },
+            Isolation::Podman { image } => ProjectIsolation::Podman { image },
+            other => {
+                return Err(Error::Isolation(format!(
+                    "{} can't be a project default",
+                    other.label()
+                )))
+            }
+        };
+        self.update_project(
+            project_id,
+            ProjectPatch {
+                isolation: Some(isolation),
+                ..Default::default()
+            },
+        )
+    }
+
+    pub async fn environment_templates(&self, isolation: Isolation) -> Result<Vec<String>> {
+        blocking(move || isolation.backend().templates()).await
+    }
+
     pub fn isolation_for_worktree(&self, project: &Project, worktree: &Path) -> Result<Isolation> {
         if project.remote.is_some() {
             return self.isolation_for(project);
