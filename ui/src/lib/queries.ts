@@ -25,6 +25,8 @@ export const keys = {
   sshPasswordSet: (remote: Pick<Remote, "host" | "user" | "port"> | null) =>
     ["sshPassword", remote && { host: remote.host, user: remote.user, port: remote.port }] as const,
   sshHosts: ["sshHosts"] as const,
+  branchLog: (path: string, base: string) => ["branchLog", path, base] as const,
+  pullRequest: (path: string) => ["pullRequest", path] as const,
   environmentTemplates: (kind: string) => ["environmentTemplates", kind] as const,
   openers: ["openers"] as const,
   appIcon: (app: string) => ["appIcon", app] as const,
@@ -34,6 +36,31 @@ export const useOpenerSettings = () => useQuery({ queryKey: keys.openers, queryF
 
 export const useAppIcon = (app: string) =>
   useQuery({ queryKey: keys.appIcon(app), queryFn: () => api.appIcon(app), staleTime: Infinity });
+
+/** `origin/<base>` when it exists, else `base`: what the worktree is compared with. */
+export const useCompareBase = (worktreePath: string, base: string | null) =>
+  useQuery({
+    queryKey: ["compareBase", worktreePath, base],
+    queryFn: () => api.compareBase(worktreePath, base!),
+    enabled: !!base,
+    staleTime: 60_000,
+  }).data ?? base;
+
+export const useBranchLog = (worktreePath: string, base: string | null) =>
+  useQuery({
+    queryKey: keys.branchLog(worktreePath, base ?? ""),
+    queryFn: () => api.branchLog(worktreePath, base),
+    refetchInterval: 10_000,
+  });
+
+export const usePullRequest = (worktreePath: string, enabled: boolean) =>
+  useQuery({
+    queryKey: keys.pullRequest(worktreePath),
+    queryFn: () => api.pullRequest(worktreePath),
+    enabled,
+    refetchInterval: 60_000,
+    retry: false,
+  });
 
 export const useEnvironmentTemplates = (isolation: Isolation) =>
   useQuery({

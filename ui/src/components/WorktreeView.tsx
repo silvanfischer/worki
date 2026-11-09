@@ -3,10 +3,11 @@ import { useState } from "react";
 import { ArrowDown, ArrowUp, Coins, GitBranch, MoreHorizontal, PanelRight, Send } from "lucide-react";
 
 import { type ChangedFile, errorMessage, type Project, type Worktree, worktreeLabel } from "../lib/api";
-import { useBranchChanges, useSessions, useWorktreeStatus } from "../lib/queries";
+import { useBranchChanges, useCompareBase, useSessions, useWorktreeStatus } from "../lib/queries";
 import { reviewPrompt, reviewTarget, sendReview, useReview, useWorktreeComments } from "../lib/review";
 import { useUi } from "../lib/store";
 import { formatTokens, totalUsage, usageDetails } from "../lib/usage";
+import { BranchChip, BranchCommits, BranchStatus, CommitBox, PrSection, Section } from "./BranchPanel";
 import { DiffView } from "./DiffView";
 import { OpenInMenu } from "./OpenInMenu";
 import { ResizeHandle } from "./ResizeHandle";
@@ -25,13 +26,15 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
   const comments = useWorktreeComments(worktree.path);
   const scope = useUi((s) => s.changesScope);
   const setScope = useUi((s) => s.setChangesScope);
-  const base = worktree.isMain ? null : project.defaultBase;
-  const branchScope = scope === "branch" && !!base;
-  const branch = useBranchChanges(worktree.path, branchScope ? base : null);
-  const files = branchScope ? branch.data?.files : status?.changedFiles;
-  const stats = branchScope ? branch.data : status;
-  const listError = branchScope ? branch.error : error;
+  const base = useCompareBase(worktree.path, worktree.isMain ? null : project.defaultBase);
+  const showCommits = useUi((s) => s.showCommits);
+  const showPullRequests = useUi((s) => s.showPullRequests);
+  const hasBranchTab = !worktree.isMain && !!base;
+  const tab = scope === "branch" && hasBranchTab ? "branch" : "uncommitted";
+  const branchScope = tab === "branch";
+  const branch = useBranchChanges(worktree.path, base);
   const pending = comments.length;
+  const [excluded, setExcluded] = useState<Set<string>>(new Set());
 
   return (
     <div className="flex h-full flex-col">
@@ -50,6 +53,16 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
           </span>
         )}
         <WorktreeUsage worktreePath={worktree.path} />
+        {base && (showCommits || showPullRequests) && (
+          <BranchChip
+            worktree={worktree}
+            base={base}
+            onOpen={() => {
+              setScope("branch");
+              if (!showChanges) toggleChanges();
+            }}
+          />
+        )}
         <WorktreeIsolationBadge project={project} worktree={worktree} />
         <OpenInMenu path={worktree.path} />
         <Menu
@@ -95,50 +108,84 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
         {showChanges && (
           <aside className="relative flex min-h-0 shrink-0 flex-col border-l border-line" style={{ width: widths.changes }}>
             <ResizeHandle panel="changes" edge="left" />
-            <div className="flex h-9 shrink-0 items-center justify-between gap-2 px-3">
-              {base ? (
-                <div className="flex rounded-md bg-hover p-0.5 text-[11px]">
-                  {(["uncommitted", "branch"] as const).map((sc) => (
-                    <button
-                      key={sc}
-                      onClick={() => setScope(sc)}
-                      title={sc === "branch" ? `Everything this worktree changed since it left ${base}` : "Changes not committed yet"}
-                      className={clsx(
-                        "truncate rounded px-2 py-0.5",
-                        scope === sc ? "bg-elevated text-fg shadow-xs" : "text-muted hover:text-fg",
-                      )}
-                    >
-                      {sc === "branch" ? `vs ${base}` : "Uncommitted"}
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <span className="text-[11px] font-semibold tracking-wide text-faint uppercase">Changes</span>
-              )}
-              {stats && <DiffStat insertions={stats.insertions} deletions={stats.deletions} />}
+            <div className="flex h-9 shrink-0 items-center gap-1 border-b border-line px-2">
+              {(["uncommitted", "branch"] as const)
+                .filter((t) => t === "uncommitted" || hasBranchTab)
+                .map((t) => (
+                  <button
+                    key={t}
+                    onClick={() => setScope(t)}
+                    title={
+                      t === "uncommitted"
+                        ? "What you haven't committed yet"
+                        : `This branch compared with ${base}: commits, pull request and all changed files`
+                    }
+                    className={clsx(
+                      "flex h-7 items-center gap-1.5 rounded-md px-2 text-xs",
+                      tab === t ? "bg-selected font-medium text-fg" : "text-muted hover:bg-hover hover:text-fg",
+                    )}
+                  >
+                    {t === "uncommitted" ? "Changes" : "Branch"}
+                    {t === "uncommitted" && !!status?.changedFiles.length && (
+                      <span className="text-[11px] text-faint" title="Uncommitted files">
+                        {status.changedFiles.length}
+                      </span>
+                    )}
+                  </button>
+                ))}
             </div>
-            {branchScope && branch.data && (
-              <p className="px-3 pb-1 text-[11px] text-faint">
-                {branch.data.commits === 0
-                  ? "No commits yet"
-                  : `${branch.data.commits} commit${branch.data.commits === 1 ? "" : "s"}`}{" "}
-                since {base}, plus uncommitted work
-              </p>
-            )}
-            <div className="selectable flex-1 overflow-y-auto px-1.5 pb-3">
-              {listError && <p className="px-2 text-xs text-removed">{String(listError)}</p>}
-              {files?.length === 0 && (
-                <p className="px-2 py-1 text-xs text-faint">{branchScope ? `Nothing changed since ${base}` : "Working tree clean"}</p>
+
+            <div className="selectable min-h-0 flex-1 overflow-y-auto">
+              {tab === "uncommitted" && (
+                <>
+                  <FileList
+                    files={status?.changedFiles}
+                    error={error}
+                    empty="No uncommitted changes."
+                    excluded={showCommits ? excluded : undefined}
+                    onExclude={setExcluded}
+                    comments={comments}
+                    diffFile={diffFile}
+                    onOpen={setDiffFile}
+                  />
+                  {showCommits && !!status?.changedFiles.length && (
+                    <CommitBox
+                      worktreePath={worktree.path}
+                      files={status.changedFiles.map((f) => f.path).filter((p) => !excluded.has(p))}
+                      total={status.changedFiles.length}
+                    />
+                  )}
+                </>
               )}
-              {files?.map((f) => (
-                <ChangeRow
-                  key={f.path}
-                  file={f}
-                  comments={comments.filter((c) => c.file === f.path).length}
-                  selected={f.path === diffFile}
-                  onOpen={() => setDiffFile(f.path === diffFile ? null : f.path)}
-                />
-              ))}
+
+              {tab === "branch" && !worktree.isMain && base && (
+                <>
+                  {showCommits && worktree.branch && branch.data && (
+                    <BranchStatus
+                      worktreePath={worktree.path}
+                      branch={worktree.branch}
+                      base={base}
+                      ahead={branch.data.commits}
+                      behind={branch.data.behind}
+                    />
+                  )}
+                  {showCommits && <BranchCommits worktreePath={worktree.path} base={base} />}
+                  {showPullRequests && worktree.branch && <PrSection worktree={worktree} base={base} />}
+                  <Section
+                    title={`Files changed vs ${base}${branch.data ? ` (${branch.data.files.length})` : ""}`}
+                    aside={branch.data && <DiffStat insertions={branch.data.insertions} deletions={branch.data.deletions} />}
+                  >
+                    <FileList
+                      files={branch.data?.files}
+                      error={branch.error}
+                      empty={`Nothing changed since ${base}.`}
+                      comments={comments}
+                      diffFile={diffFile}
+                      onOpen={setDiffFile}
+                    />
+                  </Section>
+                </>
+              )}
             </div>
             <ReviewBar worktreePath={worktree.path} onOpen={setDiffFile} />
           </aside>
@@ -239,13 +286,64 @@ function ReviewBar({ worktreePath, onOpen }: { worktreePath: string; onOpen: (fi
   );
 }
 
+function FileList({
+  files,
+  error,
+  empty,
+  excluded,
+  onExclude,
+  comments,
+  diffFile,
+  onOpen,
+}: {
+  files: ChangedFile[] | undefined;
+  error: unknown;
+  empty: string;
+  /** Files left out of the next commit; undefined hides the checkboxes. */
+  excluded?: Set<string>;
+  onExclude?: (update: (ex: Set<string>) => Set<string>) => void;
+  comments: { file: string }[];
+  diffFile: string | null;
+  onOpen: (file: string | null) => void;
+}) {
+  return (
+    <div className="px-1.5 py-1">
+      {!!error && <p className="px-2 text-xs text-removed">{String(error)}</p>}
+      {files?.length === 0 && <p className="px-2 py-1 text-xs text-faint">{empty}</p>}
+      {files?.map((f) => (
+        <ChangeRow
+          key={f.path}
+          file={f}
+          checked={excluded ? !excluded.has(f.path) : undefined}
+          onCheck={(on) =>
+            onExclude?.((ex) => {
+              const next = new Set(ex);
+              if (on) next.delete(f.path);
+              else next.add(f.path);
+              return next;
+            })
+          }
+          comments={comments.filter((c) => c.file === f.path).length}
+          selected={f.path === diffFile}
+          onOpen={() => onOpen(f.path === diffFile ? null : f.path)}
+        />
+      ))}
+    </div>
+  );
+}
+
 function ChangeRow({
   file,
+  checked,
+  onCheck,
   comments,
   selected,
   onOpen,
 }: {
   file: ChangedFile;
+  /** Whether the file goes into the next commit; undefined hides the checkbox. */
+  checked?: boolean;
+  onCheck: (on: boolean) => void;
   comments: number;
   selected: boolean;
   onOpen: () => void;
@@ -258,6 +356,16 @@ function ChangeRow({
       className={clsx("flex h-6 items-center gap-2 rounded px-1.5", selected ? "bg-selected" : "hover:bg-hover")}
       title={`${file.path} — click to view the diff`}
     >
+      {checked !== undefined && (
+        <input
+          type="checkbox"
+          checked={checked}
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) => onCheck(e.target.checked)}
+          title={checked ? "Included in the next commit" : "Left out of the next commit"}
+          className="size-3 shrink-0 accent-[var(--accent)]"
+        />
+      )}
       <span
         className={clsx(
           "w-3 text-center font-mono text-[11px] font-semibold",

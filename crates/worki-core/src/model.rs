@@ -130,6 +130,57 @@ pub struct BranchChanges {
     pub deletions: u32,
     /// Commits on the worktree's branch since it left `base`.
     pub commits: u32,
+    /// Commits on `base` the branch doesn't have yet.
+    #[serde(default)]
+    pub behind: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitInfo {
+    pub sha: String,
+    pub subject: String,
+    pub author: String,
+    /// Seconds since the epoch.
+    pub time: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", tag = "kind")]
+pub enum BaseUpdate {
+    UpToDate,
+    Updated,
+    /// The rebase stopped on conflicts in these files and was undone.
+    Conflicts {
+        files: Vec<String>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PullRequest {
+    pub number: u64,
+    pub title: String,
+    pub url: String,
+    /// OPEN, CLOSED or MERGED.
+    pub state: String,
+    pub is_draft: bool,
+    pub checks_passed: u32,
+    pub checks_failed: u32,
+    pub checks_pending: u32,
+}
+
+/// A review comment on a pull request's diff.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PrComment {
+    pub path: String,
+    /// `None` when the comment no longer maps onto the current diff.
+    pub line: Option<u32>,
+    /// "new" for the changed side, "old" for removed lines.
+    pub side: String,
+    pub author: String,
+    pub body: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

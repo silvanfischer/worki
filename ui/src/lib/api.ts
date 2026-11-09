@@ -136,6 +136,7 @@ export interface BranchChanges {
   insertions: number;
   deletions: number;
   commits: number;
+  behind: number;
 }
 
 export interface WorktreeStatus {
@@ -160,6 +161,34 @@ export type LogLine =
 export interface CreatedWorktree {
   worktree: Worktree;
   setupError: string | null;
+}
+
+export interface CommitInfo {
+  sha: string;
+  subject: string;
+  author: string;
+  time: number;
+}
+
+export type BaseUpdate = { kind: "upToDate" } | { kind: "updated" } | { kind: "conflicts"; files: string[] };
+
+export interface PullRequest {
+  number: number;
+  title: string;
+  url: string;
+  state: "OPEN" | "CLOSED" | "MERGED";
+  isDraft: boolean;
+  checksPassed: number;
+  checksFailed: number;
+  checksPending: number;
+}
+
+export interface PrComment {
+  path: string;
+  line: number | null;
+  side: "new" | "old";
+  author: string;
+  body: string;
 }
 
 export interface AgentProfile {
@@ -251,6 +280,18 @@ export const api = {
   worktreeStatus: (path: string) => invoke<WorktreeStatus>("worktree_status", { path }),
   fileDiff: (worktreePath: string, file: string, base: string | null) =>
     invoke<string>("file_diff", { worktreePath, file, base }),
+  commitChanges: (worktreePath: string, files: string[], message: string) =>
+    invoke<string>("commit_changes", { worktreePath, files, message }),
+  branchLog: (worktreePath: string, base: string | null) => invoke<CommitInfo[]>("branch_log", { worktreePath, base }),
+  updateFromBase: (worktreePath: string, base: string) => invoke<BaseUpdate>("update_from_base", { worktreePath, base }),
+  pullRequest: (worktreePath: string) => invoke<PullRequest | null>("pull_request", { worktreePath }),
+  createPullRequest: (worktreePath: string, base: string, title: string, body: string, draft: boolean) =>
+    invoke<PullRequest>("create_pull_request", { worktreePath, base, title, body, draft }),
+  compareBase: (worktreePath: string, base: string) => invoke<string>("compare_base", { worktreePath, base }),
+  fetchRemote: (worktreePath: string) => invoke<void>("fetch_remote", { worktreePath }),
+  pushBranch: (worktreePath: string) => invoke<void>("push_branch", { worktreePath }),
+  prReviewComments: (worktreePath: string, number: number) =>
+    invoke<PrComment[]>("pr_review_comments", { worktreePath, number }),
   environmentTemplates: (isolation: Isolation) => invoke<string[]>("environment_templates", { isolation }),
   saveEnvironmentTemplate: (projectId: string, worktreePath: string, tag: string, useForProject: boolean) =>
     invoke<Project>("save_environment_template", { projectId, worktreePath, tag, useForProject }),
@@ -278,7 +319,8 @@ export const api = {
     cols: number,
     rows: number,
     resumeId: string | null = null,
-  ) => invoke<SessionInfo>("spawn_session", { projectId, worktreePath, profileId, resumeId, cols, rows }),
+    prompt: string | null = null,
+  ) => invoke<SessionInfo>("spawn_session", { projectId, worktreePath, profileId, resumeId, prompt, cols, rows }),
   attachSession: (id: string, onData: (bytes: Uint8Array) => void) => {
     const channel = new Channel<ArrayBuffer | number[]>();
     channel.onmessage = (data) => onData(new Uint8Array(data));

@@ -10,7 +10,7 @@ export type DialogState =
   | { kind: "settings"; tab: SettingsTab }
   | null;
 
-export type SettingsTab = "general" | "agents" | "secrets" | "isolation" | "sshHosts" | "openIn";
+export type SettingsTab = "general" | "agents" | "git" | "secrets" | "isolation" | "sshHosts" | "openIn";
 
 export type ChangesScope = "uncommitted" | "branch";
 
@@ -40,6 +40,12 @@ interface UiState {
   terminalFontSize: number;
   /** Start the Claude sessions that were open at the last quit again when worki starts. */
   reopenSessions: boolean;
+  /** Agent profile that runs "Ask agent" git tasks in a new tab; null sends them to the open agent. */
+  gitTaskProfile: string | null;
+  /** Commit box, commit list and rebasing in the changes panel. */
+  showCommits: boolean;
+  /** Pull request section and status, which ask GitHub through `gh`. */
+  showPullRequests: boolean;
   dialog: DialogState;
   select: (projectId: string, worktreePath: string | null) => void;
   toggleCollapsed: (projectId: string) => void;
@@ -50,6 +56,9 @@ interface UiState {
   setTheme: (theme: Theme) => void;
   setTerminalFontSize: (size: number) => void;
   setReopenSessions: (on: boolean) => void;
+  setGitTaskProfile: (id: string | null) => void;
+  setShowCommits: (on: boolean) => void;
+  setShowPullRequests: (on: boolean) => void;
   openDialog: (dialog: DialogState) => void;
   closeDialog: () => void;
 }
@@ -71,6 +80,9 @@ export const useUi = create<UiState>()(
       theme: "system",
       terminalFontSize: 13,
       reopenSessions: true,
+      gitTaskProfile: null,
+      showCommits: true,
+      showPullRequests: true,
       dialog: null,
       select: (selectedProjectId, selectedWorktreePath) => set({ selectedProjectId, selectedWorktreePath }),
       toggleCollapsed: (id) => set((s) => ({ collapsed: { ...s.collapsed, [id]: !s.collapsed[id] } })),
@@ -84,6 +96,9 @@ export const useUi = create<UiState>()(
       setTheme: (theme) => set({ theme }),
       setTerminalFontSize: (terminalFontSize) => set({ terminalFontSize }),
       setReopenSessions: (reopenSessions) => set({ reopenSessions }),
+      setGitTaskProfile: (gitTaskProfile) => set({ gitTaskProfile }),
+      setShowCommits: (showCommits) => set({ showCommits }),
+      setShowPullRequests: (showPullRequests) => set({ showPullRequests }),
       openDialog: (dialog) => set({ dialog }),
       closeDialog: () => set({ dialog: null }),
     }),
@@ -99,6 +114,9 @@ export const useUi = create<UiState>()(
         theme,
         terminalFontSize,
         reopenSessions,
+        gitTaskProfile,
+        showCommits,
+        showPullRequests,
       }) => ({
         selectedProjectId,
         selectedWorktreePath,
@@ -109,6 +127,9 @@ export const useUi = create<UiState>()(
         theme,
         terminalFontSize,
         reopenSessions,
+        gitTaskProfile,
+        showCommits,
+        showPullRequests,
       }),
     },
   ),

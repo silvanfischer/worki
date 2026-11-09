@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::host::Host;
-use crate::model::{BranchChanges, ChangedFile, Worktree, WorktreeStatus};
+use crate::model::{BaseUpdate, BranchChanges, ChangedFile, CommitInfo, Worktree, WorktreeStatus};
 use crate::{Error, Result};
 
 /// Resolves any path inside a repository or one of its worktrees to the main checkout.
@@ -374,13 +374,147 @@ pub async fn branch_changes(host: &Host, worktree: &Path, base: &str) -> Result<
         .trim()
         .parse()
         .unwrap_or(0);
+    let behind = host
+        .git(worktree, ["rev-list", "--count", &format!("HEAD..{base}")])
+        .await?
+        .trim()
+        .parse()
+        .unwrap_or(0);
     Ok(BranchChanges {
         base: base.to_owned(),
         files,
         insertions,
         deletions,
         commits,
+        behind,
     })
+}
+
+/// Commits `files` (adding, removing or renaming them as they are in the worktree) with
+/// `message`, leaving any other changes uncommitted. Returns the new commit's id.
+pub async fn commit(
+    host: &Host,
+    worktree: &Path,
+    files: &[String],
+    message: &str,
+) -> Result<String> {
+    if files.is_empty() || message.trim().is_empty() {
+        return Err(Error::Git {
+            args: "commit".into(),
+            stderr: "pick at least one file and write a message".into(),
+        });
+    }
+    let mut add = vec!["add", "-A", "--"];
+    add.extend(files.iter().map(String::as_str));
+    host.git(worktree, &add).await?;
+    let mut commit = vec!["commit", "-q", "-m", message.trim(), "--"];
+    commit.extend(files.iter().map(String::as_str));
+    host.git(worktree, &commit).await?;
+    Ok(host
+        .git(worktree, ["rev-parse", "HEAD"])
+        .await?
+        .trim()
+        .to_owned())
+}
+
+/// The worktree's commits since it left `base`, newest first; without a base, the latest 30.
+pub async fn branch_log(
+    host: &Host,
+    worktree: &Path,
+    base: Option<&str>,
+) -> Result<Vec<CommitInfo>> {
+    let range = match base {
+        Some(base) => format!("{}..HEAD", merge_base(host, worktree, base).await?),
+        None => "-30".to_owned(),
+    };
+    let text = host
+        .git(
+            worktree,
+            ["log", "--format=%H%x1f%s%x1f%an%x1f%ct%x1e", &range],
+        )
+        .await?;
+    Ok(parse_log(&text))
+}
+
+pub fn parse_log(text: &str) -> Vec<CommitInfo> {
+    text.split('\x1e')
+        .filter_map(|record| {
+            let mut f = record.trim_matches(['\n', '\r']).split('\x1f');
+            Some(CommitInfo {
+                sha: f.next().filter(|s| !s.is_empty())?.to_owned(),
+                subject: f.next()?.to_owned(),
+                author: f.next()?.to_owned(),
+                time: f.next()?.trim().parse().ok()?,
+            })
+        })
+        .collect()
+}
+
+/// What a worktree is compared with and rebased onto: `origin/<base>` when the repository has it
+/// (what pull requests are compared against), else the local branch.
+pub async fn compare_base(host: &Host, worktree: &Path, base: &str) -> String {
+    if base.starts_with("origin/") {
+        return base.to_owned();
+    }
+    let remote = format!("origin/{base}");
+    let exists = host
+        .git(
+            worktree,
+            [
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                &format!("refs/remotes/{remote}"),
+            ],
+        )
+        .await
+        .is_ok();
+    if exists {
+        remote
+    } else {
+        base.to_owned()
+    }
+}
+
+/// Fetches all remotes, dropping branches deleted there.
+pub async fn fetch(host: &Host, worktree: &Path) -> Result<()> {
+    host.git(worktree, ["fetch", "--all", "--prune", "--quiet"])
+        .await
+        .map(drop)
+}
+
+/// Rebases the worktree's branch onto `base` (uncommitted changes are stashed and put back). On
+/// conflicts the rebase is undone and the conflicting files are reported.
+pub async fn update_from_base(host: &Host, worktree: &Path, base: &str) -> Result<BaseUpdate> {
+    let before = host.git(worktree, ["rev-parse", "HEAD"]).await?;
+    let (_, out) = host
+        .git_output(worktree, ["rebase", "--autostash", base])
+        .await?;
+    if out.status.success() {
+        let after = host.git(worktree, ["rev-parse", "HEAD"]).await?;
+        return Ok(if after == before {
+            BaseUpdate::UpToDate
+        } else {
+            BaseUpdate::Updated
+        });
+    }
+    let conflicts = host
+        .git(worktree, ["diff", "--name-only", "--diff-filter=U", "-z"])
+        .await
+        .unwrap_or_default();
+    host.git(worktree, ["rebase", "--abort"]).await.ok();
+    let files: Vec<String> = conflicts
+        .split('\0')
+        .filter(|f| !f.is_empty())
+        .map(String::from)
+        .collect();
+    if files.is_empty() {
+        return Err(Error::Git {
+            args: format!("rebase {base}"),
+            stderr: String::from_utf8_lossy(&out.stderr).trim().to_owned(),
+        });
+    }
+    Ok(BaseUpdate::Conflicts { files })
 }
 
 /// `git diff --name-status -z` output; renames and copies report the new path.

@@ -87,6 +87,30 @@ impl Host {
         }
     }
 
+    /// Runs `program args…` in `dir` through the user's login shell, so tools installed with
+    /// Homebrew and the like (e.g. `gh`) are on PATH even though worki started from the Dock.
+    pub async fn tool_output(&self, dir: &Path, program: &str, args: &[&str]) -> Result<Output> {
+        let script = "cd \"$1\" && shift && exec \"$@\"";
+        let dir = dir.to_string_lossy();
+        let mut full: Vec<&str> = vec![&dir, program];
+        full.extend(args);
+        match self {
+            Self::Local => {
+                let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
+                let mut cmd = Command::new(shell);
+                cmd.args(["-lc", script, "_"]).args(&full);
+                run(cmd).await
+            }
+            Self::Ssh(host) => {
+                let login = format!(
+                    "exec \"${{SHELL:-/bin/sh}}\" -lc {} _ \"$@\"",
+                    shell_quote(script)
+                );
+                ssh_output(host, &login, &full).await
+            }
+        }
+    }
+
     async fn sh(&self, script: &str, args: &[&str]) -> Result<Output> {
         match self {
             Self::Local => {

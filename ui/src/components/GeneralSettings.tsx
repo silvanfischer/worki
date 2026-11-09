@@ -94,7 +94,7 @@ export function GeneralSettings() {
   );
 }
 
-function Group({ title, children }: { title: string; children: ReactNode }) {
+export function Group({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div className="flex flex-col gap-3">
       <h3 className="text-[11px] font-semibold tracking-wide text-faint uppercase">{title}</h3>

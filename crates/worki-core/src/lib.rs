@@ -2,6 +2,7 @@ pub mod agents;
 pub mod config;
 pub mod error;
 pub mod git;
+pub mod github;
 pub mod host;
 pub mod launch;
 pub mod model;

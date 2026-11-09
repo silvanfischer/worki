@@ -182,6 +182,7 @@ async fn project_and_worktree_lifecycle() {
         .map(|f| (f.code.as_str(), f.path.as_str()))
         .collect();
     assert_eq!(branch.commits, 1);
+    assert_eq!(branch.behind, 0);
     assert!(codes.contains(&("A ", "lib.rs")), "{codes:?}");
     assert!(codes.contains(&("M ", "README.md")), "{codes:?}");
     assert!(codes.contains(&("??", ".setup-done")), "{codes:?}");

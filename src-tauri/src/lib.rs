@@ -131,6 +131,15 @@ pub fn run() {
             sessions::restore_agent_sessions,
             commands::save_environment_template,
             commands::environment_templates,
+            commands::commit_changes,
+            commands::branch_log,
+            commands::update_from_base,
+            commands::pull_request,
+            commands::create_pull_request,
+            commands::push_branch,
+            commands::fetch_remote,
+            commands::compare_base,
+            commands::pr_review_comments,
         ])
         .build(tauri::generate_context!())
         .expect("error while building worki");

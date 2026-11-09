@@ -12,7 +12,7 @@ use worki_isolation::{Backend, LaunchRequest, Workspace};
 use crate::openers::{self, OpenerSettings};
 use crate::setup::run_logged;
 use crate::store::Store;
-use crate::{git, paths, secrets, Error, Host, Result};
+use crate::{git, github, paths, secrets, Error, Host, Result};
 
 const AGENT_SETTINGS_KEY: &str = "agents";
 const ISOLATION_SETTINGS_KEY: &str = "isolation";
@@ -677,6 +677,50 @@ impl ProjectService {
         base: Option<&str>,
     ) -> Result<String> {
         git::file_diff(&self.host_for_path(worktree)?, worktree, file, base).await
+    }
+
+    pub async fn commit(&self, worktree: &Path, files: &[String], message: &str) -> Result<String> {
+        git::commit(&self.host_for_path(worktree)?, worktree, files, message).await
+    }
+
+    pub async fn branch_log(&self, worktree: &Path, base: Option<&str>) -> Result<Vec<CommitInfo>> {
+        git::branch_log(&self.host_for_path(worktree)?, worktree, base).await
+    }
+
+    pub async fn compare_base(&self, worktree: &Path, base: &str) -> Result<String> {
+        Ok(git::compare_base(&self.host_for_path(worktree)?, worktree, base).await)
+    }
+
+    pub async fn fetch(&self, worktree: &Path) -> Result<()> {
+        git::fetch(&self.host_for_path(worktree)?, worktree).await
+    }
+
+    pub async fn update_from_base(&self, worktree: &Path, base: &str) -> Result<BaseUpdate> {
+        git::update_from_base(&self.host_for_path(worktree)?, worktree, base).await
+    }
+
+    pub async fn pull_request(&self, worktree: &Path) -> Result<Option<PullRequest>> {
+        github::pull_request(&self.host_for_path(worktree)?, worktree).await
+    }
+
+    pub async fn create_pull_request(
+        &self,
+        worktree: &Path,
+        base: &str,
+        title: &str,
+        body: &str,
+        draft: bool,
+    ) -> Result<PullRequest> {
+        let host = self.host_for_path(worktree)?;
+        github::create_pull_request(&host, worktree, base, title, body, draft).await
+    }
+
+    pub async fn push(&self, worktree: &Path) -> Result<()> {
+        github::push(&self.host_for_path(worktree)?, worktree).await
+    }
+
+    pub async fn pr_review_comments(&self, worktree: &Path, number: u64) -> Result<Vec<PrComment>> {
+        github::review_comments(&self.host_for_path(worktree)?, worktree, number).await
     }
 
     pub async fn branch_changes(&self, worktree: &Path, base: &str) -> Result<BranchChanges> {

@@ -212,6 +212,110 @@ pub async fn save_environment_template(
 }
 
 #[tauri::command]
+pub async fn commit_changes(
+    state: State<'_, AppState>,
+    worktree_path: PathBuf,
+    files: Vec<String>,
+    message: String,
+) -> CmdResult<String> {
+    state
+        .projects
+        .commit(&worktree_path, &files, &message)
+        .await
+        .map_err(err)
+}
+
+#[tauri::command]
+pub async fn branch_log(
+    state: State<'_, AppState>,
+    worktree_path: PathBuf,
+    base: Option<String>,
+) -> CmdResult<Vec<CommitInfo>> {
+    state
+        .projects
+        .branch_log(&worktree_path, base.as_deref())
+        .await
+        .map_err(err)
+}
+
+#[tauri::command]
+pub async fn update_from_base(
+    state: State<'_, AppState>,
+    worktree_path: PathBuf,
+    base: String,
+) -> CmdResult<BaseUpdate> {
+    state
+        .projects
+        .update_from_base(&worktree_path, &base)
+        .await
+        .map_err(err)
+}
+
+#[tauri::command]
+pub async fn pull_request(
+    state: State<'_, AppState>,
+    worktree_path: PathBuf,
+) -> CmdResult<Option<PullRequest>> {
+    state
+        .projects
+        .pull_request(&worktree_path)
+        .await
+        .map_err(err)
+}
+
+#[tauri::command]
+pub async fn create_pull_request(
+    state: State<'_, AppState>,
+    worktree_path: PathBuf,
+    base: String,
+    title: String,
+    body: String,
+    draft: bool,
+) -> CmdResult<PullRequest> {
+    state
+        .projects
+        .create_pull_request(&worktree_path, &base, &title, &body, draft)
+        .await
+        .map_err(err)
+}
+
+#[tauri::command]
+pub async fn compare_base(
+    state: State<'_, AppState>,
+    worktree_path: PathBuf,
+    base: String,
+) -> CmdResult<String> {
+    state
+        .projects
+        .compare_base(&worktree_path, &base)
+        .await
+        .map_err(err)
+}
+
+#[tauri::command]
+pub async fn fetch_remote(state: State<'_, AppState>, worktree_path: PathBuf) -> CmdResult<()> {
+    state.projects.fetch(&worktree_path).await.map_err(err)
+}
+
+#[tauri::command]
+pub async fn push_branch(state: State<'_, AppState>, worktree_path: PathBuf) -> CmdResult<()> {
+    state.projects.push(&worktree_path).await.map_err(err)
+}
+
+#[tauri::command]
+pub async fn pr_review_comments(
+    state: State<'_, AppState>,
+    worktree_path: PathBuf,
+    number: u64,
+) -> CmdResult<Vec<PrComment>> {
+    state
+        .projects
+        .pr_review_comments(&worktree_path, number)
+        .await
+        .map_err(err)
+}
+
+#[tauri::command]
 pub async fn branch_changes(
     state: State<'_, AppState>,
     worktree_path: PathBuf,
