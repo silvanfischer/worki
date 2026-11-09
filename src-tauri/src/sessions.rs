@@ -261,6 +261,7 @@ pub async fn restore_remote_sessions(state: State<'_, AppState>) -> CmdResult<us
                 state: SessionState::Running,
                 activity: worki_pty::Activity::Idle,
                 attention: None,
+                usage: Vec::new(),
                 created_at: 0,
             };
             if state

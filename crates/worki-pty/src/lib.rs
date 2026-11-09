@@ -8,8 +8,8 @@ use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-pub use activity::Activity;
-use activity::{Scanner, Tracker};
+pub use activity::{Activity, ModelUsage};
+use activity::{Scanner, Signal, Tracker};
 use anyhow::{anyhow, Context, Result};
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use serde::Serialize;
@@ -59,6 +59,8 @@ pub struct SessionInfo {
     pub activity: Activity,
     /// Text of the last desktop-notification escape, while the agent waits.
     pub attention: Option<String>,
+    /// Tokens the agent's current conversation used, per model; empty until it reports any.
+    pub usage: Vec<ModelUsage>,
     pub created_at: u64,
 }
 
@@ -144,6 +146,7 @@ impl SessionHost {
             state: SessionState::Running,
             activity: Activity::Idle,
             attention: None,
+            usage: Vec::new(),
             created_at: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map(|d| d.as_millis() as u64)
@@ -290,6 +293,17 @@ fn pump_output(mut reader: Box<dyn Read + Send>, session: &Session, on_change: &
         signals.clear();
         scanner.feed(chunk, &mut signals);
         lock(&session.tracker).on_output(Instant::now(), &signals);
+        if let Some(usage) = signals.iter().rev().find_map(|s| match s {
+            Signal::Usage(u) => Some(u.clone()),
+            _ => None,
+        }) {
+            let info = {
+                let mut info = lock(&session.info);
+                info.usage = usage;
+                info.clone()
+            };
+            on_change(&info);
+        }
         refresh(session, on_change);
     }
 }

@@ -6,6 +6,7 @@ import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { api, errorMessage, type Project, type SessionInfo, type Worktree } from "../lib/api";
 import { keys, useAgentSettings, useSessions } from "../lib/queries";
 import { useUi } from "../lib/store";
+import { formatTokens, totalUsage, usageDetails } from "../lib/usage";
 import { ActivityDot, sessionState, stateLabel } from "./ActivityDot";
 import { TerminalView } from "./TerminalView";
 import { Button, ErrorText, IconButton, Menu } from "./ui";
@@ -210,6 +211,7 @@ function SessionTab({
         title={session.attention ? `Waiting: ${session.attention}` : stateLabel[sessionState(session)]}
       />
       <span className="max-w-40 truncate">{session.title}</span>
+      <UsageBadge session={session} />
       {session.runAs && (
         <span className="rounded bg-hover px-1 font-mono text-[10px] text-faint" title={`Runs as ${session.runAs}`}>
           {session.runAs}
@@ -227,5 +229,15 @@ function SessionTab({
         <X size={11} />
       </button>
     </div>
+  );
+}
+
+function UsageBadge({ session }: { session: SessionInfo }) {
+  const total = totalUsage(session.usage);
+  if (!total) return null;
+  return (
+    <span className="font-mono text-[10px] text-faint" title={`Tokens used\n${usageDetails(total)}`}>
+      {formatTokens(total.tokens)}
+    </span>
   );
 }

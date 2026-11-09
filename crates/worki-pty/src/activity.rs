@@ -20,13 +20,48 @@ pub(crate) enum Signal {
     Notify(String),
     HookWorking,
     HookWaiting,
+    Usage(Vec<ModelUsage>),
+}
+
+/// Tokens an agent's conversation used with one model, as reported by worki's usage hook.
+#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelUsage {
+    pub model: String,
+    pub input: u64,
+    pub output: u64,
+    /// All cache writes, including the 1-hour ones.
+    pub cache_write: u64,
+    pub cache_write_1h: u64,
+    pub cache_read: u64,
+}
+
+/// `model:input:output:cacheWrite:cacheRead:cacheWrite1h` entries separated by commas.
+fn parse_usage(text: &str) -> Vec<ModelUsage> {
+    text.split(',')
+        .filter_map(|entry| {
+            let mut parts = entry.rsplitn(6, ':');
+            let mut n = || parts.next()?.trim().parse::<u64>().ok();
+            let (cache_write_1h, cache_read, cache_write, output, input) =
+                (n()?, n()?, n()?, n()?, n()?);
+            let model = parts.next()?.trim();
+            (!model.is_empty()).then(|| ModelUsage {
+                model: model.into(),
+                input,
+                output,
+                cache_write,
+                cache_write_1h,
+                cache_read,
+            })
+        })
+        .collect()
 }
 
 /// Output within this window counts as the agent working.
 const WORKING_WINDOW: Duration = Duration::from_millis(1500);
 /// Output this soon after typing is treated as echo, not as the agent working.
 const ECHO_WINDOW: Duration = Duration::from_millis(400);
-const MAX_OSC: usize = 1024;
+const MAX_OSC: usize = 4096;
 
 #[derive(Default)]
 enum State {
@@ -90,7 +125,11 @@ impl Scanner {
             match rest {
                 "working" => out.push(Signal::HookWorking),
                 "waiting" => out.push(Signal::HookWaiting),
-                _ => {}
+                _ => {
+                    if let Some(usage) = rest.strip_prefix("usage;") {
+                        out.push(Signal::Usage(parse_usage(usage)));
+                    }
+                }
             }
         } else if let Some(rest) = payload.strip_prefix("777;notify;") {
             let mut parts = rest.splitn(2, ';');
@@ -147,6 +186,7 @@ impl Tracker {
                     self.hook_working = false;
                     self.waiting = true;
                 }
+                Signal::Usage(_) => {}
             }
         }
     }
@@ -182,6 +222,34 @@ impl Tracker {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn reads_usage_markers() {
+        let mut out = Vec::new();
+        Scanner::default().feed(
+            b"\x1b]777;worki;usage;claude-opus-5-5:10:200:3000:40000:1000,claude-haiku-5-5:1:2:0:0:0\x07",
+            &mut out,
+        );
+        assert_eq!(
+            out,
+            [Signal::Usage(vec![
+                ModelUsage {
+                    model: "claude-opus-5-5".into(),
+                    input: 10,
+                    output: 200,
+                    cache_write: 3000,
+                    cache_read: 40000,
+                    cache_write_1h: 1000,
+                },
+                ModelUsage {
+                    model: "claude-haiku-5-5".into(),
+                    input: 1,
+                    output: 2,
+                    ..Default::default()
+                },
+            ])]
+        );
+    }
+
     use super::*;
 
     fn scan(chunks: &[&[u8]]) -> Vec<Signal> {

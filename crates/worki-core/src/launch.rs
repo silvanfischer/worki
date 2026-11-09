@@ -66,17 +66,81 @@ fn claude_status_hooks() -> String {
             ),
         }]}])
     };
+    let mut stop = marker("waiting");
+    stop[0]["hooks"]
+        .as_array_mut()
+        .expect("marker hooks")
+        .push(serde_json::json!({ "type": "command", "command": USAGE_HOOK }));
     serde_json::json!({ "hooks": {
         "UserPromptSubmit": marker("working"),
         "PreToolUse": marker("working"),
-        "Stop": marker("waiting"),
+        "Stop": stop,
         "Notification": marker("waiting"),
     }})
     .to_string()
 }
 
+/// Adds up the token usage in the conversation's transcript (path from the hook's JSON input)
+/// per model and prints it as a `usage` marker. A message is written as several transcript lines
+/// repeating its usage, so each message id counts once. Plain sed and awk, so it runs wherever
+/// the agent does.
+const USAGE_HOOK: &str = r#"t=$(sed -n 's/.*"transcript_path" *: *"\([^"]*\)".*/\1/p' | head -n 1); [ -n "$WORKI_TTY" ] && [ -f "$t" ] && u=$(awk '
+function num(k,  r) { if (match($0, "\"" k "\":[0-9]+")) { r = substr($0, RSTART, RLENGTH); sub(/.*:/, "", r); return r + 0 } return 0 }
+/"type":"assistant"/ && /"usage":/ {
+  id = ""; if (match($0, /"id":"msg_[^"]*"/)) id = substr($0, RSTART, RLENGTH)
+  if (id != "") { if (id in seen) next; seen[id] = 1 }
+  m = ""; if (match($0, /"model":"[^"]*"/)) m = substr($0, RSTART + 9, RLENGTH - 10)
+  if (m == "" || m ~ /[<:,;]/) next
+  i[m] += num("input_tokens"); o[m] += num("output_tokens"); w[m] += num("cache_creation_input_tokens")
+  r[m] += num("cache_read_input_tokens"); h[m] += num("ephemeral_1h_input_tokens")
+}
+END { s = ""; for (m in o) s = s (s == "" ? "" : ",") m ":" i[m] ":" o[m] ":" w[m] ":" r[m] ":" h[m]; printf "%s", s }' "$t") && [ -n "$u" ] && { if [ -n "$TMUX" ]; then printf '\033Ptmux;\033\033]777;worki;usage;%s\007\033\\' "$u"; else printf '\033]777;worki;usage;%s\007' "$u"; fi; } > "$WORKI_TTY" 2>/dev/null || true"#;
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn usage_hook_sums_the_transcript_per_model() {
+        let dir = tempfile::tempdir().unwrap();
+        let transcript = dir.path().join("t.jsonl");
+        let line = |id: &str, model: &str, out: u32| {
+            format!(
+                r#"{{"type":"assistant","message":{{"id":"{id}","model":"{model}","usage":{{"input_tokens":3,"cache_creation_input_tokens":100,"cache_read_input_tokens":1000,"cache_creation":{{"ephemeral_5m_input_tokens":60,"ephemeral_1h_input_tokens":40}},"output_tokens":{out}}}}}}}"#
+            )
+        };
+        std::fs::write(
+            &transcript,
+            [
+                r#"{"type":"user","message":{"content":"hi"}}"#.to_owned(),
+                line("msg_1", "claude-opus-5-5", 50),
+                line("msg_1", "claude-opus-5-5", 50),
+                line("msg_2", "claude-opus-5-5", 7),
+                line("msg_3", "<synthetic>", 0),
+            ]
+            .join("\n"),
+        )
+        .unwrap();
+        let mut child = std::process::Command::new("/bin/sh")
+            .args(["-c", &USAGE_HOOK.replace("> \"$WORKI_TTY\"", "")])
+            .env("WORKI_TTY", "/dev/ttys-test")
+            .env_remove("TMUX")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        use std::io::Write;
+        write!(
+            child.stdin.take().unwrap(),
+            r#"{{"session_id":"s","transcript_path":"{}","hook_event_name":"Stop"}}"#,
+            transcript.display()
+        )
+        .unwrap();
+        let out = child.wait_with_output().unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            "\x1b]777;worki;usage;claude-opus-5-5:6:57:200:2000:80\x07"
+        );
+    }
+
     use super::*;
 
     #[test]

@@ -179,6 +179,16 @@ export type Activity = "working" | "waiting" | "idle";
 
 export type SessionState = { kind: "running" } | { kind: "exited"; code: number };
 
+export interface ModelUsage {
+  model: string;
+  input: number;
+  output: number;
+  /** All cache writes, including the 1-hour ones. */
+  cacheWrite: number;
+  cacheWrite1h: number;
+  cacheRead: number;
+}
+
 export interface SessionInfo {
   id: string;
   worktreePath: string;
@@ -192,6 +202,8 @@ export interface SessionInfo {
   /** Text of the agent's last notification while it waits. */
   attention: string | null;
   createdAt: number;
+  /** Tokens the agent's current conversation used, per model (Claude Code only). */
+  usage: ModelUsage[];
 }
 
 export const api = {
