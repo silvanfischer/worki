@@ -1,0 +1,21 @@
+[package]
+name = "worki-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+rusqlite.workspace = true
+uuid.workspace = true
+toml.workspace = true
+dirs.workspace = true
+tracing.workspace = true
+worki-isolation = { path = "../worki-isolation" }
+
+[dev-dependencies]
+tempfile.workspace = true
