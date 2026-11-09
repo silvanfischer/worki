@@ -36,12 +36,15 @@ pub fn open_in_app(state: State<'_, AppState>, app: PathBuf, target: PathBuf) ->
     if let Host::Ssh(host) = state.projects.host_for_path(&target).map_err(err)? {
         return open_remote(&app, &host, &target);
     }
-    let status = Command::new("/usr/bin/open")
-        .arg("-a")
-        .arg(&app)
-        .arg(&target)
-        .status()
-        .map_err(err)?;
+    let mut open = Command::new("/usr/bin/open");
+    if is_jetbrains(&app) {
+        // A running JetBrains IDE only activates on `open -a app folder` when it already has a
+        // project open; its own launcher hands the folder over as an argument instead.
+        open.arg("-na").arg(&app).arg("--args").arg(&target);
+    } else {
+        open.arg("-a").arg(&app).arg(&target);
+    }
+    let status = open.status().map_err(err)?;
     if !status.success() {
         return Err(format!(
             "could not open {} in {}",
@@ -50,6 +53,10 @@ pub fn open_in_app(state: State<'_, AppState>, app: PathBuf, target: PathBuf) ->
         ));
     }
     Ok(())
+}
+
+fn is_jetbrains(app: &Path) -> bool {
+    app.join("Contents/bin/idea.properties").exists()
 }
 
 fn open_remote(app: &Path, ssh: &SshTarget, target: &Path) -> CmdResult<()> {
