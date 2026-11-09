@@ -12,6 +12,7 @@
     "dialog:allow-ask",
     "opener:allow-reveal-item-in-dir",
     "opener:allow-open-url",
+    "opener:allow-default-urls",
     "notification:default",
     "core:window:allow-set-badge-count",
     "core:window:allow-set-theme",
