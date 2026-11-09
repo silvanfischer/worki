@@ -24,17 +24,19 @@ pub fn session_env(session_id: &str, worktree: &Path) -> Vec<(String, String)> {
 }
 
 /// An agent profile, or a plain shell for `None`. `exec` hands the PTY to the agent itself.
+/// `prompt` is handed to the agent as its first message.
 pub fn session_request(
     profile: Option<&AgentProfile>,
     cwd: &Path,
     env: Vec<(String, String)>,
     session: Option<SessionMeta>,
     confined: bool,
+    prompt: Option<&str>,
 ) -> LaunchRequest {
     LaunchRequest {
         cwd: cwd.into(),
         command: profile
-            .map(|p| agent_command(p, session.as_ref().map(|s| s.id.as_str()), confined)),
+            .map(|p| agent_command(p, session.as_ref().map(|s| s.id.as_str()), confined, prompt)),
         interactive: true,
         env,
         session,
@@ -43,7 +45,16 @@ pub fn session_request(
 
 /// `confined`: worki's isolation already keeps the agent in its worktree, so Claude Code's own
 /// sandbox is turned off; it only got in the way there (e.g. it hides the system CA bundle).
-fn agent_command(profile: &AgentProfile, session_id: Option<&str>, confined: bool) -> String {
+fn agent_command(
+    profile: &AgentProfile,
+    session_id: Option<&str>,
+    confined: bool,
+    prompt: Option<&str>,
+) -> String {
+    let prompt = prompt
+        .filter(|p| !p.trim().is_empty())
+        .map(|p| format!(" {}", shell_quote(p)))
+        .unwrap_or_default();
     match profile.executable() {
         // Claude runs hooks without a controlling terminal, so the shell records the session's
         // terminal device first and the hooks write there.
@@ -51,17 +62,17 @@ fn agent_command(profile: &AgentProfile, session_id: Option<&str>, confined: boo
             let hooks = shell_quote(&claude_settings(confined));
             match session_id {
                 Some(id) => format!(
-                    "export WORKI_TTY=\"$(tty)\"; {} exec {} --settings {hooks} \"$@\"",
+                    "export WORKI_TTY=\"$(tty)\"; {} exec {} --settings {hooks} \"$@\"{prompt}",
                     claude_conversation(id),
                     profile.command,
                 ),
                 None => format!(
-                    "export WORKI_TTY=\"$(tty)\"; exec {} --settings {hooks}",
+                    "export WORKI_TTY=\"$(tty)\"; exec {} --settings {hooks}{prompt}",
                     profile.command
                 ),
             }
         }
-        _ => format!("exec {}", profile.command),
+        _ => format!("exec {}{prompt}", profile.command),
     }
 }
 
@@ -186,11 +197,31 @@ mod tests {
             session_env("s1", Path::new("/w")),
             None,
             false,
+            None,
         );
         assert_eq!(req.command.as_deref(), Some("exec aider --verbose"));
+        let with_prompt = session_request(
+            Some(&p),
+            Path::new("/w"),
+            vec![],
+            None,
+            false,
+            Some("fix it's tests"),
+        );
+        let out = std::process::Command::new("/bin/sh")
+            .args([
+                "-c",
+                &with_prompt
+                    .command
+                    .unwrap()
+                    .replacen("exec aider", "printf '%s|'", 1),
+            ])
+            .output()
+            .unwrap();
+        assert_eq!(out.stdout, b"--verbose|fix it's tests|");
         assert!(req.env.contains(&("WORKI_SESSION_ID".into(), "s1".into())));
         assert_eq!(
-            session_request(None, Path::new("/w"), vec![], None, false).command,
+            session_request(None, Path::new("/w"), vec![], None, false, None).command,
             None
         );
     }
@@ -208,7 +239,7 @@ mod tests {
             title: "C".into(),
             profile_id: None,
         };
-        let command = session_request(Some(&p), Path::new("/w"), vec![], Some(meta), false)
+        let command = session_request(Some(&p), Path::new("/w"), vec![], Some(meta), false, None)
             .command
             .unwrap();
         let run = |home: &Path| {
@@ -239,7 +270,7 @@ mod tests {
             command: "claude".into(),
             install: None,
         };
-        let command = session_request(Some(&p), Path::new("/w"), vec![], None, false)
+        let command = session_request(Some(&p), Path::new("/w"), vec![], None, false, None)
             .command
             .unwrap();
         assert!(command.starts_with("export WORKI_TTY=\"$(tty)\"; exec claude --settings '"));

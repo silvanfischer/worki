@@ -19,12 +19,14 @@ pub fn list_sessions(state: State<'_, AppState>) -> Vec<SessionInfo> {
 /// `profile_id: None` opens a plain shell. Runs inside the project's isolation. `resume_id`
 /// reuses a closed session's id, so a Claude session continues its conversation.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn spawn_session(
     state: State<'_, AppState>,
     project_id: String,
     worktree_path: PathBuf,
     profile_id: Option<String>,
     resume_id: Option<String>,
+    prompt: Option<String>,
     cols: u16,
     rows: u16,
 ) -> CmdResult<SessionInfo> {
@@ -39,6 +41,7 @@ pub async fn spawn_session(
         worktree_path,
         profile_id,
         resume_id,
+        prompt,
         cols,
         rows,
     )
@@ -46,12 +49,14 @@ pub async fn spawn_session(
 }
 
 /// Starts a session, under `id` when it is one worki ran before and should resume.
+#[allow(clippy::too_many_arguments)]
 async fn start_session(
     state: &AppState,
     project_id: String,
     worktree_path: PathBuf,
     profile_id: Option<String>,
     id: Option<String>,
+    prompt: Option<String>,
     cols: u16,
     rows: u16,
 ) -> CmdResult<SessionInfo> {
@@ -121,7 +126,14 @@ async fn start_session(
         profile_id: profile_id.clone(),
     };
     let confined = !matches!(isolation, Isolation::None | Isolation::Ssh { .. });
-    let req = session_request(profile.as_ref(), &worktree_path, env, Some(meta), confined);
+    let req = session_request(
+        profile.as_ref(),
+        &worktree_path,
+        env,
+        Some(meta),
+        confined,
+        prompt.as_deref(),
+    );
     let backend_isolation = isolation.clone();
     let launch = blocking(move || backend_isolation.backend().launch(&req)).await?;
 
@@ -206,6 +218,7 @@ pub async fn restore_agent_sessions(
                 s.worktree_path,
                 Some(s.profile_id),
                 Some(s.id),
+                None,
                 120,
                 32,
             )
