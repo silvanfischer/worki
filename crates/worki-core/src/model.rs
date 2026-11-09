@@ -113,6 +113,17 @@ pub struct WorktreeStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct BranchChanges {
+    pub base: String,
+    pub files: Vec<ChangedFile>,
+    pub insertions: u32,
+    pub deletions: u32,
+    /// Commits on the worktree's branch since it left `base`.
+    pub commits: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct ChangedFile {
     pub path: String,
     /// Two-letter porcelain v1 code, e.g. " M", "??", "A ".

@@ -175,10 +175,24 @@ pub async fn file_diff(
     state: State<'_, AppState>,
     worktree_path: PathBuf,
     file: String,
+    base: Option<String>,
 ) -> CmdResult<String> {
     state
         .projects
-        .file_diff(&worktree_path, &file)
+        .file_diff(&worktree_path, &file, base.as_deref())
+        .await
+        .map_err(err)
+}
+
+#[tauri::command]
+pub async fn branch_changes(
+    state: State<'_, AppState>,
+    worktree_path: PathBuf,
+    base: String,
+) -> CmdResult<BranchChanges> {
+    state
+        .projects
+        .branch_changes(&worktree_path, &base)
         .await
         .map_err(err)
 }

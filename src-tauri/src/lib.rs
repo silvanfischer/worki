@@ -87,6 +87,7 @@ pub fn run() {
             commands::list_worktrees,
             commands::list_branches,
             commands::worktree_status,
+            commands::branch_changes,
             commands::ssh_hosts,
             commands::save_ssh_host,
             commands::delete_ssh_host,

@@ -11,6 +11,8 @@ export type DialogState =
 
 export type SettingsTab = "agents" | "secrets" | "isolation" | "sshHosts" | "openIn";
 
+export type ChangesScope = "uncommitted" | "branch";
+
 export type Panel = "sidebar" | "diff" | "changes";
 
 export const PANEL_LIMITS: Record<Panel, { min: number; max: number; initial: number }> = {
@@ -26,12 +28,15 @@ interface UiState {
   /** Last focused session per worktree path. */
   activeSession: Record<string, string>;
   showChanges: boolean;
+  /** Whether the changes panel lists uncommitted changes or everything since the base branch. */
+  changesScope: ChangesScope;
   panelWidths: Record<Panel, number>;
   dialog: DialogState;
   select: (projectId: string, worktreePath: string | null) => void;
   toggleCollapsed: (projectId: string) => void;
   setActiveSession: (worktreePath: string, sessionId: string) => void;
   toggleChanges: () => void;
+  setChangesScope: (scope: ChangesScope) => void;
   setPanelWidth: (panel: Panel, width: number) => void;
   openDialog: (dialog: DialogState) => void;
   closeDialog: () => void;
@@ -45,6 +50,7 @@ export const useUi = create<UiState>()(
       collapsed: {},
       activeSession: {},
       showChanges: true,
+      changesScope: "uncommitted",
       panelWidths: {
         sidebar: PANEL_LIMITS.sidebar.initial,
         diff: PANEL_LIMITS.diff.initial,
@@ -55,6 +61,7 @@ export const useUi = create<UiState>()(
       toggleCollapsed: (id) => set((s) => ({ collapsed: { ...s.collapsed, [id]: !s.collapsed[id] } })),
       setActiveSession: (path, id) => set((s) => ({ activeSession: { ...s.activeSession, [path]: id } })),
       toggleChanges: () => set((s) => ({ showChanges: !s.showChanges })),
+      setChangesScope: (changesScope) => set({ changesScope }),
       setPanelWidth: (panel, width) => {
         const { min, max } = PANEL_LIMITS[panel];
         set((s) => ({ panelWidths: { ...s.panelWidths, [panel]: Math.round(Math.min(max, Math.max(min, width))) } }));
@@ -64,11 +71,12 @@ export const useUi = create<UiState>()(
     }),
     {
       name: "worki-ui",
-      partialize: ({ selectedProjectId, selectedWorktreePath, collapsed, showChanges, panelWidths }) => ({
+      partialize: ({ selectedProjectId, selectedWorktreePath, collapsed, showChanges, changesScope, panelWidths }) => ({
         selectedProjectId,
         selectedWorktreePath,
         collapsed,
         showChanges,
+        changesScope,
         panelWidths,
       }),
     },

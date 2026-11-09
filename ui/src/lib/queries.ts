@@ -8,7 +8,8 @@ export const keys = {
   projects: ["projects"] as const,
   worktrees: (projectId: string) => ["worktrees", projectId] as const,
   status: (path: string) => ["status", path] as const,
-  diff: (worktreePath: string, file: string) => ["diff", worktreePath, file] as const,
+  diff: (worktreePath: string, file: string, base: string | null) => ["diff", worktreePath, file, base] as const,
+  branchChanges: (worktreePath: string, base: string) => ["branchChanges", worktreePath, base] as const,
   worktreeIsolation: (path: string) => ["worktreeIsolation", path] as const,
   branches: (projectId: string) => ["branches", projectId] as const,
   setupScripts: (projectId: string) => ["setupScripts", projectId] as const,
@@ -86,10 +87,18 @@ export const useWorktreeStatus = (path: string | null, refetchInterval = 15_000)
     refetchInterval,
   });
 
-export const useFileDiff = (worktreePath: string, file: string) =>
+export const useFileDiff = (worktreePath: string, file: string, base: string | null) =>
   useQuery({
-    queryKey: keys.diff(worktreePath, file),
-    queryFn: () => api.fileDiff(worktreePath, file),
+    queryKey: keys.diff(worktreePath, file, base),
+    queryFn: () => api.fileDiff(worktreePath, file, base),
+    refetchInterval: 5_000,
+  });
+
+export const useBranchChanges = (worktreePath: string, base: string | null) =>
+  useQuery({
+    queryKey: keys.branchChanges(worktreePath, base ?? ""),
+    queryFn: () => api.branchChanges(worktreePath, base!),
+    enabled: !!base,
     refetchInterval: 5_000,
   });
 

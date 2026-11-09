@@ -605,8 +605,17 @@ impl ProjectService {
         git::status(&self.host_for_path(path)?, path).await
     }
 
-    pub async fn file_diff(&self, worktree: &Path, file: &str) -> Result<String> {
-        git::file_diff(&self.host_for_path(worktree)?, worktree, file).await
+    pub async fn file_diff(
+        &self,
+        worktree: &Path,
+        file: &str,
+        base: Option<&str>,
+    ) -> Result<String> {
+        git::file_diff(&self.host_for_path(worktree)?, worktree, file, base).await
+    }
+
+    pub async fn branch_changes(&self, worktree: &Path, base: &str) -> Result<BranchChanges> {
+        git::branch_changes(&self.host_for_path(worktree)?, worktree, base).await
     }
 
     pub async fn create_worktree(

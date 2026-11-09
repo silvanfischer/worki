@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::host::Host;
-use crate::model::{ChangedFile, Worktree, WorktreeStatus};
+use crate::model::{BranchChanges, ChangedFile, Worktree, WorktreeStatus};
 use crate::{Error, Result};
 
 /// Resolves any path inside a repository or one of its worktrees to the main checkout.
@@ -258,7 +258,12 @@ const MAX_DIFF_BYTES: usize = 1024 * 1024;
 /// Unified diff of one file in a worktree against `HEAD` (staged and unstaged changes), or of an
 /// untracked file against nothing. The worktree may be written by an agent, so external diff
 /// drivers and text conversion are disabled.
-pub async fn file_diff(host: &Host, worktree: &Path, file: &str) -> Result<String> {
+pub async fn file_diff(
+    host: &Host,
+    worktree: &Path,
+    file: &str,
+    base: Option<&str>,
+) -> Result<String> {
     let rel = Path::new(file);
     if rel.as_os_str().is_empty()
         || !rel
@@ -270,18 +275,22 @@ pub async fn file_diff(host: &Host, worktree: &Path, file: &str) -> Result<Strin
             stderr: format!("not a path inside the worktree: {file}"),
         });
     }
+    let from = match base {
+        Some(base) => merge_base(host, worktree, base).await?,
+        None => "HEAD".to_owned(),
+    };
     let tracked = host
         .git(worktree, ["ls-files", "--error-unmatch", "--", file])
         .await
         .is_ok()
         || host
-            .git(worktree, ["cat-file", "-e", &format!("HEAD:{file}")])
+            .git(worktree, ["cat-file", "-e", &format!("{from}:{file}")])
             .await
             .is_ok();
     let args: Vec<&str> = if tracked {
         vec![
             "diff",
-            "HEAD",
+            &from,
             "--no-color",
             "--no-ext-diff",
             "--no-textconv",
@@ -321,6 +330,76 @@ pub async fn file_diff(host: &Host, worktree: &Path, file: &str) -> Result<Strin
     Ok(text)
 }
 
+async fn merge_base(host: &Host, worktree: &Path, base: &str) -> Result<String> {
+    Ok(host
+        .git(worktree, ["merge-base", "HEAD", base])
+        .await?
+        .trim()
+        .to_owned())
+}
+
+/// Everything the worktree changes compared to where it left `base`: its commits plus
+/// uncommitted and untracked files.
+pub async fn branch_changes(host: &Host, worktree: &Path, base: &str) -> Result<BranchChanges> {
+    let from = merge_base(host, worktree, base).await?;
+    let names = host
+        .git(
+            worktree,
+            ["diff", &from, "--name-status", "-z", "-M", "--no-ext-diff"],
+        )
+        .await?;
+    let mut files = parse_name_status(&names);
+    let untracked = host
+        .git(
+            worktree,
+            ["ls-files", "--others", "--exclude-standard", "-z"],
+        )
+        .await?;
+    files.extend(
+        untracked
+            .split('\0')
+            .filter(|p| !p.is_empty())
+            .map(|p| ChangedFile {
+                path: p.into(),
+                code: "??".into(),
+            }),
+    );
+    let stat = host.git(worktree, ["diff", &from, "--shortstat"]).await?;
+    let (insertions, deletions) = parse_shortstat(&stat);
+    let commits = host
+        .git(worktree, ["rev-list", "--count", &format!("{from}..HEAD")])
+        .await?
+        .trim()
+        .parse()
+        .unwrap_or(0);
+    Ok(BranchChanges {
+        base: base.to_owned(),
+        files,
+        insertions,
+        deletions,
+        commits,
+    })
+}
+
+/// `git diff --name-status -z` output; renames and copies report the new path.
+pub fn parse_name_status(text: &str) -> Vec<ChangedFile> {
+    let mut files = Vec::new();
+    let mut tokens = text.split('\0').filter(|t| !t.is_empty());
+    while let Some(status) = tokens.next() {
+        let letter = &status[..1];
+        if matches!(letter, "R" | "C") {
+            tokens.next();
+        }
+        if let Some(path) = tokens.next() {
+            files.push(ChangedFile {
+                path: path.into(),
+                code: format!("{letter} "),
+            });
+        }
+    }
+    files
+}
+
 pub fn parse_shortstat(text: &str) -> (u32, u32) {
     let mut ins = 0;
     let mut del = 0;
@@ -342,6 +421,23 @@ pub fn parse_shortstat(text: &str) -> (u32, u32) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn parses_name_status_with_renames() {
+        let files = parse_name_status("M\0src/a.rs\0R087\0old.rs\0new name.rs\0D\0gone.txt\0");
+        let got: Vec<_> = files
+            .iter()
+            .map(|f| (f.code.as_str(), f.path.as_str()))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("M ", "src/a.rs"),
+                ("R ", "new name.rs"),
+                ("D ", "gone.txt")
+            ]
+        );
+    }
+
     use super::*;
 
     #[test]

@@ -152,7 +152,7 @@ async fn project_and_worktree_lifecycle() {
     assert_eq!((status.insertions, status.deletions), (2, 1));
 
     let diff = svc
-        .file_diff(&created.worktree.path, "README.md")
+        .file_diff(&created.worktree.path, "README.md", None)
         .await
         .unwrap();
     assert!(
@@ -160,14 +160,41 @@ async fn project_and_worktree_lifecycle() {
         "{diff}"
     );
     let untracked = svc
-        .file_diff(&created.worktree.path, ".setup-done")
+        .file_diff(&created.worktree.path, ".setup-done", None)
         .await
         .unwrap();
     assert!(untracked.contains("new file mode"), "{untracked}");
     assert!(svc
-        .file_diff(&created.worktree.path, "../app/README.md")
+        .file_diff(&created.worktree.path, "../app/README.md", None)
         .await
         .is_err());
+
+    std::fs::write(created.worktree.path.join("lib.rs"), "fn a() {}\n").unwrap();
+    sh(&created.worktree.path, &["add", "lib.rs"]);
+    sh(&created.worktree.path, &["commit", "-q", "-m", "lib"]);
+    let branch = svc
+        .branch_changes(&created.worktree.path, "main")
+        .await
+        .unwrap();
+    let codes: Vec<_> = branch
+        .files
+        .iter()
+        .map(|f| (f.code.as_str(), f.path.as_str()))
+        .collect();
+    assert_eq!(branch.commits, 1);
+    assert!(codes.contains(&("A ", "lib.rs")), "{codes:?}");
+    assert!(codes.contains(&("M ", "README.md")), "{codes:?}");
+    assert!(codes.contains(&("??", ".setup-done")), "{codes:?}");
+    let committed = svc
+        .file_diff(&created.worktree.path, "lib.rs", Some("main"))
+        .await
+        .unwrap();
+    assert!(committed.contains("+fn a() {}"), "{committed}");
+    assert!(svc
+        .file_diff(&created.worktree.path, "lib.rs", None)
+        .await
+        .unwrap()
+        .is_empty());
 
     let dirty = RemoveWorktree {
         path: created.worktree.path.clone(),

@@ -129,6 +129,14 @@ export interface ChangedFile {
   code: string;
 }
 
+export interface BranchChanges {
+  base: string;
+  files: ChangedFile[];
+  insertions: number;
+  deletions: number;
+  commits: number;
+}
+
 export interface WorktreeStatus {
   changedFiles: ChangedFile[];
   insertions: number;
@@ -224,7 +232,10 @@ export const api = {
   listWorktrees: (projectId: string) => invoke<Worktree[]>("list_worktrees", { projectId }),
   listBranches: (projectId: string) => invoke<string[]>("list_branches", { projectId }),
   worktreeStatus: (path: string) => invoke<WorktreeStatus>("worktree_status", { path }),
-  fileDiff: (worktreePath: string, file: string) => invoke<string>("file_diff", { worktreePath, file }),
+  fileDiff: (worktreePath: string, file: string, base: string | null) =>
+    invoke<string>("file_diff", { worktreePath, file, base }),
+  branchChanges: (worktreePath: string, base: string) =>
+    invoke<BranchChanges>("branch_changes", { worktreePath, base }),
   createWorktree: (
     projectId: string,
     req: { name: string; base: string; runSetup: boolean; isolation: ProjectIsolation },
