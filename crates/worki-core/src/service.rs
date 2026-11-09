@@ -385,14 +385,18 @@ impl ProjectService {
         let new = self.isolation_for_worktree(&project, worktree)?;
         if old != new && old != Isolation::None {
             let ws = Self::workspace(&project, Some(worktree));
-            blocking(move || {
+            let released = blocking(move || {
                 let backend = old.backend();
-                if backend.ready().is_ok() {
-                    backend.release(&ws)?;
-                }
-                Ok(())
+                backend.ready()?;
+                backend.release(&ws)
             })
-            .await?;
+            .await;
+            if let Err(e) = released {
+                tracing::warn!(
+                    "removing the old environment of {}: {e}",
+                    worktree.display()
+                );
+            }
         }
         Ok(new)
     }

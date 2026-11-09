@@ -2,8 +2,14 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Shield } from "lucide-react";
 import { useState } from "react";
 
-import { api, isolationLabel, type Project, type ProjectIsolation, type Worktree } from "../lib/api";
-import { keys, useProjectDefaultIsolation, useSessions, useWorktreeIsolation } from "../lib/queries";
+import { api, isolationLabel, projectIsolation, type Project, type ProjectIsolation, type Worktree } from "../lib/api";
+import {
+  keys,
+  useIsolationSettings,
+  useProjectDefaultIsolation,
+  useSessions,
+  useWorktreeIsolation,
+} from "../lib/queries";
 import { useAsyncAction } from "../lib/useAsyncAction";
 import { DoctorPanel } from "./DoctorPanel";
 import { IsolationPicker } from "./IsolationPicker";
@@ -13,7 +19,10 @@ import { Button, Dialog, ErrorText, Field, WarnText } from "./ui";
 export function WorktreeIsolationBadge({ project, worktree }: { project: Project; worktree: Worktree }) {
   const [open, setOpen] = useState(false);
   const { data } = useWorktreeIsolation(project.id, worktree.path);
-  if (!data) return null;
+  const { data: settings } = useIsolationSettings();
+  if (!data || !settings) return null;
+  const effective =
+    data.choice.kind === "inherit" || project.remote ? projectIsolation(project, settings.default) : data.choice;
   return (
     <>
       <button
@@ -21,8 +30,8 @@ export function WorktreeIsolationBadge({ project, worktree }: { project: Project
         title={project.remote ? "Remote project" : "Change this worktree's isolation"}
         className="flex h-7 max-w-52 items-center gap-1.5 rounded-md px-2 text-xs text-muted hover:bg-hover hover:text-fg"
       >
-        <Shield size={13} className={data.effective.kind === "none" ? "text-faint" : "text-accent"} />
-        <span className="truncate">{data.effective.kind === "none" ? "No isolation" : isolationLabel(data.effective)}</span>
+        <Shield size={13} className={effective.kind === "none" ? "text-faint" : "text-accent"} />
+        <span className="truncate">{effective.kind === "none" ? "No isolation" : isolationLabel(effective)}</span>
       </button>
       {open && <WorktreeIsolationDialog project={project} worktree={worktree} current={data.choice} onClose={() => setOpen(false)} />}
     </>
@@ -51,12 +60,15 @@ function WorktreeIsolationDialog({
 
   const save = () =>
     run(async () => {
-      await api.setWorktreeIsolation(project.id, worktree.path, choice);
-      await Promise.all([
-        qc.invalidateQueries({ queryKey: keys.worktreeIsolation(worktree.path) }),
-        qc.invalidateQueries({ queryKey: keys.sessions }),
-      ]);
-      onClose();
+      try {
+        await api.setWorktreeIsolation(project.id, worktree.path, choice);
+        onClose();
+      } finally {
+        await Promise.all([
+          qc.invalidateQueries({ queryKey: keys.worktreeIsolation(worktree.path) }),
+          qc.invalidateQueries({ queryKey: keys.sessions }),
+        ]);
+      }
     });
 
   return (
