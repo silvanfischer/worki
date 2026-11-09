@@ -1,0 +1,13 @@
+[package]
+name = "worki-pty"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+portable-pty.workspace = true
+
+[dev-dependencies]
+uuid.workspace = true
