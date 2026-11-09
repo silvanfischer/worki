@@ -28,21 +28,14 @@ jobs:
           targets: aarch64-apple-darwin, x86_64-apple-darwin
       - uses: Swatinem/rust-cache@v2
 
-      - name: Write the notarization key
-        env:
-          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
-        run: |
-          mkdir -p "$RUNNER_TEMP/keys"
-          printf '%s' "$APPLE_API_KEY_P8" > "$RUNNER_TEMP/keys/AuthKey.p8"
-
       - name: Build, sign and notarize
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-          APPLE_API_KEY_PATH: ${{ runner.temp }}/keys/AuthKey.p8
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: pnpm tauri build --target universal-apple-darwin --bundles app,dmg
 
       - name: Check signature and notarization
@@ -57,7 +50,3 @@ jobs:
           name: worki-dmg
           path: target/universal-apple-darwin/release/bundle/dmg/*.dmg
           if-no-files-found: error
-
-      - name: Remove the notarization key
-        if: always()
-        run: rm -rf "$RUNNER_TEMP/keys"
