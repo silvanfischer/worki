@@ -1,8 +1,8 @@
 import clsx from "clsx";
-import { MessageSquarePlus, Send, Trash2, X } from "lucide-react";
-import { Fragment, useState } from "react";
+import { ChevronDown, ChevronsUpDown, ChevronUp, MessageSquarePlus, Send, Trash2, X } from "lucide-react";
+import { Fragment, useMemo, useState } from "react";
 
-import { type DiffLine, parseDiff } from "../lib/diff";
+import { type DiffLine, diffRows, type GapReveal, parseDiff } from "../lib/diff";
 import { errorMessage } from "../lib/api";
 import { useFileDiff, useSessions } from "../lib/queries";
 import {
@@ -18,6 +18,8 @@ import { Button, DiffStat, ErrorText, IconButton, Textarea } from "./ui";
 
 /** Keeps comment rows in view while the code beside them scrolls sideways. */
 const PINNED = "sticky left-0 w-[100cqw] px-3";
+
+const REVEAL_STEP = 20;
 
 type CodeLine = Extract<DiffLine, { kind: "context" | "add" | "del" }>;
 
@@ -47,7 +49,23 @@ export function DiffView({
     sessions.filter((s) => s.worktreePath === worktreePath),
     activeId,
   );
-  const parsed = data !== undefined ? parseDiff(data) : null;
+  const parsed = useMemo(() => (data !== undefined ? parseDiff(data) : null), [data]);
+  const [revealed, setRevealed] = useState<Record<number, GapReveal>>({});
+  const rows = useMemo(() => {
+    if (!parsed) return [];
+    const commented = new Set(comments.map((c) => `${c.side}:${c.line}`));
+    const keep = new Set<number>();
+    parsed.lines.forEach((l, i) => {
+      if (l.kind !== "context") return;
+      if (commented.has(`new:${l.newNo}`) || drafting === `new:${l.newNo}`) keep.add(i);
+    });
+    return diffRows(parsed.lines, revealed, keep);
+  }, [parsed, revealed, comments, drafting]);
+  const reveal = (id: number, patch: Partial<GapReveal>) =>
+    setRevealed((r) => {
+      const cur = r[id] ?? { head: 0, tail: 0 };
+      return { ...r, [id]: { head: cur.head + (patch.head ?? 0), tail: cur.tail + (patch.tail ?? 0) } };
+    });
   const added = parsed?.lines.filter((l) => l.kind === "add").length ?? 0;
   const removed = parsed?.lines.filter((l) => l.kind === "del").length ?? 0;
 
@@ -75,15 +93,20 @@ export function DiffView({
         {parsed && parsed.lines.length > 0 && (
           <table className="w-full border-collapse">
             <tbody>
-              {parsed.lines.map((l, i) => {
-                if (l.kind === "hunk")
+              {rows.map((row) => {
+                if (row.kind === "gap")
                   return (
-                    <tr key={i} className="bg-accent/10 text-muted">
-                      <td colSpan={3} className="px-3 py-0.5">
-                        {l.text}
-                      </td>
-                    </tr>
+                    <GapRow
+                      key={`gap:${row.id}`}
+                      hidden={row.end - row.start}
+                      atStart={row.start === 0}
+                      atEnd={row.end === parsed.lines.length}
+                      onReveal={(patch) => reveal(row.id, patch)}
+                    />
                   );
+                const i = row.index;
+                const l = parsed.lines[i];
+                if (l.kind === "hunk") return null;
                 if (l.kind === "note")
                   return (
                     <tr key={i} className="text-faint">
@@ -163,6 +186,50 @@ export function DiffView({
         {parsed && <OrphanComments worktreePath={worktreePath} lines={parsed.lines} comments={comments} />}
       </div>
     </div>
+  );
+}
+
+function GapRow({
+  hidden,
+  atStart,
+  atEnd,
+  onReveal,
+}: {
+  hidden: number;
+  atStart: boolean;
+  atEnd: boolean;
+  onReveal: (patch: Partial<GapReveal>) => void;
+}) {
+  const step = Math.min(REVEAL_STEP, hidden);
+  const button = "flex items-center gap-1 rounded px-1.5 hover:bg-accent/20 hover:text-fg";
+  return (
+    <tr className="bg-accent/10 text-muted select-none">
+      <td colSpan={3} className="py-0.5 font-sans text-[11px]">
+        <div className={clsx(PINNED, "flex items-center gap-2")}>
+          {!atStart && (
+            <button className={button} title={`Show ${step} more lines below`} onClick={() => onReveal({ head: step })}>
+              <ChevronDown size={12} />
+              {step}
+            </button>
+          )}
+          {!atEnd && (
+            <button className={button} title={`Show ${step} more lines above`} onClick={() => onReveal({ tail: step })}>
+              <ChevronUp size={12} />
+              {step}
+            </button>
+          )}
+          {hidden > step && (
+            <button className={button} onClick={() => onReveal({ head: hidden })}>
+              <ChevronsUpDown size={12} />
+              Show all
+            </button>
+          )}
+          <span className="text-faint">
+            {hidden} unchanged {hidden === 1 ? "line" : "lines"}
+          </span>
+        </div>
+      </td>
+    </tr>
   );
 }
 

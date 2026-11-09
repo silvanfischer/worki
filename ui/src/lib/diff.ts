@@ -31,3 +31,53 @@ export function parseDiff(text: string): { lines: DiffLine[]; binary: boolean } 
   }
   return { lines, binary };
 }
+
+export type DiffRow = { kind: "line"; index: number } | { kind: "gap"; id: number; start: number; end: number };
+
+/** Revealed lines of a collapsed run, counted from its top and from its bottom. */
+export interface GapReveal {
+  head: number;
+  tail: number;
+}
+
+/**
+ * Collapses unchanged lines further than `context` lines from a change, except those in `keep`.
+ * Gap ids are the index of the run's first line, so they stay stable while lines are revealed.
+ */
+export function diffRows(
+  lines: DiffLine[],
+  revealed: Record<number, GapReveal>,
+  keep: Set<number> = new Set(),
+  context = 3,
+): DiffRow[] {
+  const shown = lines.map((l, i) => l.kind === "add" || l.kind === "del" || l.kind === "note" || keep.has(i));
+  lines.forEach((l, i) => {
+    if (l.kind !== "add" && l.kind !== "del") return;
+    for (let j = Math.max(0, i - context); j <= Math.min(lines.length - 1, i + context); j++) shown[j] = true;
+  });
+  const rows: DiffRow[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    if (lines[i].kind === "hunk") {
+      i++;
+      continue;
+    }
+    if (shown[i]) {
+      rows.push({ kind: "line", index: i });
+      i++;
+      continue;
+    }
+    const start = i;
+    while (i < lines.length && !shown[i] && lines[i].kind === "context") i++;
+    const end = i;
+    const { head = 0, tail = 0 } = revealed[start] ?? {};
+    if (head + tail >= end - start) {
+      for (let j = start; j < end; j++) rows.push({ kind: "line", index: j });
+      continue;
+    }
+    for (let j = start; j < start + head; j++) rows.push({ kind: "line", index: j });
+    rows.push({ kind: "gap", id: start, start: start + head, end: end - tail });
+    for (let j = end - tail; j < end; j++) rows.push({ kind: "line", index: j });
+  }
+  return rows;
+}

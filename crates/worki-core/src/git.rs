@@ -257,7 +257,8 @@ const MAX_DIFF_BYTES: usize = 1024 * 1024;
 
 /// Unified diff of one file in a worktree against `HEAD` (staged and unstaged changes), or of an
 /// untracked file against nothing. The worktree may be written by an agent, so external diff
-/// drivers and text conversion are disabled.
+/// drivers and text conversion are disabled. The whole file is kept as context so the UI can
+/// reveal unchanged lines around the changes.
 pub async fn file_diff(
     host: &Host,
     worktree: &Path,
@@ -291,6 +292,7 @@ pub async fn file_diff(
         vec![
             "diff",
             &from,
+            "--unified=1000000",
             "--no-color",
             "--no-ext-diff",
             "--no-textconv",
