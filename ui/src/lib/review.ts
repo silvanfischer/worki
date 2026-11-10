@@ -50,7 +50,7 @@ export const useWorktreeComments = (worktree: string) => useReview((s) => s.comm
 export function reviewPrompt(comments: ReviewComment[]): string {
   const byFile = new Map<string, ReviewComment[]>();
   for (const c of comments) byFile.set(c.file, [...(byFile.get(c.file) ?? []), c]);
-  const parts = ["Please address these review comments on your changes:"];
+  const parts = ["Address these review comments on your changes:"];
   for (const [file, list] of byFile) {
     for (const c of [...list].sort((a, b) => a.line - b.line)) {
       const where = c.side === "old" ? `${file}, removed line ${c.line}` : `${file}:${c.line}`;
