@@ -9,6 +9,7 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/silvanfischer/worki/releases/latest"><img src="https://img.shields.io/github/v/release/silvanfischer/worki?label=download" alt="Latest release"></a>
   <a href="https://github.com/silvanfischer/worki/actions/workflows/ci.yml"><img src="https://github.com/silvanfischer/worki/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/platform-macOS-lightgrey" alt="macOS">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
@@ -100,8 +101,19 @@ Commits and pull requests can be turned off under Settings › Git. Pull request
 
 ## Getting started
 
-worki builds from source. You need macOS, Rust (stable), Node 20+, pnpm and the Xcode command
-line tools. For container isolation, install Docker Sandboxes, Docker Desktop or Podman.
+1. Download `worki_<version>_universal.dmg` from the
+   [latest release](https://github.com/silvanfischer/worki/releases/latest). It runs on
+   Apple Silicon and Intel Macs with macOS 13 or later, and is signed and notarized by Apple.
+2. Open the DMG and drag **worki** into **Applications**.
+3. For container isolation, install Docker Sandboxes, Docker Desktop or Podman. User Isolation
+   needs nothing extra.
+
+Add a repository with **+**, create a worktree, pick its isolation, and start an agent. The
+doctor walks you through anything that's missing.
+
+### Build from source
+
+You need Rust (stable), Node 20+, pnpm and the Xcode command line tools.
 
 ```bash
 git clone https://github.com/silvanfischer/worki.git
@@ -109,9 +121,6 @@ cd worki
 pnpm install
 pnpm tauri dev
 ```
-
-Add a repository with **+**, create a worktree, pick its isolation, and start an agent. The
-doctor walks you through anything that's missing.
 
 ### Share setup with your team
 
