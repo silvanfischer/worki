@@ -229,7 +229,7 @@ export function SessionArea({ project, worktree }: { project: Project; worktree:
 
 function ExitBanner({ message, children }: { message: ReactNode; children: ReactNode }) {
   return (
-    <div className="absolute inset-x-3 bottom-3 flex items-center gap-3 rounded-lg border border-line bg-elevated px-3 py-2 shadow-lg">
+    <div className="absolute inset-x-3 bottom-3 z-20 flex items-center gap-3 rounded-lg border border-line bg-elevated px-3 py-2 shadow-lg">
       <span className="flex-1 text-xs text-muted">{message}</span>
       {children}
     </div>
