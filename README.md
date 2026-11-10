@@ -118,9 +118,11 @@ You need Rust (stable), Node 20+, pnpm and the Xcode command line tools.
 ```bash
 git clone https://github.com/silvanfischer/worki.git
 cd worki
-pnpm install
-pnpm tauri dev
+./start_dev.sh
 ```
+
+`start_dev.sh` installs the frontend dependencies when needed, compiles the app and starts it with
+hot reload for the UI.
 
 ### Share setup with your team
 
