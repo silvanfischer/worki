@@ -1,14 +1,24 @@
 import { useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { Bot, LoaderCircle, Plus, RotateCcw, SquareTerminal, X } from "lucide-react";
+import { Bot, LoaderCircle, MessageSquare, Plus, RotateCcw, SquareTerminal, X } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 
-import { api, errorMessage, type Project, type SessionInfo, skipPermissionsFlag, type Worktree } from "../lib/api";
+import {
+  api,
+  canChat,
+  errorMessage,
+  type Project,
+  type SessionInfo,
+  type SessionKind,
+  skipPermissionsFlag,
+  type Worktree,
+} from "../lib/api";
 import { onCommand } from "../lib/commands";
 import { keys, useAgentSettings, useSessions } from "../lib/queries";
 import { useUi } from "../lib/store";
 import { ActivityDot, sessionState, stateLabel } from "./ActivityDot";
 import { AgentStatus } from "./AgentStatus";
+import { ChatView } from "./ChatView";
 import { TerminalView } from "./TerminalView";
 import { Button, ErrorText, IconButton, Menu } from "./ui";
 
@@ -21,6 +31,7 @@ export function SessionArea({ project, worktree }: { project: Project; worktree:
   const { data: agents } = useAgentSettings();
   const activeId = useUi((s) => s.activeSession[worktree.path]);
   const setActive = useUi((s) => s.setActiveSession);
+  const agentView = useUi((s) => s.agentView);
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState<string | null>(null);
 
@@ -30,20 +41,15 @@ export function SessionArea({ project, worktree }: { project: Project; worktree:
   const defaultProfile = profiles.find((p) => p.id === agents?.defaultProfile) ?? profiles[0];
 
   const spawn = useCallback(
-    async (profileId: string | null, resumeId: string | null = null) => {
+    async (profileId: string | null, resumeId: string | null = null, kind?: SessionKind) => {
       setError(null);
-      setStarting(
-        resumeId ? "Resuming…" : `Starting ${profiles.find((p) => p.id === profileId)?.name ?? "shell"}…`,
-      );
+      const profile = profiles.find((p) => p.id === profileId);
+      const chat = !!profile && canChat(profile) && (kind ?? agentView) === "chat";
+      setStarting(resumeId ? "Resuming…" : `Starting ${profile?.name ?? "shell"}…`);
       try {
-        const info = await api.spawnSession(
-          project.id,
-          worktree.path,
-          profileId,
-          INITIAL_COLS,
-          INITIAL_ROWS,
-          resumeId,
-        );
+        const info = chat
+          ? await api.spawnChatSession(project.id, worktree.path, profile.id, resumeId)
+          : await api.spawnSession(project.id, worktree.path, profileId, INITIAL_COLS, INITIAL_ROWS, resumeId);
         qc.setQueryData<SessionInfo[]>(keys.sessions, (old = []) =>
           old.some((s) => s.id === info.id) ? old : [...old, info],
         );
@@ -54,7 +60,7 @@ export function SessionArea({ project, worktree }: { project: Project; worktree:
         setStarting(null);
       }
     },
-    [project.id, worktree.path, qc, setActive, profiles],
+    [project.id, worktree.path, qc, setActive, profiles, agentView],
   );
 
   async function close(session: SessionInfo) {
@@ -67,7 +73,7 @@ export function SessionArea({ project, worktree }: { project: Project; worktree:
 
   async function restart(session: SessionInfo) {
     await close(session);
-    await spawn(session.profileId, resumes(session) ? session.id : null);
+    await spawn(session.profileId, resumes(session) ? session.id : null, session.kind);
   }
 
   async function reconnect(session: SessionInfo) {
@@ -113,9 +119,21 @@ export function SessionArea({ project, worktree }: { project: Project; worktree:
   }, [spawn, sessionIds, active?.id, defaultProfile?.id, setActive, worktree.path]);
 
   const newMenu = [
-    ...profiles.map((p) => ({ label: p.name, icon: <Bot size={13} />, onSelect: () => spawn(p.id) })),
+    ...profiles.flatMap((p) =>
+      canChat(p)
+        ? [
+            { label: `${p.name} chat`, icon: <MessageSquare size={13} />, onSelect: () => spawn(p.id, null, "chat") },
+            {
+              label: `${p.name} in a terminal`,
+              icon: <Bot size={13} />,
+              onSelect: () => spawn(p.id, null, "terminal"),
+            },
+          ]
+        : [{ label: p.name, icon: <Bot size={13} />, onSelect: () => spawn(p.id, null, "terminal") }],
+    ),
     { label: "Shell", icon: <SquareTerminal size={13} />, onSelect: () => spawn(null) },
   ];
+  const other: SessionKind = agentView === "chat" ? "terminal" : "chat";
 
   if (sessions.length === 0) {
     return (
@@ -127,6 +145,12 @@ export function SessionArea({ project, worktree }: { project: Project; worktree:
           {defaultProfile && (
             <Button variant="primary" onClick={() => spawn(defaultProfile.id)}>
               Start {defaultProfile.name}
+            </Button>
+          )}
+          {defaultProfile && canChat(defaultProfile) && (
+            <Button onClick={() => spawn(defaultProfile.id, null, other)}>
+              {other === "chat" ? <MessageSquare size={13} /> : <SquareTerminal size={13} />}
+              {other === "chat" ? "As a chat" : "In a terminal"}
             </Button>
           )}
           {profiles
@@ -189,7 +213,12 @@ export function SessionArea({ project, worktree }: { project: Project; worktree:
         </div>
       )}
       <div className="relative min-h-0 flex-1">
-        {active && <TerminalView key={`${active.id}-${active.createdAt}`} sessionId={active.id} active />}
+        {active &&
+          (active.kind === "chat" ? (
+            <ChatView key={`${active.id}-${active.createdAt}`} session={active} />
+          ) : (
+            <TerminalView key={`${active.id}-${active.createdAt}`} sessionId={active.id} active />
+          ))}
         {active?.state.kind === "exited" &&
           (active.resumable && active.state.code !== 0 ? (
             <ExitBanner message={<>Connection to {active.runAs ?? "the host"} lost. The session keeps running there.</>}>
@@ -273,6 +302,7 @@ function SessionTab({
         state={sessionState(session)}
         title={session.attention ? `Waiting: ${session.attention}` : stateLabel[sessionState(session)]}
       />
+      {session.kind === "chat" && <MessageSquare size={11} className="-mx-0.5 shrink-0 text-muted" />}
       <span className="max-w-40 truncate">{session.title}</span>
       {yolo && (
         <span

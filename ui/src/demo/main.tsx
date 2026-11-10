@@ -67,6 +67,7 @@ const isolation = { kind: "dockerSandbox", image: "claude", template: "worki-acm
 
 const session = (id: string, path: string, activity: string, extra: object = {}) => ({
   id,
+  kind: "terminal",
   worktreePath: path,
   profileId: "claude",
   title: "Claude Code",
@@ -97,7 +98,78 @@ const sessions = [
   session("s2", login, "waiting", { attention: "Claude needs your permission to use Bash" }),
   session("s3", refunds, "working"),
   session("s4", staging, "waiting", { attention: "Which region should the staging cluster use?" }),
+  session("s5", checkout, "waiting", {
+    kind: "chat",
+    attention: "Allow Bash?",
+    createdAt: now + 1,
+    agent: { model: "Opus 5.5", effort: "high", permissionMode: "default", contextUsed: 34, contextSize: 200_000, costUsd: 1.84, version: "2.1.319" },
+  }),
 ];
+
+const chatEvents: object[] = [
+  {
+    type: "options",
+    permissionModes: ["default", "acceptEdits", "plan", "auto"],
+    models: [
+      { value: "default", model: "claude-opus-5-5", label: "Default (recommended)", description: "Opus 5.5", effortLevels: ["low", "medium", "high", "xhigh", "max"] },
+      { value: "opus", model: "claude-opus-5-5", label: "Opus 5.5", description: "For complex work", effortLevels: ["low", "medium", "high", "xhigh", "max"] },
+      { value: "sonnet", model: "claude-sonnet-5-5", label: "Sonnet 5.5", description: "Fast everyday coding", effortLevels: ["low", "medium", "high", "xhigh", "max"] },
+      { value: "haiku", model: "claude-haiku-5-5", label: "Haiku 5.5", description: "Fastest", effortLevels: ["low", "medium", "high"] },
+    ],
+  },
+  { type: "session", model: "claude-opus-5-5", permissionMode: "default", effort: "high" },
+  {
+    type: "user",
+    text: "The empty cart shows a total of $0.00 with shipping. Hide the summary when the cart is empty and add a test.",
+    attachments: ["empty-cart.png"],
+  },
+  { type: "text", id: "m1:0", parent: null, text: "I'll look at how the summary handles an empty cart first." },
+  { type: "toolCall", id: "t1", name: "Read", parent: null, input: { file_path: `${checkout}/src/checkout/Summary.tsx` } },
+  { type: "toolResult", id: "t1", parent: null, isError: false, output: "export function Summary({ cart }: Props) {\n  const subtotal = …" },
+  {
+    type: "toolCall",
+    id: "t2",
+    name: "Edit",
+    parent: null,
+    input: {
+      file_path: `${checkout}/src/checkout/Summary.tsx`,
+      old_string: "export function Summary({ cart }: Props) {",
+      new_string: "export function Summary({ cart }: Props) {\n  if (cart.items.length === 0) return null;",
+    },
+  },
+  { type: "toolResult", id: "t2", parent: null, isError: false, output: "The file was updated." },
+  {
+    type: "text",
+    id: "m2:0",
+    parent: null,
+    text: "The summary now renders nothing for an **empty cart**. I added a test:\n\n- `hides the summary for an empty cart`\n\nNext I'll run the checkout tests.",
+  },
+  {
+    type: "text",
+    id: "m2b:0",
+    parent: null,
+    text: "How the summary decides what to show:\n\n```mermaid\nflowchart LR\n  A[Cart] --> B{Items?}\n  B -- none --> C[Hide summary]\n  B -- some --> D[Subtotal + shipping]\n  D --> E[Total]\n```\n\nAnd the card layout:\n\n```svg\n<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"240\" height=\"90\" viewBox=\"0 0 240 90\"><rect x=\"4\" y=\"4\" width=\"232\" height=\"82\" rx=\"8\" fill=\"#f6f8fa\" stroke=\"#d0d7de\"/><text x=\"16\" y=\"30\" font-size=\"13\" fill=\"#57606a\">Subtotal</text><text x=\"16\" y=\"52\" font-size=\"13\" fill=\"#57606a\">Shipping</text><text x=\"16\" y=\"74\" font-size=\"14\" font-weight=\"bold\" fill=\"#24292f\">Total</text><script>alert(1)</script></svg>\n```",
+  },
+  {
+    type: "text",
+    id: "m2c:0",
+    parent: null,
+    text: "Test timing per file:\n\n```html\n<div class=\"chart\"><h4>Checkout test time (ms)</h4><div class=\"row\"><span>Summary</span><i style=\"--w:82%\"></i><b>431</b></div><div class=\"row\"><span>LineItem</span><i style=\"--w:36%\"></i><b>188</b></div><div class=\"row\"><span>Cart</span><i style=\"--w:58%\"></i><b>302</b></div></div><style>.chart{padding:14px 16px;border:1px solid var(--line);border-radius:10px;background:var(--elevated)}h4{margin:0 0 10px;font-weight:600;color:var(--fg)}.row{display:grid;grid-template-columns:72px 1fr 40px;align-items:center;gap:10px;margin:6px 0;color:var(--muted)}i{display:block;height:10px;width:var(--w);border-radius:5px;background:var(--accent)}b{font-weight:500;color:var(--fg);text-align:right}</style>\n```",
+  },
+  {
+    type: "permission",
+    requestId: "p1",
+    tool: "Bash",
+    input: { command: "pnpm vitest run src/checkout", description: "Run the checkout tests" },
+    questions: [],
+  },
+];
+type DemoChannel = { onmessage?: (data: number[]) => void };
+let chatSettings: Record<string, string> = { model: "claude-opus-5-5", permissionMode: "default", effort: "high" };
+let chatChannel: DemoChannel | null = null;
+const sendTo = (channel: DemoChannel | null, events: object[]) =>
+  channel?.onmessage?.(Array.from(new TextEncoder().encode(events.map((e) => JSON.stringify(e) + "\n").join(""))));
+const sendChat = (...events: object[]) => sendTo(chatChannel, events);
 
 const esc = "\x1b[";
 const c = (code: string, text: string) => `${esc}${code}m${text}${esc}0m`;
@@ -272,8 +344,49 @@ function handle(cmd: string, args: Record<string, any>): unknown {
     case "attach_session": {
       const channel = args.onData;
       if (args.id === "s1") setTimeout(() => channel.onmessage?.(Array.from(new TextEncoder().encode(terminal))), 50);
+      if (args.id === "s5") {
+        chatChannel = channel;
+        setTimeout(() => sendTo(channel, chatEvents), 50);
+      }
       return 1;
     }
+    case "send_chat_message": {
+      sendChat({ type: "user", text: args.text, attachments: (args.attachments ?? []).map((a: { path?: string; name?: string }) => a.name ?? a.path?.split("/").pop()) });
+      let i = 0;
+      const words = "Sure — I'll take care of that next.".split(" ");
+      const tick = () => {
+        if (i < words.length) {
+          sendChat({ type: "textDelta", id: `r${now}`, parent: null, text: (i ? " " : "") + words[i++] });
+          setTimeout(tick, 120);
+        } else sendChat({ type: "turnEnded", ok: true, interrupted: false, error: null });
+      };
+      setTimeout(tick, 300);
+      return null;
+    }
+    case "answer_chat_permission": {
+      const allowed = args.answer.kind !== "deny";
+      sendChat({ type: "permissionResolved", requestId: args.requestId, allowed });
+      if (allowed)
+        sendChat(
+          { type: "toolCall", id: "t3", name: "Bash", parent: null, input: { command: "pnpm vitest run src/checkout", description: "Run the checkout tests" } },
+          { type: "toolResult", id: "t3", parent: null, isError: false, output: " ✓ src/checkout/Summary.test.tsx (10 tests) 431ms\n Test Files  1 passed (1)" },
+          { type: "text", id: "m3:0", parent: null, text: "All 10 checkout tests pass." },
+          { type: "turnEnded", ok: true, interrupted: false, error: null },
+        );
+      return null;
+    }
+    case "change_chat_setting": {
+      const resolved: Record<string, string> = { default: "claude-opus-5-5", opus: "claude-opus-5-5", sonnet: "claude-sonnet-5-5", haiku: "claude-haiku-5-5" };
+      chatSettings = {
+        ...chatSettings,
+        ...(args.setting.kind === "model" ? { model: resolved[args.setting.value] } : { [args.setting.kind]: args.setting.value }),
+      };
+      sendChat({ type: "session", ...chatSettings });
+      return null;
+    }
+    case "interrupt_chat":
+      sendChat({ type: "notice", text: "Request interrupted by user" }, { type: "turnEnded", ok: false, interrupted: true, error: null });
+      return null;
     case "restore_agent_sessions":
       return { started: 0, failed: [] };
     case "restore_remote_sessions":
@@ -296,6 +409,7 @@ const ui = {
   theme: "dark",
   terminalFontSize: 13,
   reopenSessions: true,
+  activeSession: scene === "chat" ? { [checkout]: "s5" } : {},
   showCommits: true,
   showPullRequests: true,
 };

@@ -67,10 +67,14 @@ export function reviewTarget(sessions: SessionInfo[], activeId: string | undefin
   return agents.find((s) => s.id === activeId) ?? agents[agents.length - 1];
 }
 
-/** Pastes the review into the agent's prompt and submits it. Bracketed paste keeps the newlines
- * from submitting early. */
-export async function sendReview(sessionId: string, text: string) {
-  await api.writeSession(sessionId, `\x1b[200~${text}\x1b[201~`);
+/** Sends the review to the agent: as a message to a chat, or pasted into a terminal's prompt and
+ * submitted (bracketed paste keeps the newlines from submitting early). */
+export async function sendReview(session: SessionInfo, text: string) {
+  if (session.kind === "chat") {
+    await api.sendChatMessage(session.id, text);
+    return;
+  }
+  await api.writeSession(session.id, `\x1b[200~${text}\x1b[201~`);
   await new Promise((r) => setTimeout(r, 150));
-  await api.writeSession(sessionId, "\r");
+  await api.writeSession(session.id, "\r");
 }

@@ -163,7 +163,7 @@ export function DiffView({
                               submitLabel="Add comment"
                               sendTo={target?.title}
                               onSend={async (text) => {
-                                await sendReview(target!.id, reviewPrompt([{ id: "", file, ...at, code: l.text, text }]));
+                                await sendReview(target!, reviewPrompt([{ id: "", file, ...at, code: l.text, text }]));
                                 setActive(worktreePath, target!.id);
                                 setDrafting(null);
                               }}

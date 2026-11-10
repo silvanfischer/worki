@@ -198,6 +198,11 @@ export interface AgentProfile {
   install: string | null;
 }
 
+/** Agents worki can run as a chat instead of in a terminal. */
+export function canChat(profile: AgentProfile): boolean {
+  return profile.command.trim().split(/\s+/)[0] === "claude";
+}
+
 /** The flag an agent takes to run without permission prompts, for agents that have one. */
 export function skipPermissionsFlag(command: string): string | null {
   const exe = command.trim().split(/\s+/)[0];
@@ -270,8 +275,60 @@ export interface ModelUsage {
   cacheRead: number;
 }
 
+export interface ChatQuestion {
+  question: string;
+  header: string | null;
+  options: { label: string; description: string | null }[];
+  multiSelect: boolean;
+}
+
+/** What happened in a chat session, the same for every agent. `parent` names the tool call a
+ * subagent works for. */
+export type ChatEvent =
+  | { type: "session"; model: string | null; permissionMode: string | null; effort: string | null }
+  | { type: "options"; models: ModelChoice[]; permissionModes: string[] }
+  | { type: "user"; text: string; attachments: string[] }
+  | { type: "textDelta"; id: string; text: string; parent: string | null }
+  | { type: "text"; id: string; text: string; parent: string | null }
+  | { type: "toolCall"; id: string; name: string; input: unknown; parent: string | null }
+  | { type: "toolResult"; id: string; output: string; isError: boolean; parent: string | null }
+  | { type: "permission"; requestId: string; tool: string; input: unknown; questions: ChatQuestion[] }
+  | { type: "permissionResolved"; requestId: string; allowed: boolean }
+  | { type: "notice"; text: string }
+  | { type: "turnEnded"; ok: boolean; interrupted: boolean; error: string | null }
+  | { type: "exited"; code: number; error: string | null };
+
+export interface ModelChoice {
+  /** What to switch to, such as an alias like `opus`. */
+  value: string;
+  /** The model it currently means. */
+  model: string | null;
+  label: string;
+  description: string | null;
+  effortLevels: string[];
+}
+
+/** A file worki reads and sends along, or an image pasted from the clipboard (base64). */
+export type ChatAttachment =
+  | { kind: "file"; path: string }
+  | { kind: "image"; name: string; mediaType: string; data: string };
+
+export type ChatSetting =
+  | { kind: "model"; value: string }
+  | { kind: "permissionMode"; value: string }
+  | { kind: "effort"; value: string };
+
+export type PermissionAnswer =
+  | { kind: "allow" }
+  | { kind: "deny"; message: string | null }
+  | { kind: "answers"; answers: Record<string, string> };
+
+/** How worki talks to a session: through a terminal, or the agent's JSON protocol. */
+export type SessionKind = "terminal" | "chat";
+
 export interface SessionInfo {
   id: string;
+  kind: SessionKind;
   worktreePath: string;
   profileId: string | null;
   title: string;
@@ -340,6 +397,7 @@ export const api = {
     invoke<PrComment[]>("pr_review_comments", { worktreePath, number }),
   environmentTemplates: (isolation: Isolation) => invoke<string[]>("environment_templates", { isolation }),
   snapshots: () => invoke<Snapshot[]>("snapshots"),
+  saveFile: (path: string, contents: Uint8Array) => invoke<void>("save_file", { path, contents: Array.from(contents) }),
   deleteSnapshot: (engine: SnapshotEngine, name: string) => invoke<void>("delete_snapshot", { engine, name }),
   saveEnvironmentTemplate: (projectId: string, worktreePath: string, tag: string, useForProject: boolean) =>
     invoke<Project>("save_environment_template", { projectId, worktreePath, tag, useForProject }),
@@ -360,6 +418,15 @@ export const api = {
   saveAgentSettings: (settings: AgentSettings) => invoke<void>("save_agent_settings", { settings }),
 
   listSessions: () => invoke<SessionInfo[]>("list_sessions"),
+  /** Starts an agent as a chat; `attachSession` then streams one `ChatEvent` as JSON per line. */
+  spawnChatSession: (projectId: string, worktreePath: string, profileId: string, resumeId: string | null = null) =>
+    invoke<SessionInfo>("spawn_chat_session", { projectId, worktreePath, profileId, resumeId }),
+  sendChatMessage: (id: string, text: string, attachments: ChatAttachment[] = []) =>
+    invoke<void>("send_chat_message", { id, text, attachments }),
+  answerChatPermission: (id: string, requestId: string, answer: PermissionAnswer) =>
+    invoke<void>("answer_chat_permission", { id, requestId, answer }),
+  interruptChat: (id: string) => invoke<void>("interrupt_chat", { id }),
+  changeChatSetting: (id: string, setting: ChatSetting) => invoke<void>("change_chat_setting", { id, setting }),
   spawnSession: (
     projectId: string,
     worktreePath: string,

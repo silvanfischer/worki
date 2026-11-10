@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { Monitor, Moon, Sun } from "lucide-react";
+import { MessageSquare, Monitor, Moon, SquareTerminal, Sun } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
 import { api, errorMessage } from "../lib/api";
@@ -20,6 +20,8 @@ export function GeneralSettings() {
   const setTheme = useUi((s) => s.setTheme);
   const fontSize = useUi((s) => s.terminalFontSize);
   const setFontSize = useUi((s) => s.setTerminalFontSize);
+  const agentView = useUi((s) => s.agentView);
+  const setAgentView = useUi((s) => s.setAgentView);
   const reopen = useUi((s) => s.reopenSessions);
   const setReopen = useUi((s) => s.setReopenSessions);
   const { data: isolation } = useIsolationSettings();
@@ -70,6 +72,34 @@ export function GeneralSettings() {
                 </option>
               ))}
             </Select>
+          </Field>
+        </Group>
+
+        <Group title="Agents">
+          <Field
+            label="Open agents as"
+            hint="⌘T and the start buttons use this. The + menu offers both. Only Claude Code can run as a chat so far; other agents always open in a terminal."
+          >
+            <div className="flex w-fit rounded-md border border-line p-0.5">
+              {(
+                [
+                  ["terminal", "Terminal", <SquareTerminal key="t" size={13} />],
+                  ["chat", "Chat", <MessageSquare key="c" size={13} />],
+                ] as const
+              ).map(([id, label, icon]) => (
+                <button
+                  key={id}
+                  onClick={() => setAgentView(id)}
+                  className={clsx(
+                    "flex h-7 items-center gap-1.5 rounded px-3 text-[13px]",
+                    agentView === id ? "bg-selected font-medium text-fg" : "text-muted hover:text-fg",
+                  )}
+                >
+                  {icon}
+                  {label}
+                </button>
+              ))}
+            </div>
           </Field>
         </Group>
 

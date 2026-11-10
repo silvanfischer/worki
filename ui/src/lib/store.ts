@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import type { SessionKind } from "./api";
 import type { AskPrompt } from "./askPrompts";
 
 export type DialogState =
@@ -53,6 +54,8 @@ interface UiState {
   terminalFontSize: number;
   /** Start the Claude sessions that were open at the last quit again when worki starts. */
   reopenSessions: boolean;
+  /** How agents that can chat open by default: as a chat or in a terminal. */
+  agentView: SessionKind;
   /** Commit box, commit list and rebasing in the changes panel. */
   showCommits: boolean;
   /** Pull request section and status, which ask GitHub through `gh`. */
@@ -70,6 +73,7 @@ interface UiState {
   setTheme: (theme: Theme) => void;
   setTerminalFontSize: (size: number) => void;
   setReopenSessions: (on: boolean) => void;
+  setAgentView: (view: SessionKind) => void;
   setShowCommits: (on: boolean) => void;
   setShowPullRequests: (on: boolean) => void;
   openDialog: (dialog: DialogState) => void;
@@ -96,6 +100,7 @@ export const useUi = create<UiState>()(
       theme: "system",
       terminalFontSize: 13,
       reopenSessions: true,
+      agentView: "terminal",
       showCommits: true,
       showPullRequests: true,
       dialog: null,
@@ -122,6 +127,7 @@ export const useUi = create<UiState>()(
       setTheme: (theme) => set({ theme }),
       setTerminalFontSize: (terminalFontSize) => set({ terminalFontSize }),
       setReopenSessions: (reopenSessions) => set({ reopenSessions }),
+      setAgentView: (agentView) => set({ agentView }),
       setShowCommits: (showCommits) => set({ showCommits }),
       setShowPullRequests: (showPullRequests) => set({ showPullRequests }),
       openDialog: (dialog) => set({ dialog }),
@@ -139,6 +145,7 @@ export const useUi = create<UiState>()(
         theme,
         terminalFontSize,
         reopenSessions,
+        agentView,
         showCommits,
         showPullRequests,
         prDrafts,
@@ -154,6 +161,7 @@ export const useUi = create<UiState>()(
         theme,
         terminalFontSize,
         reopenSessions,
+        agentView,
         showCommits,
         showPullRequests,
         prDrafts,

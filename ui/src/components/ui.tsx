@@ -5,7 +5,7 @@ import {
   type InputHTMLAttributes,
   type ReactNode,
   type SelectHTMLAttributes,
-  type TextareaHTMLAttributes,
+  type ComponentProps,
   createContext,
   useContext,
   useEffect,
@@ -28,7 +28,7 @@ export function Button({
   variant = "secondary",
   className,
   ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant }) {
+}: ComponentProps<"button"> & { variant?: Variant }) {
   return (
     <button
       {...props}
@@ -73,8 +73,9 @@ export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElem
 export function Textarea({
   className,
   maxRows,
+  ref: outer,
   ...props
-}: TextareaHTMLAttributes<HTMLTextAreaElement> & { maxRows?: number }) {
+}: ComponentProps<"textarea"> & { maxRows?: number }) {
   const ref = useRef<HTMLTextAreaElement>(null);
   useLayoutEffect(() => {
     const el = ref.current;
@@ -83,12 +84,19 @@ export function Textarea({
     const line = parseFloat(style.lineHeight) || 16;
     const chrome =
       parseFloat(style.paddingTop) + parseFloat(style.paddingBottom) + parseFloat(style.borderTopWidth) * 2;
+    const max = line * maxRows + chrome;
     el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight + parseFloat(style.borderTopWidth) * 2, line * maxRows + chrome)}px`;
+    const wanted = el.scrollHeight + parseFloat(style.borderTopWidth) * 2;
+    el.style.height = `${Math.min(wanted, max)}px`;
+    el.style.overflowY = wanted > max ? "auto" : "hidden";
   }, [props.value, maxRows]);
   return (
     <textarea
-      ref={ref}
+      ref={(el) => {
+        ref.current = el;
+        if (typeof outer === "function") outer(el);
+        else if (outer) outer.current = el;
+      }}
       {...props}
       spellCheck={false}
       className={clsx(fieldClass, "py-2 font-mono text-xs", maxRows && "resize-none", className)}

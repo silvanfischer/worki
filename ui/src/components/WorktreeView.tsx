@@ -230,7 +230,7 @@ function ReviewBar({ worktreePath, onOpen }: { worktreePath: string; onOpen: (fi
     if (!target) return;
     setError(null);
     try {
-      await sendReview(target.id, reviewPrompt(comments));
+      await sendReview(target, reviewPrompt(comments));
       setActive(worktreePath, target.id);
       clear(worktreePath);
     } catch (e) {

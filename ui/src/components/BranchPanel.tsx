@@ -19,6 +19,7 @@ import { type ReactNode, useState } from "react";
 
 import {
   api,
+  canChat,
   type CommitDraft,
   type CommitInfo,
   DEFAULT_WRITER_COMMAND,
@@ -65,14 +66,18 @@ function useAgentTarget(worktreePath: string) {
   const ask = async (prompt: string) => {
     try {
       if (open) {
-        await sendReview(open.id, prompt);
+        await sendReview(open, prompt);
         setActive(worktreePath, open.id);
       } else if (fallback) {
         const project = projects.find(
           (p) => worktreePath === p.repoPath || worktreePath.startsWith(`${p.worktreeRoot}/`),
         );
         if (!project) return;
-        const info = await api.spawnSession(project.id, worktreePath, fallback.id, 120, 32, null, prompt);
+        const chat = canChat(fallback) && useUi.getState().agentView === "chat";
+        const info = chat
+          ? await api.spawnChatSession(project.id, worktreePath, fallback.id)
+          : await api.spawnSession(project.id, worktreePath, fallback.id, 120, 32, null, prompt);
+        if (chat) await api.sendChatMessage(info.id, prompt);
         qc.setQueryData<SessionInfo[]>(keys.sessions, (old = []) => [...old.filter((s) => s.id !== info.id), info]);
         setActive(worktreePath, info.id);
       }

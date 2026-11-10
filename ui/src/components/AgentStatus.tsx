@@ -5,7 +5,7 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 import type { SessionInfo } from "../lib/api";
 import { formatTokens, totalUsage } from "../lib/usage";
 
-const PERMISSION_MODES: Record<string, string> = {
+export const PERMISSION_MODES: Record<string, string> = {
   default: "Ask before edits",
   acceptEdits: "Accept edits",
   plan: "Plan",
