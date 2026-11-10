@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/worki-core", "crates/worki-isolation", "crates/worki-pty", "src-tauri"]
 
 [workspace.package]
-version = "1.2.0"
+version = "0.2.0"
 edition = "2021"
 license = "MIT"
 
