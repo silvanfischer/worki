@@ -581,6 +581,9 @@ fn exec_args(name: &str, req: &LaunchRequest) -> Vec<String> {
         args.push("-it".into());
     }
     args.extend(["-w".into(), req.cwd.display().to_string()]);
+    // Agents run as root in Docker and Podman containers; Claude Code only allows skipping
+    // permission prompts as root when told it is in a sandbox.
+    args.extend(["-e".into(), "IS_SANDBOX=1".into()]);
     for (key, _) in &req.env {
         args.extend(["-e".into(), key.clone()]);
     }
@@ -1155,6 +1158,8 @@ mod tests {
                 "-it",
                 "-w",
                 "/Users/me/wt",
+                "-e",
+                "IS_SANDBOX=1",
                 "-e",
                 "CLAUDE_CODE_OAUTH_TOKEN",
                 "worki-wt-abc123",
