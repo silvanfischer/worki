@@ -26,10 +26,11 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
   const comments = useWorktreeComments(worktree.path);
   const scope = useUi((s) => s.changesScope);
   const setScope = useUi((s) => s.setChangesScope);
-  const base = useCompareBase(worktree.path, worktree.isMain ? null : project.defaultBase);
+  const base = useCompareBase(worktree.path, project.defaultBase);
   const showCommits = useUi((s) => s.showCommits);
   const showPullRequests = useUi((s) => s.showPullRequests);
-  const hasBranchTab = !worktree.isMain && !!base;
+  const hasBranchTab = !!base;
+  const onBase = !!worktree.branch && base?.replace(/^origin\//, "") === worktree.branch;
   const tab = scope === "branch" && hasBranchTab ? "branch" : "uncommitted";
   const branchScope = tab === "branch";
   const branch = useBranchChanges(worktree.path, base);
@@ -158,7 +159,7 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
                 </>
               )}
 
-              {tab === "branch" && !worktree.isMain && base && (
+              {tab === "branch" && base && (
                 <>
                   {showCommits && worktree.branch && branch.data && (
                     <BranchStatus
@@ -170,7 +171,7 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
                     />
                   )}
                   {showCommits && <BranchCommits worktreePath={worktree.path} base={base} />}
-                  {showPullRequests && worktree.branch && <PrSection worktree={worktree} base={base} />}
+                  {showPullRequests && worktree.branch && !onBase && <PrSection worktree={worktree} base={base} />}
                   <Section
                     title={`Files changed vs ${base}${branch.data ? ` (${branch.data.files.length})` : ""}`}
                     aside={branch.data && <DiffStat insertions={branch.data.insertions} deletions={branch.data.deletions} />}
