@@ -136,16 +136,68 @@ pub async fn push(host: &Host, worktree: &Path) -> Result<()> {
         .map(drop)
 }
 
+const REVIEW_THREADS: &str =
+    "query($owner: String!, $repo: String!, $number: Int!, $endCursor: String) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100, after: $endCursor) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          isResolved
+          path
+          line
+          diffSide
+          comments(first: 100) { nodes { body author { login } } }
+        }
+      }
+    }
+  }
+}";
+
 #[derive(Deserialize)]
-struct ApiComment {
+struct ThreadsPage {
+    data: ThreadsData,
+}
+
+#[derive(Deserialize)]
+struct ThreadsData {
+    repository: ThreadsRepo,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ThreadsRepo {
+    pull_request: ThreadsPr,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ThreadsPr {
+    review_threads: Nodes<ApiThread>,
+}
+
+#[derive(Deserialize)]
+struct Nodes<T> {
+    nodes: Vec<T>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ApiThread {
+    is_resolved: bool,
     path: String,
     #[serde(default)]
     line: Option<u32>,
     #[serde(default)]
-    side: Option<String>,
+    diff_side: Option<String>,
+    comments: Nodes<ApiComment>,
+}
+
+#[derive(Deserialize)]
+struct ApiComment {
     body: String,
     #[serde(default)]
-    user: Option<ApiUser>,
+    author: Option<ApiUser>,
 }
 
 #[derive(Deserialize)]
@@ -153,29 +205,51 @@ struct ApiUser {
     login: String,
 }
 
-/// Review comments on the pull request's diff.
+/// Review comments on the pull request's diff, leaving out resolved threads.
 pub async fn review_comments(host: &Host, worktree: &Path, number: u64) -> Result<Vec<PrComment>> {
-    let path = format!("repos/{{owner}}/{{repo}}/pulls/{number}/comments");
-    let json = gh(host, worktree, &["api", "--paginate", "--slurp", &path]).await?;
+    let number = format!("number={number}");
+    let query = format!("query={REVIEW_THREADS}");
+    let json = gh(
+        host,
+        worktree,
+        &[
+            "api",
+            "graphql",
+            "--paginate",
+            "--slurp",
+            "-F",
+            "owner={owner}",
+            "-F",
+            "repo={repo}",
+            "-F",
+            &number,
+            "-f",
+            &query,
+        ],
+    )
+    .await?;
     parse_comments(&json)
 }
 
 pub fn parse_comments(json: &str) -> Result<Vec<PrComment>> {
-    let pages: Vec<Vec<ApiComment>> = serde_json::from_str(json)?;
+    let pages: Vec<ThreadsPage> = serde_json::from_str(json)?;
     Ok(pages
         .into_iter()
-        .flatten()
-        .map(|c| PrComment {
-            path: c.path,
-            line: c.line,
-            side: if c.side.as_deref() == Some("LEFT") {
+        .flat_map(|p| p.data.repository.pull_request.review_threads.nodes)
+        .filter(|t| !t.is_resolved)
+        .flat_map(|t| {
+            let side = if t.diff_side.as_deref() == Some("LEFT") {
                 "old"
             } else {
                 "new"
-            }
-            .into(),
-            author: c.user.map(|u| u.login).unwrap_or_default(),
-            body: c.body,
+            };
+            t.comments.nodes.into_iter().map(move |c| PrComment {
+                path: t.path.clone(),
+                line: t.line,
+                side: side.into(),
+                author: c.author.map(|u| u.login).unwrap_or_default(),
+                body: c.body,
+            })
         })
         .collect())
 }
@@ -207,15 +281,29 @@ mod tests {
     }
 
     #[test]
-    fn reads_review_comments_from_all_pages() {
-        let comments = parse_comments(
-            r#"[[{"path":"src/a.rs","line":3,"side":"RIGHT","body":"rename","user":{"login":"ana"}}],
-                [{"path":"src/b.rs","line":null,"side":"LEFT","body":"why?"}]]"#,
-        )
-        .unwrap();
+    fn reads_unresolved_review_comments_from_all_pages() {
+        let page = |threads: &str| {
+            format!(
+                r#"{{"data":{{"repository":{{"pullRequest":{{"reviewThreads":{{"pageInfo":{{"hasNextPage":false,"endCursor":null}},"nodes":[{threads}]}}}}}}}}}}"#
+            )
+        };
+        let json = format!(
+            "[{},{}]",
+            page(
+                r#"{"isResolved":false,"path":"src/a.rs","line":3,"diffSide":"RIGHT","comments":{"nodes":[{"body":"rename","author":{"login":"ana"}},{"body":"agreed","author":{"login":"bo"}}]}},
+                   {"isResolved":true,"path":"src/a.rs","line":9,"diffSide":"RIGHT","comments":{"nodes":[{"body":"done","author":{"login":"ana"}}]}}"#
+            ),
+            page(
+                r#"{"isResolved":false,"path":"src/b.rs","line":null,"diffSide":"LEFT","comments":{"nodes":[{"body":"why?","author":null}]}}"#
+            ),
+        );
+        let comments = parse_comments(&json).unwrap();
+        let bodies: Vec<_> = comments.iter().map(|c| c.body.as_str()).collect();
+        assert_eq!(bodies, ["rename", "agreed", "why?"]);
         assert_eq!(comments[0].side, "new");
-        assert_eq!(comments[0].author, "ana");
-        assert_eq!(comments[1].line, None);
-        assert_eq!(comments[1].side, "old");
+        assert_eq!(comments[1].author, "bo");
+        assert_eq!(comments[2].line, None);
+        assert_eq!(comments[2].side, "old");
+        assert_eq!(comments[2].author, "");
     }
 }
