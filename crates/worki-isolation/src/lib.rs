@@ -199,6 +199,8 @@ pub struct LaunchRequest {
     pub command: Option<String>,
     /// Interactive sessions get `-i` so rc files (PATH tweaks, nvm, …) load like in a terminal.
     pub interactive: bool,
+    /// Keeps stdin open without a terminal, for agents worki talks to over a pipe.
+    pub stdin: bool,
     pub env: Vec<(String, String)>,
     /// Set for terminal sessions; backends that keep sessions alive on their own name them by it.
     pub session: Option<SessionMeta>,

@@ -659,6 +659,7 @@ mod tests {
             cwd: "/w".into(),
             command: Some("exec claude".into()),
             interactive: true,
+            stdin: false,
             env: vec![
                 ("TERM".into(), "xterm-256color".into()),
                 ("SECRET_TOKEN".into(), "s3cr3t".into()),
@@ -694,6 +695,7 @@ mod tests {
             cwd: "/w".into(),
             command: None,
             interactive: true,
+            stdin: false,
             env: vec![("A,LD_PRELOAD".into(), "x".into())],
             session: None,
         };

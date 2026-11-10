@@ -415,3 +415,12 @@ pub fn agent_settings(state: State<'_, AppState>) -> CmdResult<AgentSettings> {
 pub fn save_agent_settings(state: State<'_, AppState>, settings: AgentSettings) -> CmdResult<()> {
     state.projects.save_agent_settings(&settings).map_err(err)
 }
+
+/// Writes a file the user picked a location for in the save dialog, such as a chat diagram.
+#[tauri::command]
+pub async fn save_file(path: PathBuf, contents: Vec<u8>) -> CmdResult<()> {
+    tauri::async_runtime::spawn_blocking(move || std::fs::write(&path, contents))
+        .await
+        .map_err(err)?
+        .map_err(err)
+}

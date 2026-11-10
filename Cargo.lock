@@ -5032,8 +5032,11 @@ name = "worki-pty"
 version = "1.2.0"
 dependencies = [
  "anyhow",
+ "base64 0.23.1",
  "portable-pty",
  "serde",
+ "serde_json",
+ "tempfile",
  "uuid",
 ]
 

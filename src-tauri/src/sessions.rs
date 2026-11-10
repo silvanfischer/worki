@@ -3,11 +3,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::{Manager, State};
-use worki_core::launch::{session_env, session_request};
-use worki_core::{Host, Isolation, Project, SavedSession};
+use worki_core::launch::{
+    chat_history_command, chat_request, session_env, session_request, ChatAgent,
+};
+use worki_core::{AgentProfile, Host, Isolation, Project, SavedSession};
 use worki_isolation::ssh::{Ssh, SshTarget};
 use worki_isolation::SessionMeta;
-use worki_pty::{SessionInfo, SessionState, SpawnSpec};
+use worki_pty::chat::{Attachment, ChatProtocol, ChatSetting, ClaudeProtocol, PermissionAnswer};
+use worki_pty::{ChatSpec, SessionInfo, SessionState, SpawnSpec};
 
 use crate::{blocking, err, AppState, CmdResult};
 
@@ -61,10 +64,107 @@ async fn start_session(
     rows: u16,
 ) -> CmdResult<SessionInfo> {
     let projects = &state.projects;
-    let project = projects.project(&project_id).map_err(err)?;
+    let Prepared {
+        project,
+        profile,
+        isolation,
+        id,
+        title,
+        env,
+        confined,
+    } = prepare(
+        state,
+        &project_id,
+        &worktree_path,
+        profile_id.as_deref(),
+        id,
+    )
+    .await?;
+    let meta = SessionMeta {
+        id: id.clone(),
+        title: title.clone(),
+        profile_id: profile_id.clone(),
+    };
+    let req = session_request(
+        profile.as_ref(),
+        &worktree_path,
+        env,
+        Some(meta),
+        confined,
+        prompt.as_deref(),
+    );
+    let backend_isolation = isolation.clone();
+    let launch = blocking(move || backend_isolation.backend().launch(&req)).await?;
+
+    let remote = project.remote.is_some();
+    let resumable = matches!(
+        isolation,
+        Isolation::Ssh {
+            keep_alive: true,
+            ..
+        }
+    );
+    let saved = match (&profile, &profile_id) {
+        (Some(p), Some(profile_id)) if p.executable() == Some("claude") && !resumable => {
+            Some(SavedSession {
+                id: id.clone(),
+                project_id: project.id.clone(),
+                worktree_path: worktree_path.clone(),
+                profile_id: profile_id.clone(),
+                chat: false,
+            })
+        }
+        _ => None,
+    };
+    let info = state
+        .sessions
+        .spawn(SpawnSpec {
+            id,
+            worktree_path,
+            profile_id,
+            title,
+            program: launch.program,
+            args: launch.args,
+            env: launch.env,
+            clear_env: launch.clear_env,
+            run_as: (isolation != Isolation::None).then(|| isolation.label()),
+            cwd: remote.then_some(launch.cwd),
+            resumable,
+            cols,
+            rows,
+        })
+        .map_err(err)?;
+    if let Some(saved) = saved {
+        if let Err(e) = projects.save_session(saved) {
+            tracing::warn!("saving session {}: {e:#}", info.id);
+        }
+    }
+    Ok(info)
+}
+
+/// What starting any session in a worktree needs: the agent, the isolation (checked, with the
+/// agent installed and access granted) and the environment.
+struct Prepared {
+    project: Project,
+    profile: Option<AgentProfile>,
+    isolation: Isolation,
+    id: String,
+    title: String,
+    env: Vec<(String, String)>,
+    confined: bool,
+}
+
+async fn prepare(
+    state: &AppState,
+    project_id: &str,
+    worktree_path: &Path,
+    profile_id: Option<&str>,
+    id: Option<String>,
+) -> CmdResult<Prepared> {
+    let projects = &state.projects;
+    let project = projects.project(project_id).map_err(err)?;
     let settings = projects.agent_settings().map_err(err)?;
     let profile = profile_id
-        .as_deref()
         .map(|id| {
             settings
                 .profile(id)
@@ -74,7 +174,7 @@ async fn start_session(
         .transpose()?;
 
     let isolation = projects
-        .isolation_for_worktree(&project, &worktree_path)
+        .isolation_for_worktree(&project, worktree_path)
         .map_err(err)?;
     isolation.validate().map_err(err)?;
 
@@ -109,7 +209,7 @@ async fn start_session(
     }
 
     projects
-        .grant_access(&project, Some(&worktree_path))
+        .grant_access(&project, Some(worktree_path))
         .await
         .map_err(err)?;
 
@@ -118,68 +218,18 @@ async fn start_session(
         .as_ref()
         .map(|p| p.name.clone())
         .unwrap_or_else(|| "Shell".into());
-    let mut env = session_env(&id, &worktree_path);
+    let mut env = session_env(&id, worktree_path);
     env.extend(projects.secret_env(&isolation).map_err(err)?);
-    let meta = SessionMeta {
-        id: id.clone(),
-        title: title.clone(),
-        profile_id: profile_id.clone(),
-    };
     let confined = !matches!(isolation, Isolation::None | Isolation::Ssh { .. });
-    let req = session_request(
-        profile.as_ref(),
-        &worktree_path,
-        env,
-        Some(meta),
-        confined,
-        prompt.as_deref(),
-    );
-    let backend_isolation = isolation.clone();
-    let launch = blocking(move || backend_isolation.backend().launch(&req)).await?;
-
-    let remote = project.remote.is_some();
-    let resumable = matches!(
+    Ok(Prepared {
+        project,
+        profile,
         isolation,
-        Isolation::Ssh {
-            keep_alive: true,
-            ..
-        }
-    );
-    let saved = match (&profile, &profile_id) {
-        (Some(p), Some(profile_id)) if p.executable() == Some("claude") && !resumable => {
-            Some(SavedSession {
-                id: id.clone(),
-                project_id: project.id.clone(),
-                worktree_path: worktree_path.clone(),
-                profile_id: profile_id.clone(),
-            })
-        }
-        _ => None,
-    };
-    let info = state
-        .sessions
-        .spawn(SpawnSpec {
-            id,
-            worktree_path,
-            profile_id,
-            title,
-            program: launch.program,
-            args: launch.args,
-            env: launch.env,
-            clear_env: launch.clear_env,
-            run_as: (isolation != Isolation::None).then(|| isolation.label()),
-            cwd: remote.then_some(launch.cwd),
-            resumable,
-            cols,
-            rows,
-        })
-        .map_err(err)?;
-    if let Some(saved) = saved {
-        if let Err(e) = projects.save_session(saved) {
-            tracing::warn!("saving session {}: {e:#}", info.id);
-        }
-    }
-    Ok(info)
+        id,
+        title,
+        env,
+        confined,
+    })
 }
 
 /// Starts the Claude sessions that were open when worki last quit again, all at once, resuming
@@ -212,19 +262,31 @@ pub async fn restore_agent_sessions(
         tasks.push(tauri::async_runtime::spawn(async move {
             let state = app.state::<AppState>();
             let id = s.id.clone();
-            start_session(
-                &state,
-                s.project_id,
-                s.worktree_path,
-                Some(s.profile_id),
-                Some(s.id),
-                None,
-                120,
-                32,
-            )
-            .await
-            .map(drop)
-            .inspect_err(|e| tracing::warn!("resuming session {id}: {e}"))
+            let started = if s.chat {
+                start_chat(
+                    &state,
+                    s.project_id,
+                    s.worktree_path,
+                    s.profile_id,
+                    Some(s.id),
+                )
+                .await
+            } else {
+                start_session(
+                    &state,
+                    s.project_id,
+                    s.worktree_path,
+                    Some(s.profile_id),
+                    Some(s.id),
+                    None,
+                    120,
+                    32,
+                )
+                .await
+            };
+            started
+                .map(drop)
+                .inspect_err(|e| tracing::warn!("resuming session {id}: {e}"))
         }));
     }
     let mut report = RestoreReport::default();
@@ -375,6 +437,7 @@ pub async fn restore_remote_sessions(state: State<'_, AppState>) -> CmdResult<us
             };
             let info = SessionInfo {
                 id: remote.id,
+                kind: worki_pty::SessionKind::Terminal,
                 worktree_path: remote.worktree,
                 profile_id: remote.profile_id,
                 title: remote.title,
@@ -413,6 +476,193 @@ fn end_remote(state: &AppState, id: &str) {
             tracing::warn!("ending remote session {id}: {e:#}");
         }
     });
+}
+
+/// Starts an agent as a chat instead of in a terminal. Its output (see `attach_session`) is one
+/// chat event as JSON per line. `resume_id` continues a closed chat's conversation.
+#[tauri::command]
+pub async fn spawn_chat_session(
+    state: State<'_, AppState>,
+    project_id: String,
+    worktree_path: PathBuf,
+    profile_id: String,
+    resume_id: Option<String>,
+) -> CmdResult<SessionInfo> {
+    if let Some(id) = &resume_id {
+        if state.sessions.list().iter().any(|s| &s.id == id) {
+            return Err(format!("session {id} is still open"));
+        }
+    }
+    start_chat(&state, project_id, worktree_path, profile_id, resume_id).await
+}
+
+/// Starts a chat, under `id` when it continues a conversation worki ran before.
+async fn start_chat(
+    state: &AppState,
+    project_id: String,
+    worktree_path: PathBuf,
+    profile_id: String,
+    id: Option<String>,
+) -> CmdResult<SessionInfo> {
+    let resuming = id.is_some();
+    let Prepared {
+        project,
+        profile,
+        isolation,
+        id,
+        title,
+        env,
+        confined,
+    } = prepare(state, &project_id, &worktree_path, Some(&profile_id), id).await?;
+    let profile = profile.ok_or("pick an agent to chat with")?;
+    let (agent, req) =
+        chat_request(&profile, &worktree_path, env, &id, confined).ok_or_else(|| {
+            format!(
+                "{} can't run as a chat yet; start it in a terminal",
+                profile.name
+            )
+        })?;
+    let backend_isolation = isolation.clone();
+    let launch = blocking(move || backend_isolation.backend().launch(&req)).await?;
+    let mut protocol: Box<dyn ChatProtocol> = match agent {
+        ChatAgent::Claude => Box::new(ClaudeProtocol::new(id.clone())),
+    };
+    let history = if resuming {
+        let transcript = read_transcript(&isolation, &worktree_path, agent, &id).await;
+        protocol.history(&transcript)
+    } else {
+        Vec::new()
+    };
+    let info = state
+        .sessions
+        .spawn_chat(ChatSpec {
+            id: id.clone(),
+            worktree_path: worktree_path.clone(),
+            profile_id: Some(profile_id.clone()),
+            title,
+            program: launch.program,
+            args: launch.args,
+            env: launch.env,
+            clear_env: launch.clear_env,
+            run_as: (isolation != Isolation::None).then(|| isolation.label()),
+            cwd: project.remote.is_some().then_some(launch.cwd),
+            protocol,
+            history,
+        })
+        .map_err(err)?;
+    let saved = SavedSession {
+        id,
+        project_id: project.id,
+        worktree_path,
+        profile_id,
+        chat: true,
+    };
+    if let Err(e) = state.projects.save_session(saved) {
+        tracing::warn!("saving session {}: {e:#}", info.id);
+    }
+    Ok(info)
+}
+
+/// The transcript the agent saved for a conversation, read where the agent runs. Empty when
+/// there is none or it can't be read; the chat then starts without its earlier messages.
+async fn read_transcript(
+    isolation: &Isolation,
+    worktree: &Path,
+    agent: ChatAgent,
+    id: &str,
+) -> String {
+    let req = worki_isolation::LaunchRequest {
+        cwd: worktree.into(),
+        command: Some(chat_history_command(agent, id)),
+        interactive: false,
+        stdin: false,
+        env: Vec::new(),
+        session: None,
+    };
+    let isolation = isolation.clone();
+    let launch = match blocking(move || isolation.backend().launch(&req)).await {
+        Ok(launch) => launch,
+        Err(e) => {
+            tracing::warn!("reading the transcript of {id}: {e}");
+            return String::new();
+        }
+    };
+    worki_core::setup::run_captured(launch)
+        .await
+        .inspect_err(|e| tracing::warn!("reading the transcript of {id}: {e:#}"))
+        .unwrap_or_default()
+}
+
+/// Something the user attaches: a file worki reads, or an image pasted from the clipboard.
+#[derive(serde::Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum AttachmentInput {
+    File {
+        path: PathBuf,
+    },
+    Image {
+        name: String,
+        media_type: String,
+        data: String,
+    },
+}
+
+#[tauri::command]
+pub async fn send_chat_message(
+    state: State<'_, AppState>,
+    id: String,
+    text: String,
+    attachments: Vec<AttachmentInput>,
+) -> CmdResult<()> {
+    let attachments = blocking(move || {
+        attachments
+            .into_iter()
+            .map(|a| match a {
+                AttachmentInput::File { path } => Attachment::from_path(&path),
+                AttachmentInput::Image {
+                    name,
+                    media_type,
+                    data,
+                } => Attachment::image(name, media_type, data),
+            })
+            .collect::<anyhow::Result<Vec<_>>>()
+    })
+    .await?;
+    state
+        .sessions
+        .send_message(&id, &text, &attachments)
+        .map_err(err)
+}
+
+#[tauri::command]
+pub fn answer_chat_permission(
+    state: State<'_, AppState>,
+    id: String,
+    request_id: String,
+    answer: PermissionAnswer,
+) -> CmdResult<()> {
+    state
+        .sessions
+        .answer_permission(&id, &request_id, &answer)
+        .map_err(err)
+}
+
+#[tauri::command]
+pub fn change_chat_setting(
+    state: State<'_, AppState>,
+    id: String,
+    setting: ChatSetting,
+) -> CmdResult<()> {
+    state.sessions.change_setting(&id, &setting).map_err(err)
+}
+
+#[tauri::command]
+pub fn interrupt_chat(state: State<'_, AppState>, id: String) -> CmdResult<()> {
+    state.sessions.interrupt(&id).map_err(err)
 }
 
 /// Streams the session's replay buffer followed by live output as raw bytes.

@@ -38,10 +38,94 @@ pub fn session_request(
         command: profile
             .map(|p| agent_command(p, session.as_ref().map(|s| s.id.as_str()), confined, prompt)),
         interactive: true,
+        stdin: false,
         env,
         session,
     }
 }
+
+/// Agents worki can run as a chat, by the JSON protocol they speak.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChatAgent {
+    Claude,
+}
+
+impl ChatAgent {
+    pub fn of(profile: &AgentProfile) -> Option<Self> {
+        match profile.executable()? {
+            "claude" => Some(Self::Claude),
+            _ => None,
+        }
+    }
+}
+
+/// Runs the agent without a terminal, talking its JSON protocol over stdin and stdout, in the
+/// conversation named `session_id` (resumed once the agent saved it). `None` for agents that
+/// can't run as a chat.
+pub fn chat_request(
+    profile: &AgentProfile,
+    cwd: &Path,
+    env: Vec<(String, String)>,
+    session_id: &str,
+    confined: bool,
+) -> Option<(ChatAgent, LaunchRequest)> {
+    let agent = ChatAgent::of(profile)?;
+    let command = match agent {
+        ChatAgent::Claude => {
+            let sandbox = if confined {
+                format!(
+                    " --settings {}",
+                    shell_quote(r#"{"sandbox":{"enabled":false}}"#)
+                )
+            } else {
+                String::new()
+            };
+            format!(
+                "{} exec {} -p --input-format stream-json --output-format stream-json --verbose \
+--include-partial-messages --permission-prompt-tool stdio --append-system-prompt {}{sandbox} \"$@\"",
+                claude_conversation(session_id),
+                profile.command,
+                shell_quote(CHAT_PROMPT),
+            )
+        }
+    };
+    Some((
+        agent,
+        LaunchRequest {
+            cwd: cwd.into(),
+            command: Some(command),
+            interactive: false,
+            stdin: true,
+            env,
+            session: None,
+        },
+    ))
+}
+
+/// Prints the transcript the agent saved for the conversation `session_id` (nothing when it has
+/// none), run where the agent runs so it finds the agent's own files.
+pub fn chat_history_command(agent: ChatAgent, session_id: &str) -> String {
+    match agent {
+        ChatAgent::Claude => format!(
+            "cat \"${{CLAUDE_CONFIG_DIR:-$HOME/.claude}}\"/projects/*/{}.jsonl 2>/dev/null; true",
+            shell_quote(session_id)
+        ),
+    }
+}
+
+/// Tells a chat agent what worki's chat view can show, and how to make it fit in.
+const CHAT_PROMPT: &str = "You are running in worki's chat view. It renders Markdown and draws \
+visuals from these code blocks; use one when it makes something clearer, not as decoration.
+- ```mermaid for flowcharts, sequence, state and class diagrams. Keep labels short; worki \
+styles the diagram to match its theme.
+- ```html for charts, dashboards, comparisons or anything interactive: a self-contained \
+fragment (no <html> or <head>) with inline <style> and <script>; scripts may load libraries \
+from cdn.jsdelivr.net or cdnjs.cloudflare.com. It runs in a sandboxed frame that already sets \
+the font and these CSS variables for worki's light or dark theme: --fg, --muted, --faint, --line, \
+--panel, --elevated, --hover, --accent, --added, --removed, --warn. Use them instead of fixed \
+colors, keep the background transparent, and use rounded corners and generous spacing.
+- ```svg for static drawings: give it a viewBox, rounded shapes, 13-14px system-ui text and a \
+light palette (it is shown on white).";
 
 /// Writes commit messages and pull requests when the user hasn't set their own command.
 pub const DEFAULT_WRITER_COMMAND: &str =
@@ -364,6 +448,65 @@ mod tests {
         assert_eq!(
             session_request(None, Path::new("/w"), vec![], None, false, None).command,
             None
+        );
+    }
+
+    #[test]
+    fn chat_history_reads_the_saved_transcript() {
+        let home = tempfile::tempdir().unwrap();
+        let run = || {
+            let out = std::process::Command::new("/bin/sh")
+                .args(["-c", &chat_history_command(ChatAgent::Claude, "abc")])
+                .env("HOME", home.path())
+                .env_remove("CLAUDE_CONFIG_DIR")
+                .output()
+                .unwrap();
+            (out.status.success(), String::from_utf8(out.stdout).unwrap())
+        };
+        assert_eq!(run(), (true, String::new()));
+        let project = home.path().join(".claude/projects/-w");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(project.join("abc.jsonl"), "{\"type\":\"user\"}\n").unwrap();
+        assert_eq!(run(), (true, "{\"type\":\"user\"}\n".into()));
+    }
+
+    #[test]
+    fn chat_runs_claude_in_its_json_mode() {
+        let profile = |command: &str| AgentProfile {
+            id: "c".into(),
+            name: "C".into(),
+            command: command.into(),
+            install: None,
+        };
+        assert!(chat_request(&profile("codex"), Path::new("/w"), vec![], "abc", false).is_none());
+        let (agent, req) = chat_request(
+            &profile("claude --model opus"),
+            Path::new("/w"),
+            vec![],
+            "abc",
+            true,
+        )
+        .unwrap();
+        assert_eq!(agent, ChatAgent::Claude);
+        assert!(req.stdin && !req.interactive);
+        let home = tempfile::tempdir().unwrap();
+        let out = std::process::Command::new("/bin/sh")
+            .args([
+                "-c",
+                &req.command
+                    .unwrap()
+                    .replacen("exec claude", "printf '%s|'", 1),
+            ])
+            .env("HOME", home.path())
+            .env_remove("CLAUDE_CONFIG_DIR")
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8(out.stdout).unwrap(),
+            "--model|opus|-p|--input-format|stream-json|--output-format|stream-json|--verbose|\
+--include-partial-messages|--permission-prompt-tool|stdio|--append-system-prompt|PROMPT|\
+--settings|{\"sandbox\":{\"enabled\":false}}|--session-id|abc|"
+                .replace("PROMPT", CHAT_PROMPT)
         );
     }
 

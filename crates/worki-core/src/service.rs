@@ -269,6 +269,7 @@ impl ProjectService {
             cwd: "/tmp".into(),
             command: Some(script),
             interactive: false,
+            stdin: false,
             env: self.secret_env(isolation)?,
             session: None,
         };
@@ -912,6 +913,7 @@ impl ProjectService {
             cwd: worktree.to_path_buf(),
             command: Some(command),
             interactive: false,
+            stdin: false,
             env,
             session: None,
         };
@@ -1061,6 +1063,7 @@ async fn run_setup_script(
         cwd: worktree.to_path_buf(),
         command: Some(script.to_owned()),
         interactive: false,
+        stdin: false,
         env,
         session: None,
     };

@@ -698,6 +698,8 @@ fn exec_args(name: &str, req: &LaunchRequest) -> Vec<String> {
     let mut args = vec!["exec".to_string()];
     if req.interactive {
         args.push("-it".into());
+    } else if req.stdin {
+        args.push("-i".into());
     }
     args.extend(["-w".into(), req.cwd.display().to_string()]);
     // Agents run as root in Docker and Podman containers; Claude Code only allows skipping
@@ -1329,6 +1331,7 @@ mod tests {
             cwd: "/Users/me/wt".into(),
             command: Some("exec claude".into()),
             interactive: true,
+            stdin: false,
             env: vec![("CLAUDE_CODE_OAUTH_TOKEN".into(), "sk-secret".into())],
             session: None,
         };
@@ -1353,6 +1356,7 @@ mod tests {
         assert!(!args.iter().any(|a| a.contains("sk-secret")));
         let script = LaunchRequest {
             interactive: false,
+            stdin: false,
             command: Some("pnpm i".into()),
             ..req
         };

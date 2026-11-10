@@ -97,6 +97,7 @@ fn lifecycle(isolation: Isolation) {
         cwd: wt.clone(),
         command: Some(command.into()),
         interactive: false,
+        stdin: false,
         env: vec![("WORKI_PROBE".into(), "probe-value".into())],
         session: None,
     };

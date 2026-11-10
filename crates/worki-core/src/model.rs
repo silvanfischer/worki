@@ -84,6 +84,9 @@ pub struct SavedSession {
     pub project_id: String,
     pub worktree_path: PathBuf,
     pub profile_id: String,
+    /// Shown as a chat instead of in a terminal.
+    #[serde(default)]
+    pub chat: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

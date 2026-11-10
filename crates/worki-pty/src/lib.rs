@@ -1,4 +1,5 @@
 mod activity;
+pub mod chat;
 
 use std::collections::{HashMap, VecDeque};
 use std::io::{Read, Write};
@@ -11,6 +12,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 pub use activity::{Activity, AgentState, ModelUsage};
 use activity::{Scanner, Signal, Tracker};
 use anyhow::{anyhow, Context, Result};
+use chat::Chat;
+pub use chat::ChatSpec;
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use serde::Serialize;
 
@@ -38,6 +41,17 @@ pub struct SpawnSpec {
     pub rows: u16,
 }
 
+/// How worki talks to the session's process.
+#[derive(Debug, Clone, Copy, Default, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum SessionKind {
+    /// A terminal: output is the bytes the process writes.
+    #[default]
+    Terminal,
+    /// An agent's JSON protocol: output is one [`ChatEvent`] as JSON per line.
+    Chat,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum SessionState {
@@ -49,6 +63,7 @@ pub enum SessionState {
 #[serde(rename_all = "camelCase")]
 pub struct SessionInfo {
     pub id: String,
+    pub kind: SessionKind,
     pub worktree_path: PathBuf,
     pub profile_id: Option<String>,
     pub title: String,
@@ -79,9 +94,16 @@ struct Session {
     info: Mutex<SessionInfo>,
     tracker: Mutex<Tracker>,
     output: Mutex<Output>,
-    writer: Mutex<Box<dyn Write + Send>>,
-    master: Mutex<Box<dyn MasterPty + Send>>,
-    killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
+    io: Io,
+}
+
+enum Io {
+    Pty {
+        writer: Mutex<Box<dyn Write + Send>>,
+        master: Mutex<Box<dyn MasterPty + Send>>,
+        killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
+    },
+    Chat(Arc<Chat>),
 }
 
 type SessionMap = Mutex<HashMap<String, Arc<Session>>>;
@@ -140,6 +162,7 @@ impl SessionHost {
         let writer = pair.master.take_writer()?;
         let info = SessionInfo {
             id: spec.id,
+            kind: SessionKind::Terminal,
             worktree_path: spec.worktree_path,
             profile_id: spec.profile_id,
             title: spec.title,
@@ -162,9 +185,11 @@ impl SessionHost {
                 replay: VecDeque::new(),
                 sinks: Vec::new(),
             }),
-            writer: Mutex::new(writer),
-            master: Mutex::new(pair.master),
-            killer: Mutex::new(child.clone_killer()),
+            io: Io::Pty {
+                writer: Mutex::new(writer),
+                master: Mutex::new(pair.master),
+                killer: Mutex::new(child.clone_killer()),
+            },
         });
         lock(&self.sessions).insert(info.id.clone(), session.clone());
 
@@ -223,7 +248,10 @@ impl SessionHost {
     pub fn write(&self, id: &str, data: &[u8]) -> Result<()> {
         let session = self.get(id)?;
         {
-            let mut writer = lock(&session.writer);
+            let Io::Pty { writer, .. } = &session.io else {
+                return Err(anyhow!("session {id} is a chat, not a terminal"));
+            };
+            let mut writer = lock(writer);
             writer.write_all(data)?;
             writer.flush()?;
         }
@@ -242,14 +270,16 @@ impl SessionHost {
 
     pub fn resize(&self, id: &str, cols: u16, rows: u16) -> Result<()> {
         let session = self.get(id)?;
-        lock(&session.master).resize(pty_size(cols, rows))?;
+        if let Io::Pty { master, .. } = &session.io {
+            lock(master).resize(pty_size(cols, rows))?;
+        }
         Ok(())
     }
 
     pub fn kill(&self, id: &str) -> Result<()> {
         let session = self.get(id)?;
         if lock(&session.info).state == SessionState::Running {
-            lock(&session.killer).kill().ok();
+            session.io.kill();
         }
         Ok(())
     }
@@ -263,7 +293,7 @@ impl SessionHost {
 
     pub fn kill_all(&self) {
         for session in lock(&self.sessions).values() {
-            lock(&session.killer).kill().ok();
+            session.io.kill();
         }
     }
 
@@ -272,6 +302,24 @@ impl SessionHost {
             .get(id)
             .cloned()
             .ok_or_else(|| anyhow!("no session {id}"))
+    }
+}
+
+impl Io {
+    fn chat(&self) -> Option<&Chat> {
+        match self {
+            Io::Chat(chat) => Some(chat.as_ref()),
+            Io::Pty { .. } => None,
+        }
+    }
+
+    fn kill(&self) {
+        match self {
+            Io::Pty { killer, .. } => {
+                lock(killer).kill().ok();
+            }
+            Io::Chat(chat) => chat.stop(),
+        }
     }
 }
 
@@ -337,9 +385,12 @@ fn pump_output(mut reader: Box<dyn Read + Send>, session: &Session, on_change: &
 
 /// Recomputes a running session's activity and reports it when it changed.
 fn refresh(session: &Session, on_change: &OnChange) {
-    let (activity, attention) = {
-        let tracker = lock(&session.tracker);
-        (tracker.activity(Instant::now()), tracker.message())
+    let (activity, attention) = match session.io.chat() {
+        Some(chat) => chat.activity(),
+        None => {
+            let tracker = lock(&session.tracker);
+            (tracker.activity(Instant::now()), tracker.message())
+        }
     };
     let info = {
         let mut info = lock(&session.info);

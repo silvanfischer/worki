@@ -78,6 +78,7 @@ mod tests {
             cwd: "/w".into(),
             command: command.map(Into::into),
             interactive,
+            stdin: false,
             env: vec![("A".into(), "1".into())],
             session: None,
         }
