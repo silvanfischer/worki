@@ -131,20 +131,40 @@ fn claude_settings(confined: bool) -> String {
         .as_array_mut()
         .expect("marker hooks")
         .push(hook(USAGE_HOOK.into()));
+    // The permission mode only reaches hooks; prompt and tool hooks pass it on before working.
+    let with_mode = serde_json::json!([{ "hooks": [hook(format!(
+        "m=$(sed -n 's/.*\"permission_mode\" *: *\"\\([^\"]*\\)\".*/\\1/p' | head -n 1); [ -n \"$m\" ] && s=\"mode;$m\" && {{ {print}; }}; s=working; {print}"
+    ))] }]);
     let mut settings = serde_json::json!({ "hooks": {
-        "UserPromptSubmit": marker("working"),
+        "UserPromptSubmit": with_mode.clone(),
         "PreToolUse": before_tool,
         // Fires as the permission prompt appears; Notification only follows about 6 s later.
         "PermissionRequest": marker("waiting"),
-        "PostToolUse": marker("working"),
+        "PostToolUse": with_mode,
         "Stop": stop,
         "Notification": marker("waiting"),
-    }});
+    }, "statusLine": { "type": "command", "command": STATUS_LINE }});
     if confined {
         settings["sandbox"] = serde_json::json!({ "enabled": false });
     }
     settings.to_string()
 }
+
+/// Claude's status line: reports model, effort, context and the like as a `state` marker, then
+/// shows the user's own status line from their Claude settings, if they have one. Plain awk, so
+/// it runs wherever the agent does.
+const STATUS_LINE: &str = r#"in=$(cat); st=$(printf '%s' "$in" | awk 'BEGIN { RS = "\001" }
+function grab(re, key,  v) { if (!match($0, re)) return ""; v = substr($0, RSTART, RLENGTH); sub("^.*\"" key "\" *: *", "", v); gsub(/[";\007\033]/, "", v); return v }
+{ printf "model=%s;effort=%s;fast=%s;thinking=%s;context=%s;contextSize=%s;cost=%s;style=%s;version=%s",
+  grab("\"model\" *: *[{][^}]*\"display_name\" *: *\"[^\"]*\"", "display_name"),
+  grab("\"effort\" *: *[{][^}]*\"level\" *: *\"[^\"]*\"", "level"),
+  grab("\"fast_mode\" *: *[a-z]+", "fast_mode"),
+  grab("\"thinking\" *: *[{][^}]*\"enabled\" *: *[a-z]+", "enabled"),
+  grab("\"used_percentage\" *: *[0-9.]+", "used_percentage"),
+  grab("\"context_window_size\" *: *[0-9]+", "context_window_size"),
+  grab("\"total_cost_usd\" *: *[0-9.]+", "total_cost_usd"),
+  grab("\"output_style\" *: *[{][^}]*\"name\" *: *\"[^\"]*\"", "name"),
+  grab("\"version\" *: *\"[^\"]*\"", "version") }'); [ -n "$WORKI_TTY" ] && { if [ -n "$TMUX" ]; then printf '\033Ptmux;\033\033]777;worki;state;%s\007\033\\' "$st"; else printf '\033]777;worki;state;%s\007' "$st"; fi; } > "$WORKI_TTY" 2>/dev/null; c=$(awk 'f && /"command" *:/ || /"statusLine"/ && /"command" *:/ { sub(/.*"command" *: *"/, ""); sub(/" *,? *}?,? *$/, ""); gsub(/\\"/, "\""); print; exit } /"statusLine"/ { f = 1 }' "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json" 2>/dev/null); [ -n "$c" ] && printf '%s' "$in" | sh -c "$c"; true"#;
 
 /// Adds up the token usage in the conversation's transcript (path from the hook's JSON input)
 /// per model and prints it as a `usage` marker. A message is written as several transcript lines
@@ -227,6 +247,68 @@ mod tests {
         assert_eq!(
             String::from_utf8_lossy(&out.stdout),
             "\x1b]777;worki;usage;claude-opus-5-5:6:57:200:2000:80\x07"
+        );
+    }
+
+    #[test]
+    fn prompt_hook_reports_the_permission_mode() {
+        let settings: serde_json::Value = serde_json::from_str(&claude_settings(false)).unwrap();
+        let command = settings["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"]
+            .as_str()
+            .unwrap();
+        let mut child = std::process::Command::new("/bin/sh")
+            .args(["-c", &command.replace("> \"$WORKI_TTY\"", "")])
+            .env("WORKI_TTY", "/dev/ttys-test")
+            .env_remove("TMUX")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        use std::io::Write;
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(br#"{"session_id":"s","permission_mode":"acceptEdits","prompt":"hi"}"#)
+            .unwrap();
+        assert_eq!(
+            child.wait_with_output().unwrap().stdout,
+            b"\x1b]777;worki;mode;acceptEdits\x07\x1b]777;worki;working\x07"
+        );
+    }
+
+    #[test]
+    fn status_line_reports_the_state_and_runs_the_users_status_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let tty = dir.path().join("tty");
+        std::fs::write(
+            dir.path().join("settings.json"),
+            "{\n  \"statusLine\": {\n    \"type\": \"command\",\n    \"command\": \"printf mine\"\n  }\n}\n",
+        )
+        .unwrap();
+        let mut child = std::process::Command::new("/bin/sh")
+            .args(["-c", STATUS_LINE])
+            .env("WORKI_TTY", &tty)
+            .env("CLAUDE_CONFIG_DIR", dir.path())
+            .env_remove("TMUX")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        use std::io::Write;
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(
+                br#"{"session_id":"s","model":{"id":"claude-opus-5-5","display_name":"Opus 5.5"},"version":"2.1.319","output_style":{"name":"default"},"cost":{"total_cost_usd":1.25,"total_lines_added":3},"context_window":{"total_input_tokens":5,"context_window_size":200000,"used_percentage":34.5,"current_usage":{"input_tokens":1}},"fast_mode":false,"effort":{"level":"high"},"thinking":{"enabled":true}}"#,
+            )
+            .unwrap();
+        let out = child.wait_with_output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "mine");
+        assert_eq!(
+            std::fs::read_to_string(&tty).unwrap(),
+            "\x1b]777;worki;state;model=Opus 5.5;effort=high;fast=false;thinking=true;context=34.5;contextSize=200000;cost=1.25;style=default;version=2.1.319\x07"
         );
     }
 

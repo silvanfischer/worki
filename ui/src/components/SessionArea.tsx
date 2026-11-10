@@ -9,6 +9,7 @@ import { keys, useAgentSettings, useSessions } from "../lib/queries";
 import { useUi } from "../lib/store";
 import { formatTokens, totalUsage, usageDetails } from "../lib/usage";
 import { ActivityDot, sessionState, stateLabel } from "./ActivityDot";
+import { AgentStatus } from "./AgentStatus";
 import { TerminalView } from "./TerminalView";
 import { Button, ErrorText, IconButton, Menu } from "./ui";
 
@@ -225,6 +226,7 @@ export function SessionArea({ project, worktree }: { project: Project; worktree:
             </ExitBanner>
           ))}
       </div>
+      {active?.state.kind === "running" && <AgentStatus session={active} />}
     </div>
   );
 }

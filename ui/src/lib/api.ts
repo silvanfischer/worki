@@ -257,7 +257,22 @@ export interface SessionInfo {
   attention: string | null;
   createdAt: number;
   /** Tokens the agent's current conversation used, per model (Claude Code only). */
-  usage: ModelUsage[];
+  usage: ModelUsage[];  /** Model, effort, context and the like, as the agent last reported them (Claude Code only). */
+  agent: AgentState;
+}
+
+export interface AgentState {
+  model: string | null;
+  effort: string | null;
+  fastMode: boolean | null;
+  thinking: boolean | null;
+  permissionMode: string | null;
+  /** Share of the context window in use, in percent. */
+  contextUsed: number | null;
+  contextSize: number | null;
+  costUsd: number | null;
+  outputStyle: string | null;
+  version: string | null;
 }
 
 export const api = {

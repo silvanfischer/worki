@@ -8,7 +8,7 @@ use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-pub use activity::{Activity, ModelUsage};
+pub use activity::{Activity, AgentState, ModelUsage};
 use activity::{Scanner, Signal, Tracker};
 use anyhow::{anyhow, Context, Result};
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
@@ -61,6 +61,8 @@ pub struct SessionInfo {
     pub attention: Option<String>,
     /// Tokens the agent's current conversation used, per model; empty until it reports any.
     pub usage: Vec<ModelUsage>,
+    /// Model, effort, context and the like, as the agent last reported them.
+    pub agent: AgentState,
     pub created_at: u64,
 }
 
@@ -147,6 +149,7 @@ impl SessionHost {
             activity: Activity::Idle,
             attention: None,
             usage: Vec::new(),
+            agent: AgentState::default(),
             created_at: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map(|d| d.as_millis() as u64)
@@ -301,13 +304,29 @@ fn pump_output(mut reader: Box<dyn Read + Send>, session: &Session, on_change: &
         signals.clear();
         scanner.feed(chunk, &mut signals);
         lock(&session.tracker).on_output(Instant::now(), &signals);
-        if let Some(usage) = signals.iter().rev().find_map(|s| match s {
-            Signal::Usage(u) => Some(u.clone()),
-            _ => None,
-        }) {
+        let reported = signals.iter().any(|s| {
+            matches!(
+                s,
+                Signal::Usage(_) | Signal::State(_) | Signal::PermissionMode(_)
+            )
+        });
+        if reported {
             let info = {
                 let mut info = lock(&session.info);
-                info.usage = usage;
+                for signal in &signals {
+                    match signal {
+                        Signal::Usage(u) => info.usage = u.clone(),
+                        Signal::State(s) => {
+                            let mode = info.agent.permission_mode.take();
+                            info.agent = AgentState {
+                                permission_mode: mode,
+                                ..s.clone()
+                            };
+                        }
+                        Signal::PermissionMode(m) => info.agent.permission_mode = Some(m.clone()),
+                        _ => {}
+                    }
+                }
                 info.clone()
             };
             on_change(&info);

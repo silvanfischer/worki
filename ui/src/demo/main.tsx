@@ -77,6 +77,18 @@ const session = (id: string, path: string, activity: string, extra: object = {})
   attention: null,
   createdAt: now,
   usage: [{ model: "claude-opus-5-5", input: 2400, output: 38_000, cacheWrite: 120_000, cacheWrite1h: 0, cacheRead: 1_400_000 }],
+  agent: {
+    model: "Opus 5.5",
+    effort: "high",
+    fastMode: false,
+    thinking: true,
+    permissionMode: "acceptEdits",
+    contextUsed: 34,
+    contextSize: 200_000,
+    costUsd: 1.84,
+    outputStyle: "default",
+    version: "2.1.319",
+  },
   ...extra,
 });
 

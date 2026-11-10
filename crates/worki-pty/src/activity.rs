@@ -14,13 +14,58 @@ pub enum Activity {
     Idle,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Signal {
     Bell,
     Notify(String),
     HookWorking,
     HookWaiting,
     Usage(Vec<ModelUsage>),
+    State(AgentState),
+    PermissionMode(String),
+}
+
+/// What an agent reports about its session through worki's status line and hooks. Fields stay
+/// `None` until the agent reports them (an agent without effort levels never does).
+#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentState {
+    pub model: Option<String>,
+    pub effort: Option<String>,
+    pub fast_mode: Option<bool>,
+    pub thinking: Option<bool>,
+    pub permission_mode: Option<String>,
+    /// Share of the context window in use, in percent.
+    pub context_used: Option<f64>,
+    pub context_size: Option<u64>,
+    pub cost_usd: Option<f64>,
+    pub output_style: Option<String>,
+    pub version: Option<String>,
+}
+
+/// `key=value` pairs separated by `;`, as printed by worki's status line; empty values are unset.
+fn parse_state(text: &str) -> AgentState {
+    let mut state = AgentState::default();
+    for (key, value) in text.split(';').filter_map(|pair| pair.split_once('=')) {
+        let value = value.trim();
+        if value.is_empty() || value == "null" {
+            continue;
+        }
+        let text = || Some(value.to_owned());
+        match key {
+            "model" => state.model = text(),
+            "effort" => state.effort = text(),
+            "fast" => state.fast_mode = value.parse().ok(),
+            "thinking" => state.thinking = value.parse().ok(),
+            "context" => state.context_used = value.parse().ok(),
+            "contextSize" => state.context_size = value.parse().ok(),
+            "cost" => state.cost_usd = value.parse().ok(),
+            "style" => state.output_style = text(),
+            "version" => state.version = text(),
+            _ => {}
+        }
+    }
+    state
 }
 
 /// Tokens an agent's conversation used with one model, as reported by worki's usage hook.
@@ -128,6 +173,10 @@ impl Scanner {
                 _ => {
                     if let Some(usage) = rest.strip_prefix("usage;") {
                         out.push(Signal::Usage(parse_usage(usage)));
+                    } else if let Some(state) = rest.strip_prefix("state;") {
+                        out.push(Signal::State(parse_state(state)));
+                    } else if let Some(mode) = rest.strip_prefix("mode;") {
+                        out.push(Signal::PermissionMode(mode.trim().to_owned()));
                     }
                 }
             }
@@ -192,7 +241,7 @@ impl Tracker {
                     self.hook_working = false;
                     self.waiting = !self.dismissed;
                 }
-                Signal::Usage(_) => {}
+                Signal::Usage(_) | Signal::State(_) | Signal::PermissionMode(_) => {}
             }
         }
     }
@@ -309,6 +358,32 @@ mod tests {
             s.feed(c, &mut out);
         }
         out
+    }
+
+    #[test]
+    fn reads_agent_state_and_permission_mode() {
+        let out = scan(&[
+            b"\x1b]777;worki;state;model=Opus 5.5;effort=high;fast=false;thinking=;context=34.5;contextSize=200000;cost=1.25;style=default;version=2.1.319\x07",
+            b"\x1b]777;worki;mode;acceptEdits\x07",
+        ]);
+        assert_eq!(
+            out,
+            [
+                Signal::State(AgentState {
+                    model: Some("Opus 5.5".into()),
+                    effort: Some("high".into()),
+                    fast_mode: Some(false),
+                    thinking: None,
+                    permission_mode: None,
+                    context_used: Some(34.5),
+                    context_size: Some(200_000),
+                    cost_usd: Some(1.25),
+                    output_style: Some("default".into()),
+                    version: Some("2.1.319".into()),
+                }),
+                Signal::PermissionMode("acceptEdits".into()),
+            ]
+        );
     }
 
     #[test]
