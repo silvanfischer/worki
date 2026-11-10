@@ -5,7 +5,7 @@ use std::path::Path;
 use serde::Deserialize;
 
 use crate::host::Host;
-use crate::model::{PrComment, PullRequest};
+use crate::model::{PrComment, PrDraft, PullRequest};
 use crate::{Error, Result};
 
 async fn gh(host: &Host, worktree: &Path, args: &[&str]) -> Result<String> {
@@ -254,9 +254,42 @@ pub fn parse_comments(json: &str) -> Result<Vec<PrComment>> {
         .collect())
 }
 
+/// The prompt asking an agent for a pull request title and description: the user's
+/// `instructions`, the answer format worki reads, and `context` from `git::pr_context`.
+pub fn draft_prompt(instructions: &str, context: &str) -> String {
+    format!(
+        "{}\n\nDon't use any tools; everything you need is below. Answer with only a JSON object \
+{{\"title\": \"...\", \"body\": \"...\"}} and nothing else.\n\n{context}",
+        instructions.trim()
+    )
+}
+
+/// The JSON object in an agent's answer, ignoring any text or code fence around it.
+pub fn parse_draft(answer: &str) -> Option<PrDraft> {
+    let json = &answer[answer.find('{')?..=answer.rfind('}')?];
+    let draft: PrDraft = serde_json::from_str(json).ok()?;
+    let title = draft.title.trim();
+    (!title.is_empty()).then(|| PrDraft {
+        title: title.to_owned(),
+        body: draft.body.trim().to_owned(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_the_draft_from_a_fenced_answer() {
+        let draft = parse_draft(
+            "Here it is:\n```json\n{\"title\": \" Add refunds \", \"body\": \"## Summary\\n- webhooks {x}\"}\n```",
+        )
+        .unwrap();
+        assert_eq!(draft.title, "Add refunds");
+        assert_eq!(draft.body, "## Summary\n- webhooks {x}");
+        assert_eq!(parse_draft("no json here"), None);
+        assert_eq!(parse_draft(r#"{"title": " ", "body": "x"}"#), None);
+    }
 
     #[test]
     fn counts_checks_by_outcome() {

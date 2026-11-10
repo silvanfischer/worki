@@ -193,7 +193,18 @@ function handle(cmd: string, args: Record<string, any>): unknown {
         behind: 2,
       };
     case "branch_log":
-      return args.worktreePath === checkout ? commits : [];
+      return args.worktreePath === checkout ? commits : args.worktreePath === login ? commits.slice(-1) : [];
+    case "draft_pull_request":
+      return new Promise((resolve) =>
+        setTimeout(
+          () =>
+            resolve({
+              title: "Fix the race between login and session refresh",
+              body: "## Summary\nLogging in while a session refresh was in flight could drop the new token.\n\n- Serialize refreshes behind the login\n- Add a regression test",
+            }),
+          1200,
+        ),
+      );
     case "pull_request":
       return args.worktreePath === checkout
         ? { number: 42, title: "Redesign the checkout summary", url: "https://github.com/acme/web/pull/42", state: "OPEN", isDraft: false, checksPassed: 3, checksFailed: 0, checksPending: 1 }

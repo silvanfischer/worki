@@ -287,6 +287,8 @@ export const api = {
   pullRequest: (worktreePath: string) => invoke<PullRequest | null>("pull_request", { worktreePath }),
   createPullRequest: (worktreePath: string, base: string, title: string, body: string, draft: boolean) =>
     invoke<PullRequest>("create_pull_request", { worktreePath, base, title, body, draft }),
+  draftPullRequest: (worktreePath: string, base: string, instructions: string, profileId: string | null) =>
+    invoke<{ title: string; body: string }>("draft_pull_request", { worktreePath, base, instructions, profileId }),
   compareBase: (worktreePath: string, base: string) => invoke<string>("compare_base", { worktreePath, base }),
   fetchRemote: (worktreePath: string) => invoke<void>("fetch_remote", { worktreePath }),
   pushBranch: (worktreePath: string) => invoke<void>("push_branch", { worktreePath }),

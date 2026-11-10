@@ -217,13 +217,14 @@ function ReviewBar({ worktreePath, onOpen }: { worktreePath: string; onOpen: (fi
   const { data: sessions = [] } = useSessions();
   const activeId = useUi((s) => s.activeSession[worktreePath]);
   const setActive = useUi((s) => s.setActiveSession);
+  const helperId = useUi((s) => s.askSession[worktreePath]);
   const [error, setError] = useState<string | null>(null);
   const [picked, setPicked] = useState<string | null>(null);
   if (comments.length === 0)
     return <p className="border-t border-line px-3 py-2 text-[11px] text-faint">Hover a line in a diff to comment on it.</p>;
 
   const agents = sessions.filter((s) => s.worktreePath === worktreePath && s.profileId && s.state.kind === "running");
-  const target = agents.find((s) => s.id === picked) ?? reviewTarget(agents, activeId);
+  const target = agents.find((s) => s.id === picked) ?? reviewTarget(agents, activeId, helperId);
   const files = [...new Set(comments.map((c) => c.file))];
 
   async function send() {
@@ -265,7 +266,7 @@ function ReviewBar({ worktreePath, onOpen }: { worktreePath: string; onOpen: (fi
           >
             {agents.map((a, i) => (
               <option key={a.id} value={a.id}>
-                {a.title} {i + 1}
+                {a.id === helperId ? "Helper" : `${a.title} ${i + 1}`}
                 {a.id === activeId ? " (open tab)" : ""}
               </option>
             ))}

@@ -10,7 +10,7 @@ use crate::model::*;
 use worki_isolation::{Backend, LaunchRequest, Workspace};
 
 use crate::openers::{self, OpenerSettings};
-use crate::setup::run_logged;
+use crate::setup::{run_captured, run_logged};
 use crate::store::Store;
 use crate::{git, github, paths, secrets, Error, Host, Result};
 
@@ -721,6 +721,58 @@ impl ProjectService {
 
     pub async fn pr_review_comments(&self, worktree: &Path, number: u64) -> Result<Vec<PrComment>> {
         github::review_comments(&self.host_for_path(worktree)?, worktree, number).await
+    }
+
+    /// Has an agent write the pull request's title and description following `instructions`,
+    /// running it once in the worktree's isolation. Without `profile_id`, the default agent
+    /// writes it.
+    pub async fn draft_pull_request(
+        &self,
+        worktree: &Path,
+        base: &str,
+        instructions: &str,
+        profile_id: Option<&str>,
+    ) -> Result<PrDraft> {
+        let project = self
+            .list_projects()?
+            .into_iter()
+            .find(|p| p.contains(worktree))
+            .ok_or_else(|| Error::ProjectNotFound(worktree.display().to_string()))?;
+        let settings = self.agent_settings()?;
+        let profile = profile_id
+            .and_then(|id| settings.profile(id))
+            .or_else(|| settings.default_profile())
+            .or(settings.profiles.first())
+            .cloned()
+            .ok_or_else(|| Error::Isolation("add an agent in the Agents settings first".into()))?;
+        let command = crate::launch::one_shot_command(&profile).ok_or_else(|| {
+            Error::Isolation(format!(
+                "{} can't write pull requests; pick a Claude Code or Codex agent under Settings › Git",
+                profile.name
+            ))
+        })?;
+        let context = git::pr_context(&Host::of(&project), worktree, base).await?;
+        let isolation = self.grant_access(&project, Some(worktree)).await?;
+        let mut env = self.secret_env(&isolation)?;
+        env.push((
+            "WORKI_PROMPT".into(),
+            github::draft_prompt(instructions, &context),
+        ));
+        let req = LaunchRequest {
+            cwd: worktree.to_path_buf(),
+            command: Some(command),
+            interactive: false,
+            env,
+            session: None,
+        };
+        let launch = blocking(move || isolation.backend().launch(&req)).await?;
+        let answer = run_captured(launch).await?;
+        github::parse_draft(&answer).ok_or_else(|| {
+            Error::Isolation(format!(
+                "{} didn't answer with a title and description",
+                profile.name
+            ))
+        })
     }
 
     pub async fn branch_changes(&self, worktree: &Path, base: &str) -> Result<BranchChanges> {

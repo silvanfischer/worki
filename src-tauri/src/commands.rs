@@ -264,6 +264,21 @@ pub async fn pull_request(
 }
 
 #[tauri::command]
+pub async fn draft_pull_request(
+    state: State<'_, AppState>,
+    worktree_path: PathBuf,
+    base: String,
+    instructions: String,
+    profile_id: Option<String>,
+) -> CmdResult<PrDraft> {
+    state
+        .projects
+        .draft_pull_request(&worktree_path, &base, &instructions, profile_id.as_deref())
+        .await
+        .map_err(err)
+}
+
+#[tauri::command]
 pub async fn create_pull_request(
     state: State<'_, AppState>,
     worktree_path: PathBuf,

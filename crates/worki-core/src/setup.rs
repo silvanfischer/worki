@@ -1,4 +1,5 @@
 use std::process::Stdio;
+use std::sync::{Arc, Mutex};
 
 use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 use tokio::process::Command;
@@ -33,6 +34,39 @@ pub async fn run_logged(
         Ok(())
     } else {
         Err(Error::CommandFailed(status.code()))
+    }
+}
+
+/// Runs a non-interactive launch and returns its output. On failure, the error carries the end
+/// of what it printed.
+pub async fn run_captured(launch: Launch) -> Result<String> {
+    let out = Arc::new(Mutex::new(Vec::new()));
+    let err = Arc::new(Mutex::new(Vec::new()));
+    let (o, e) = (out.clone(), err.clone());
+    let result = run_logged(launch, move |line| match line {
+        LogLine::Stdout(l) => o.lock().unwrap().push(l),
+        LogLine::Stderr(l) => e.lock().unwrap().push(l),
+        LogLine::Info(_) => {}
+    })
+    .await;
+    let out = out.lock().unwrap().join("\n");
+    match result {
+        Ok(()) => Ok(out),
+        Err(Error::CommandFailed(code)) => {
+            let err = err.lock().unwrap();
+            let lines = if err.is_empty() {
+                out.lines().map(str::to_owned).collect()
+            } else {
+                err.clone()
+            };
+            let tail = lines[lines.len().saturating_sub(5)..].join("\n");
+            Err(Error::Isolation(if tail.trim().is_empty() {
+                format!("the agent stopped with exit code {}", code.unwrap_or(-1))
+            } else {
+                tail
+            }))
+        }
+        Err(e) => Err(e),
     }
 }
 

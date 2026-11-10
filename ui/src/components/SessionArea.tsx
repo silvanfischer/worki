@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { Bot, LoaderCircle, Plus, RotateCcw, SquareTerminal, X } from "lucide-react";
+import { Bot, LoaderCircle, Plus, RotateCcw, Sparkles, SquareTerminal, X } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 
 import { api, errorMessage, type Project, type SessionInfo, skipPermissionsFlag, type Worktree } from "../lib/api";
@@ -21,6 +21,7 @@ export function SessionArea({ project, worktree }: { project: Project; worktree:
   const { data: agents } = useAgentSettings();
   const activeId = useUi((s) => s.activeSession[worktree.path]);
   const setActive = useUi((s) => s.setActiveSession);
+  const helperId = useUi((s) => s.askSession[worktree.path]);
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState<string | null>(null);
 
@@ -162,6 +163,7 @@ export function SessionArea({ project, worktree }: { project: Project; worktree:
               key={s.id}
               session={s}
               yolo={isYolo(profiles.find((p) => p.id === s.profileId)?.command)}
+              helper={s.id === helperId}
               selected={s.id === active?.id}
               onSelect={() => setActive(worktree.path, s.id)}
               onClose={() => close(s)}
@@ -248,12 +250,14 @@ function Kbd({ children }: { children: ReactNode }) {
 function SessionTab({
   session,
   yolo,
+  helper,
   selected,
   onSelect,
   onClose,
 }: {
   session: SessionInfo;
   yolo: boolean;
+  helper: boolean;
   selected: boolean;
   onSelect: () => void;
   onClose: () => void;
@@ -265,14 +269,17 @@ function SessionTab({
       onAuxClick={(e) => e.button === 1 && onClose()}
       className={clsx(
         "group flex h-7 shrink-0 items-center gap-2 rounded-md pr-1 pl-2.5",
+        helper && "border border-dashed border-accent/50 text-[12px]",
         selected ? "bg-selected text-fg" : "text-muted hover:bg-hover hover:text-fg",
       )}
+      title={helper ? `Helper: runs the “Ask agent” tasks with ${session.title}` : undefined}
     >
       <ActivityDot
         state={sessionState(session)}
         title={session.attention ? `Waiting: ${session.attention}` : stateLabel[sessionState(session)]}
       />
-      <span className="max-w-40 truncate">{session.title}</span>
+      {helper && <Sparkles size={12} className="-mx-0.5 text-accent" />}
+      <span className={clsx("max-w-40 truncate", helper && "italic")}>{helper ? "Helper" : session.title}</span>
       {yolo && (
         <span
           className="rounded bg-warn/15 px-1 text-[10px] font-semibold text-warn"

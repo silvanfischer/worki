@@ -60,10 +60,16 @@ export function reviewPrompt(comments: ReviewComment[]): string {
   return parts.join("\n\n");
 }
 
-/** The agent session a review goes to: the focused one if it's a running agent, else any running agent. */
-export function reviewTarget(sessions: SessionInfo[], activeId: string | undefined): SessionInfo | undefined {
+/** The agent session a review goes to: the focused one if it's a running agent, else the newest
+ * running agent other than the helper tab. */
+export function reviewTarget(
+  sessions: SessionInfo[],
+  activeId: string | undefined,
+  helperId: string | undefined,
+): SessionInfo | undefined {
   const agents = sessions.filter((s) => s.profileId && s.state.kind === "running");
-  return agents.find((s) => s.id === activeId) ?? agents[agents.length - 1];
+  const others = agents.filter((s) => s.id !== helperId);
+  return agents.find((s) => s.id === activeId) ?? others[others.length - 1] ?? agents[agents.length - 1];
 }
 
 /** Pastes the review into the agent's prompt and submits it. Bracketed paste keeps the newlines

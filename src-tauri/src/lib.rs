@@ -137,6 +137,7 @@ pub fn run() {
             commands::update_from_base,
             commands::pull_request,
             commands::create_pull_request,
+            commands::draft_pull_request,
             commands::push_branch,
             commands::fetch_remote,
             commands::compare_base,

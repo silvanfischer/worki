@@ -27,48 +27,60 @@ import {
   useSessions,
   useWorktreeStatus,
 } from "../lib/queries";
+import { askPrompt } from "../lib/askPrompts";
 import { reviewTarget, sendReview, useReview } from "../lib/review";
 import { useUi } from "../lib/store";
 import { toast } from "../lib/toast";
 import { Button, Checkbox, Dialog, ErrorText, Field, Input, Textarea } from "./ui";
 
-/** Where "Ask agent" tasks go: a new tab with the configured git-task agent, or else the open
- * agent tab (the newest running agent if the open tab isn't one). */
+/** Where "Ask agent" tasks go. With an agent picked for them in the settings, one helper tab per
+ * worktree, started with the first task and kept apart from the agents the user works with;
+ * otherwise the open agent tab (the newest running agent if the open tab isn't one). */
 function useAgentTarget(worktreePath: string) {
   const qc = useQueryClient();
   const { data: sessions = [] } = useSessions();
   const { data: projects = [] } = useProjects();
   const { data: agents } = useAgentSettings();
   const activeId = useUi((s) => s.activeSession[worktreePath]);
+  const helperId = useUi((s) => s.askSession[worktreePath]);
   const setActive = useUi((s) => s.setActiveSession);
+  const setHelper = useUi((s) => s.setAskSession);
   const taskProfileId = useUi((s) => s.gitTaskProfile);
-  const taskProfile = agents?.profiles.find((p) => p.id === taskProfileId);
-  const open = reviewTarget(
-    sessions.filter((s) => s.worktreePath === worktreePath),
-    activeId,
-  );
-  const target: { title: string } | undefined = taskProfile ? { title: `a new ${taskProfile.name} tab` } : open;
+  const profile = agents?.profiles.find((p) => p.id === taskProfileId);
+  const here = sessions.filter((s) => s.worktreePath === worktreePath);
+  const helper = here.find((s) => s.id === helperId && s.state.kind === "running");
+  const open = profile ? undefined : reviewTarget(here, activeId, helperId);
+  const target: { title: string } | undefined = profile
+    ? { title: helper ? "the helper tab" : `a new ${profile.name} helper tab` }
+    : open;
+  /** The agent that writes text worki fills in itself, such as a pull request description. */
+  const writerProfileId = profile?.id ?? open?.profileId ?? null;
   const ask = async (prompt: string) => {
     try {
-      if (taskProfile) {
+      const existing = helper ?? open;
+      if (existing) {
+        await sendReview(existing.id, prompt);
+        setActive(worktreePath, existing.id);
+      } else if (profile) {
         const project = projects.find(
           (p) => worktreePath === p.repoPath || worktreePath.startsWith(`${p.worktreeRoot}/`),
         );
         if (!project) return;
-        const info = await api.spawnSession(project.id, worktreePath, taskProfile.id, 120, 32, null, prompt);
-        qc.setQueryData<SessionInfo[]>(keys.sessions, (old = []) =>
-          old.some((s) => s.id === info.id) ? old : [...old, info],
-        );
+        const stale = here.find((s) => s.id === helperId);
+        if (stale) await api.closeSession(stale.id).catch(() => {});
+        const info = await api.spawnSession(project.id, worktreePath, profile.id, 120, 32, null, prompt);
+        qc.setQueryData<SessionInfo[]>(keys.sessions, (old = []) => [
+          ...old.filter((s) => s.id !== stale?.id && s.id !== info.id),
+          info,
+        ]);
+        setHelper(worktreePath, info.id);
         setActive(worktreePath, info.id);
-      } else if (open) {
-        await sendReview(open.id, prompt);
-        setActive(worktreePath, open.id);
       }
     } catch (e) {
       toast(errorMessage(e));
     }
   };
-  return { target, ask };
+  return { target, ask, writerProfileId };
 }
 
 function useRefreshGit(worktreePath: string) {
@@ -129,9 +141,7 @@ export function CommitBox({ worktreePath, files, total }: { worktreePath: string
         </Button>
         <Button
           onClick={() =>
-            ask(
-              "Please commit the current uncommitted changes in this worktree. Group them into sensible commits with clear messages.",
-            )
+            ask(askPrompt("commit"))
           }
           disabled={!target}
           title={target ? `Ask ${target.title} to commit the changes itself` : "Start an agent in this worktree first"}
@@ -241,9 +251,7 @@ export function BranchStatus({
             disabled={!target}
             onClick={() => {
               setConflicts(null);
-              ask(
-                `Please rebase this branch onto ${base} and resolve the conflicts (in ${conflicts.join(", ")}), keeping both sides' intent. Run the tests afterwards.`,
-              );
+              ask(askPrompt("resolveConflicts", { base, files: conflicts.join(", ") }));
             }}
           >
             <Bot size={13} />
@@ -440,12 +448,36 @@ function CreatePrDialog({
   onClose: () => void;
 }) {
   const qc = useQueryClient();
-  const [title, setTitle] = useState(defaultTitle);
-  const [body, setBody] = useState(defaultBody);
+  const saved = useUi((s) => s.prDrafts[worktree.path]);
+  const setSaved = useUi((s) => s.setPrDraft);
+  const [title, setTitle] = useState(saved?.title ?? defaultTitle);
+  const [body, setBody] = useState(saved?.body ?? defaultBody);
   const [draft, setDraft] = useState(false);
   const [busy, setBusy] = useState(false);
   const target = base.replace(/^origin\//, "");
   const [error, setError] = useState<string | null>(null);
+  const { writerProfileId } = useAgentTarget(worktree.path);
+  const [writing, setWriting] = useState(false);
+
+  async function write() {
+    setWriting(true);
+    setError(null);
+    try {
+      const draft = await api.draftPullRequest(
+        worktree.path,
+        base,
+        askPrompt("pullRequest", { base: target }),
+        writerProfileId,
+      );
+      setTitle(draft.title);
+      setBody(draft.body);
+      setSaved(worktree.path, draft);
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setWriting(false);
+    }
+  }
 
   async function create() {
     setBusy(true);
@@ -453,6 +485,7 @@ function CreatePrDialog({
     try {
       const pr = await api.createPullRequest(worktree.path, target, title.trim(), body, draft);
       qc.setQueryData(keys.pullRequest(worktree.path), pr);
+      setSaved(worktree.path, null);
       await qc.invalidateQueries({ queryKey: keys.status(worktree.path) });
       onClose();
     } catch (e) {
@@ -469,10 +502,19 @@ function CreatePrDialog({
       width={560}
       footer={
         <>
+          <Button
+            className="mr-auto"
+            onClick={write}
+            disabled={writing || busy}
+            title="Let the agent write the title and description from the branch's commits and diff"
+          >
+            {writing ? <LoaderCircle size={13} className="animate-spin" /> : <Bot size={13} />}
+            {writing ? "Writing…" : "Ask agent"}
+          </Button>
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" onClick={create} disabled={busy || !title.trim()}>
+          <Button variant="primary" onClick={create} disabled={busy || writing || !title.trim()}>
             {busy && <LoaderCircle size={13} className="animate-spin" />}
             {busy ? "Pushing…" : "Push and create"}
           </Button>
@@ -484,10 +526,27 @@ function CreatePrDialog({
         <span className="font-mono text-fg">{target}</span> with the GitHub CLI.
       </p>
       <Field label="Title">
-        <Input value={title} onChange={(e) => setTitle(e.target.value)} autoFocus />
+        <Input
+          value={title}
+          onChange={(e) => {
+            setTitle(e.target.value);
+            if (saved) setSaved(worktree.path, { title: e.target.value, body });
+          }}
+          disabled={writing}
+          autoFocus
+        />
       </Field>
       <Field label="Description">
-        <Textarea rows={8} value={body} onChange={(e) => setBody(e.target.value)} className="font-mono text-xs" />
+        <Textarea
+          rows={8}
+          value={body}
+          onChange={(e) => {
+            setBody(e.target.value);
+            if (saved) setSaved(worktree.path, { title, body: e.target.value });
+          }}
+          disabled={writing}
+          className="font-mono text-xs"
+        />
       </Field>
       <Checkbox checked={draft} onChange={setDraft}>
         <span className="text-[13px]">Open as draft</span>

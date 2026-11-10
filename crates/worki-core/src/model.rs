@@ -156,6 +156,13 @@ pub enum BaseUpdate {
     },
 }
 
+/// A pull request title and description an agent wrote.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PrDraft {
+    pub title: String,
+    pub body: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PullRequest {

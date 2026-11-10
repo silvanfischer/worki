@@ -340,6 +340,40 @@ async fn merge_base(host: &Host, worktree: &Path, base: &str) -> Result<String> 
         .to_owned())
 }
 
+const MAX_DIFF: usize = 30_000;
+
+/// The branch's commits, changed files and diff since it left `base`, for an agent to describe.
+pub async fn pr_context(host: &Host, worktree: &Path, base: &str) -> Result<String> {
+    let from = merge_base(host, worktree, base).await?;
+    let log = host
+        .git(
+            worktree,
+            [
+                "log",
+                "--format=- %s%n%w(0,2,2)%b",
+                &format!("{from}..HEAD"),
+            ],
+        )
+        .await?;
+    let stat = host
+        .git(worktree, ["diff", "--stat", &from, "HEAD"])
+        .await?;
+    let mut diff = host
+        .git(worktree, ["diff", "--no-ext-diff", &from, "HEAD"])
+        .await?;
+    if diff.len() > MAX_DIFF {
+        let cut = (0..=MAX_DIFF)
+            .rev()
+            .find(|&i| diff.is_char_boundary(i))
+            .unwrap_or(0);
+        diff.truncate(cut);
+        diff.push_str("\n[diff cut off]\n");
+    }
+    Ok(format!(
+        "Commits:\n{log}\nChanged files:\n{stat}\nDiff:\n{diff}"
+    ))
+}
+
 /// Everything the worktree changes compared to where it left `base`: its commits plus
 /// uncommitted and untracked files.
 pub async fn branch_changes(host: &Host, worktree: &Path, base: &str) -> Result<BranchChanges> {

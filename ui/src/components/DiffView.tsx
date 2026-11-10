@@ -45,9 +45,11 @@ export function DiffView({
   const { data: sessions = [] } = useSessions();
   const activeId = useUi((s) => s.activeSession[worktreePath]);
   const setActive = useUi((s) => s.setActiveSession);
+  const helperId = useUi((s) => s.askSession[worktreePath]);
   const target = reviewTarget(
     sessions.filter((s) => s.worktreePath === worktreePath),
     activeId,
+    helperId,
   );
   const parsed = useMemo(() => (data !== undefined ? parseDiff(data) : null), [data]);
   const [revealed, setRevealed] = useState<Record<number, GapReveal>>({});

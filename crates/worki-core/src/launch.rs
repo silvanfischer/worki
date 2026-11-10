@@ -43,6 +43,32 @@ pub fn session_request(
     }
 }
 
+/// Runs the agent once without a terminal on the prompt in `$WORKI_PROMPT`, printing only its
+/// answer. Claude starts without tools, MCP servers or a saved session, on Haiku unless the
+/// profile picks a model, since it only writes a short text. `None` for agents worki doesn't
+/// know how to run that way.
+pub fn one_shot_command(profile: &AgentProfile) -> Option<String> {
+    match profile.executable()? {
+        "claude" => {
+            let model = if profile
+                .command
+                .split_whitespace()
+                .any(|w| w == "--model" || w.starts_with("--model="))
+            {
+                ""
+            } else {
+                " --model haiku"
+            };
+            Some(format!(
+                "exec {}{model} --tools \"\" --strict-mcp-config --no-session-persistence -p \"$WORKI_PROMPT\"",
+                profile.command
+            ))
+        }
+        "codex" => Some(format!("exec {} exec \"$WORKI_PROMPT\"", profile.command)),
+        _ => None,
+    }
+}
+
 /// `confined`: worki's isolation already keeps the agent in its worktree, so Claude Code's own
 /// sandbox is turned off; it only got in the way there (e.g. it hides the system CA bundle).
 fn agent_command(
@@ -138,6 +164,29 @@ END { s = ""; for (m in o) s = s (s == "" ? "" : ",") m ":" i[m] ":" o[m] ":" w[
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn one_shot_commands_pass_the_prompt_from_the_environment() {
+        let profile = |command: &str| crate::model::AgentProfile {
+            id: "a".into(),
+            name: "A".into(),
+            command: command.into(),
+            install: None,
+        };
+        assert_eq!(
+            super::one_shot_command(&profile("claude --model sonnet")).as_deref(),
+            Some("exec claude --model sonnet --tools \"\" --strict-mcp-config --no-session-persistence -p \"$WORKI_PROMPT\"")
+        );
+        assert_eq!(
+            super::one_shot_command(&profile("claude")).as_deref(),
+            Some("exec claude --model haiku --tools \"\" --strict-mcp-config --no-session-persistence -p \"$WORKI_PROMPT\"")
+        );
+        assert_eq!(
+            super::one_shot_command(&profile("codex")).as_deref(),
+            Some("exec codex exec \"$WORKI_PROMPT\"")
+        );
+        assert_eq!(super::one_shot_command(&profile("aider")), None);
+    }
+
     #[test]
     fn usage_hook_sums_the_transcript_per_model() {
         let dir = tempfile::tempdir().unwrap();

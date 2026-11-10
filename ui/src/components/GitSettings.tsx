@@ -1,7 +1,8 @@
+import { ASK_PROMPTS, type AskPrompt } from "../lib/askPrompts";
 import { useAgentSettings } from "../lib/queries";
 import { useUi } from "../lib/store";
 import { Group } from "./GeneralSettings";
-import { Checkbox, Field, Select } from "./ui";
+import { Checkbox, Field, Select, Textarea } from "./ui";
 
 export function GitSettings() {
   const { data: agents } = useAgentSettings();
@@ -34,7 +35,7 @@ export function GitSettings() {
         <Group title="Agent tasks">
           <Field
             label="Agent for “Ask agent” buttons"
-            hint="Committing, resolving conflicts and similar tasks. A separate agent, e.g. a profile running claude --model haiku, starts in its own tab and keeps your main conversation (and its model) untouched."
+            hint="Committing, resolving conflicts and writing pull requests. A separate agent, e.g. a profile running claude --model haiku, gets one helper tab per worktree and keeps your main conversation (and its model) untouched."
           >
             <Select
               value={gitTaskProfile ?? ""}
@@ -44,13 +45,37 @@ export function GitSettings() {
               <option value="">The worktree's open agent</option>
               {(agents?.profiles ?? []).map((p) => (
                 <option key={p.id} value={p.id}>
-                  New tab: {p.name}
+                  Helper tab: {p.name}
                 </option>
               ))}
             </Select>
           </Field>
+          {(Object.keys(ASK_PROMPTS) as AskPrompt[]).map((kind) => (
+            <PromptField key={kind} kind={kind} />
+          ))}
         </Group>
       </div>
     </section>
+  );
+}
+
+function PromptField({ kind }: { kind: AskPrompt }) {
+  const custom = useUi((s) => s.askPrompts[kind]);
+  const setPrompt = useUi((s) => s.setAskPrompt);
+  const { label, hint, text } = ASK_PROMPTS[kind];
+  return (
+    <Field label={`Prompt: ${label}`} hint={hint}>
+      <Textarea
+        rows={kind === "pullRequest" ? 5 : 3}
+        value={custom ?? text}
+        onChange={(e) => setPrompt(kind, e.target.value === text ? null : e.target.value)}
+        className="text-[13px]"
+      />
+      {custom !== undefined && (
+        <button className="self-start text-[11px] text-muted hover:text-fg" onClick={() => setPrompt(kind, null)}>
+          Reset to default
+        </button>
+      )}
+    </Field>
   );
 }
