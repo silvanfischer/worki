@@ -221,3 +221,28 @@ fn podman_lifecycle() {
         image: TEST_IMAGE.into(),
     });
 }
+
+fn network_check(isolation: Isolation) {
+    let checks = isolation.backend().doctor(None);
+    let network = checks
+        .iter()
+        .find(|c| c.id == "network")
+        .expect("a network check");
+    println!("{}: {} ({:?})", network.ok, network.label, network.detail);
+}
+
+#[test]
+#[ignore = "needs Docker Desktop running and worki's image"]
+fn docker_network_check() {
+    network_check(Isolation::Docker {
+        image: worki_isolation::DEFAULT_CONTAINER_IMAGE.into(),
+    });
+}
+
+#[test]
+#[ignore = "needs a running Podman machine and worki's image"]
+fn podman_network_check() {
+    network_check(Isolation::Podman {
+        image: worki_isolation::DEFAULT_CONTAINER_IMAGE.into(),
+    });
+}

@@ -13,8 +13,8 @@ use serde_json::Value;
 
 use crate::{
     check_output, command_path, ensure_relative, ensure_valid_env, file_contents, home_path,
-    host_which, pack_home_files, Backend, Check, Fix, Isolation, Launch, LaunchRequest, Workspace,
-    READ_FILE_SCRIPT, WRITE_FILE_SCRIPT,
+    host_which, pack_home_files, stderr_text, Backend, Check, Fix, Isolation, Launch,
+    LaunchRequest, Workspace, READ_FILE_SCRIPT, WRITE_FILE_SCRIPT,
 };
 
 pub const DEFAULT_SANDBOX_IMAGE: &str = "claude";
@@ -287,6 +287,34 @@ impl Container {
         feed(&mut input)?;
         drop(input);
         Ok(child.wait_with_output()?)
+    }
+
+    /// Times a TLS connection to Anthropic's API from a throwaway container of the image.
+    fn probe_network(&self) -> Probe {
+        let script = format!(
+            "command -v curl >/dev/null || exit 127; curl -sS -m {PROBE_TIMEOUT_SECS} -o /dev/null -w '%{{time_appconnect}}' https://{PROBE_HOST}"
+        );
+        let out = self.command().and_then(|mut c| {
+            Ok(c.args([
+                "run",
+                "--rm",
+                "--entrypoint",
+                "sh",
+                &self.image,
+                "-c",
+                &script,
+            ])
+            .output()?)
+        });
+        match out {
+            Ok(o) if o.status.code() == Some(127) => Probe::Skipped,
+            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
+                .trim()
+                .parse()
+                .map_or(Probe::Skipped, Probe::Connected),
+            Ok(o) => Probe::Failed(stderr_text(&o)),
+            Err(e) => Probe::Failed(format!("{e:#}")),
+        }
     }
 
     fn image_present(&self) -> bool {
@@ -565,6 +593,50 @@ fn parse_template_listing(json: &str) -> Vec<String> {
     }
     tags.retain(|t| !t.is_empty() && !t.contains("<none>"));
     tags
+}
+
+const PROBE_HOST: &str = "api.anthropic.com";
+const PROBE_TIMEOUT_SECS: u32 = 12;
+/// Claude Code gives up on a connection after 10 seconds and makes several in a row.
+const SLOW_SECS: f64 = 2.0;
+
+#[derive(Debug, PartialEq)]
+enum Probe {
+    Connected(f64),
+    Failed(String),
+    /// The image has no curl to measure with.
+    Skipped,
+}
+
+fn network_check(engine: Engine, probe: Probe) -> Option<Check> {
+    let check = match probe {
+        Probe::Skipped => return None,
+        Probe::Connected(secs) if secs < SLOW_SECS => Check::new(
+            "network",
+            true,
+            format!("Containers reach {PROBE_HOST} quickly"),
+            "",
+        )
+        .detail(format!("Secure connection in {secs:.2} s")),
+        Probe::Connected(secs) => Check::new(
+            "network",
+            false,
+            "",
+            format!("Connections from containers are slow ({secs:.1} s to {PROBE_HOST})"),
+        )
+        .detail(match engine {
+            Engine::Docker => "Agents time out like this. Docker Desktop is probably waiting on your Mac's automatic proxy discovery: in Docker Desktop → Settings → Resources → Proxies, turn on Manual proxy configuration and leave the fields empty.".to_string(),
+            _ => format!("Agents time out like this. Check the {} network and proxy settings.", engine.display()),
+        }),
+        Probe::Failed(error) => Check::new(
+            "network",
+            false,
+            "",
+            format!("Containers can't reach {PROBE_HOST}"),
+        )
+        .detail(error),
+    };
+    Some(check)
 }
 
 fn admin_dir(worktree: &Path) -> Option<PathBuf> {
@@ -898,6 +970,9 @@ impl Backend for Container {
                 ));
             }
             checks.push(check);
+            if present {
+                checks.extend(network_check(self.engine, self.probe_network()));
+            }
         }
         let count = self.list().map(|l| l.len()).unwrap_or(0);
         checks.push(
@@ -1139,6 +1214,19 @@ mod tests {
             ["myimage:v1.0"]
         );
         assert!(parse_template_listing("not json").is_empty());
+    }
+
+    #[test]
+    fn network_check_flags_slow_and_failed_connections() {
+        let fast = network_check(Engine::Docker, Probe::Connected(0.03)).unwrap();
+        assert!(fast.ok);
+        let slow = network_check(Engine::Docker, Probe::Connected(5.03)).unwrap();
+        assert!(!slow.ok);
+        assert!(slow.label.contains("5.0 s"), "{}", slow.label);
+        assert!(slow.detail.unwrap().contains("Proxies"));
+        let failed = network_check(Engine::Podman, Probe::Failed("timed out".into())).unwrap();
+        assert!(!failed.ok && failed.detail.as_deref() == Some("timed out"));
+        assert_eq!(network_check(Engine::Podman, Probe::Skipped), None);
     }
 
     #[test]
