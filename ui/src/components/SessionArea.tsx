@@ -7,7 +7,6 @@ import { api, errorMessage, type Project, type SessionInfo, skipPermissionsFlag,
 import { onCommand } from "../lib/commands";
 import { keys, useAgentSettings, useSessions } from "../lib/queries";
 import { useUi } from "../lib/store";
-import { formatTokens, totalUsage, usageDetails } from "../lib/usage";
 import { ActivityDot, sessionState, stateLabel } from "./ActivityDot";
 import { AgentStatus } from "./AgentStatus";
 import { TerminalView } from "./TerminalView";
@@ -283,7 +282,6 @@ function SessionTab({
           YOLO
         </span>
       )}
-      <UsageBadge session={session} />
       {session.runAs && (
         <span className="rounded bg-hover px-1 font-mono text-[10px] text-faint" title={`Runs as ${session.runAs}`}>
           {session.runAs}
@@ -301,15 +299,5 @@ function SessionTab({
         <X size={11} />
       </button>
     </div>
-  );
-}
-
-function UsageBadge({ session }: { session: SessionInfo }) {
-  const total = totalUsage(session.usage);
-  if (!total) return null;
-  return (
-    <span className="font-mono text-[10px] text-faint" title={`Tokens used\n${usageDetails(total)}`}>
-      {formatTokens(total.tokens)}
-    </span>
   );
 }
