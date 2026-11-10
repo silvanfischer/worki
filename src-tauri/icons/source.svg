@@ -16,8 +16,26 @@
       <feGaussianBlur stdDeviation="16" result="b"/>
       <feMerge><feMergeNode in="b"/><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
     </filter>
+    <linearGradient id="tile" x1="0" y1="100" x2="0" y2="924" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#262245"/>
+      <stop offset="1" stop-color="#110f22"/>
+    </linearGradient>
+    <radialGradient id="tileGlow" cx="512" cy="430" r="520" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#8b5cf6" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#8b5cf6" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="tileShadow" x="-10%" y="-10%" width="120%" height="125%">
+      <feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#000" flood-opacity="0.3"/>
+    </filter>
   </defs>
 
+  <g filter="url(#tileShadow)">
+    <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#tile)"/>
+    <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#tileGlow)"/>
+    <rect x="101.5" y="101.5" width="821" height="821" rx="183.5" fill="none" stroke="#fff" stroke-opacity="0.1" stroke-width="3"/>
+  </g>
+
+  <g transform="translate(512 522) scale(0.7) translate(-512 -505)">
   <g filter="url(#shadow)" fill="none" stroke-linecap="round" stroke-linejoin="round">
     <path d="M236 300 L372 716 L512 430 L652 716 L788 300" stroke="url(#stroke)" stroke-width="132"/>
     <path d="M236 300 L372 716 L512 430 L652 716 L788 300" stroke="url(#sheen)" stroke-width="132"/>
@@ -27,5 +45,6 @@
     <circle cx="236" cy="300" r="62" fill="#3ddc97"/>
     <circle cx="512" cy="430" r="62" fill="#ffb547"/>
     <circle cx="788" cy="300" r="62" fill="#3ddc97"/>
+  </g>
   </g>
 </svg>
