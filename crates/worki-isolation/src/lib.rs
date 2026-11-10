@@ -312,6 +312,17 @@ pub trait Backend: Send + Sync {
         Ok(Vec::new())
     }
 
+    /// Like [`Backend::templates`], with when each was created (Unix seconds) if the engine says.
+    fn dated_templates(&self) -> anyhow::Result<Vec<(String, Option<i64>)>> {
+        Ok(self.templates()?.into_iter().map(|t| (t, None)).collect())
+    }
+
+    /// Removes an image or sbx template named `tag`. The engine refuses while an environment
+    /// still runs from it.
+    fn delete_template(&self, _tag: &str) -> anyhow::Result<()> {
+        anyhow::bail!("only container isolations have snapshots")
+    }
+
     /// What the Agents panel may offer for this isolation.
     fn capabilities(&self) -> Capabilities {
         Capabilities {

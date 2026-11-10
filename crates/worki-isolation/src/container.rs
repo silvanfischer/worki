@@ -551,9 +551,10 @@ fn short_image_name(tag: &str) -> String {
     }
 }
 
-/// Tags from `sbx template ls --json`: a list (or `{"templates"|"images": [...]}`) of entries with
-/// `repository` and `tag`, a `tags` list, or a single `tag`/`name`/`reference`.
-fn parse_template_listing(json: &str) -> Vec<String> {
+/// Tags from `sbx template ls --json`, with when they were created (Unix seconds) when listed:
+/// a list (or `{"templates"|"images": [...]}`) of entries with `repository` and `tag`, a `tags`
+/// list, or a single `tag`/`name`/`reference`.
+fn parse_template_listing(json: &str) -> Vec<(String, Option<i64>)> {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(json) else {
         return Vec::new();
     };
@@ -565,34 +566,80 @@ fn parse_template_listing(json: &str) -> Vec<String> {
             .unwrap_or_default(),
         _ => Vec::new(),
     };
-    let field = |e: &serde_json::Value, keys: &[&str]| {
+    let value = |e: &serde_json::Value, keys: &[&str]| {
         e.as_object().and_then(|o| {
             o.iter()
                 .find(|(k, _)| keys.iter().any(|w| k.eq_ignore_ascii_case(w)))
-                .and_then(|(_, v)| v.as_str())
-                .map(str::to_owned)
+                .map(|(_, v)| v.clone())
         })
+    };
+    let field = |e: &serde_json::Value, keys: &[&str]| {
+        value(e, keys).and_then(|v| v.as_str().map(str::to_owned))
     };
     let mut tags = Vec::new();
     for e in &entries {
-        if let Some(list) = e
-            .as_object()
-            .and_then(|o| o.iter().find(|(k, _)| k.eq_ignore_ascii_case("tags")))
-            .and_then(|(_, v)| v.as_array())
-        {
-            tags.extend(list.iter().filter_map(|t| t.as_str()).map(str::to_owned));
+        let created = value(e, &["created", "createdAt", "created_at"]).and_then(|v| match v {
+            serde_json::Value::Number(n) => n.as_i64(),
+            serde_json::Value::String(s) => parse_created(&s),
+            _ => None,
+        });
+        if let Some(list) = value(e, &["tags"]).and_then(|v| v.as_array().cloned()) {
+            tags.extend(
+                list.iter()
+                    .filter_map(|t| t.as_str())
+                    .map(|t| (t.to_owned(), created)),
+            );
         } else if let (Some(repo), Some(tag)) =
             (field(e, &["repository", "repo"]), field(e, &["tag"]))
         {
-            tags.push(format!("{repo}:{tag}"));
+            tags.push((format!("{repo}:{tag}"), created));
         } else if let Some(tag) = field(e, &["tag", "name", "reference", "ref"]) {
-            tags.push(tag);
+            tags.push((tag, created));
         } else if let Some(tag) = e.as_str() {
-            tags.push(tag.to_owned());
+            tags.push((tag.to_owned(), created));
         }
     }
-    tags.retain(|t| !t.is_empty() && !t.contains("<none>"));
+    tags.retain(|(t, _)| !t.is_empty() && !t.contains("<none>"));
     tags
+}
+
+/// Unix seconds from the dates engines print: `2026-11-04 10:12:00 +0100 CET` (Docker,
+/// Podman), `2026-11-04T10:12:00.5Z` or `…+01:00` (RFC 3339).
+fn parse_created(text: &str) -> Option<i64> {
+    let text = text.trim();
+    let num = |s: &str| s.parse::<i64>().ok();
+    let (date, rest) = text.split_at_checked(10)?;
+    let mut ymd = date.split('-').map(num);
+    let (y, m, d) = (ymd.next()??, ymd.next()??, ymd.next()??);
+    let rest = rest.strip_prefix([' ', 'T'])?;
+    let (time, zone) = rest.split_at_checked(8)?;
+    let mut hms = time.split(':').map(num);
+    let (h, min, sec) = (hms.next()??, hms.next()??, hms.next()??);
+    let zone = zone
+        .trim_start_matches(|c: char| c == '.' || c.is_ascii_digit())
+        .trim_start();
+    let offset = if zone.starts_with('Z') || zone.is_empty() {
+        0
+    } else {
+        let sign = if zone.starts_with('-') { -1 } else { 1 };
+        let digits: String = zone[1..]
+            .chars()
+            .take_while(|c| c.is_ascii_digit() || *c == ':')
+            .filter(char::is_ascii_digit)
+            .collect();
+        if digits.len() != 4 {
+            return None;
+        }
+        sign * (num(&digits[..2])? * 3600 + num(&digits[2..])? * 60)
+    };
+    // Days from 1970-01-01 to the civil date (Howard Hinnant's algorithm).
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * ((m + 9) % 12) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    Some(days * 86_400 + h * 3600 + min * 60 + sec - offset)
 }
 
 const PROBE_HOST: &str = "api.anthropic.com";
@@ -765,6 +812,17 @@ impl Backend for Container {
     }
 
     fn templates(&self) -> Result<Vec<String>> {
+        let mut tags: Vec<String> = self
+            .dated_templates()?
+            .into_iter()
+            .map(|(t, _)| t)
+            .collect();
+        tags.sort();
+        tags.dedup();
+        Ok(tags)
+    }
+
+    fn dated_templates(&self) -> Result<Vec<(String, Option<i64>)>> {
         if self.engine.binary().is_err() || !self.engine_running() {
             return Ok(Vec::new());
         }
@@ -774,19 +832,37 @@ impl Backend for Container {
             ),
             _ => self
                 .checked(
-                    ["image", "ls", "--format", "{{.Repository}}:{{.Tag}}"],
+                    [
+                        "image",
+                        "ls",
+                        "--format",
+                        "{{.Repository}}:{{.Tag}}\t{{.CreatedAt}}",
+                    ],
                     "listing images",
                 )?
                 .lines()
                 .map(str::trim)
                 .filter(|l| !l.is_empty() && !l.contains("<none>"))
-                .map(String::from)
+                .map(|l| match l.split_once('\t') {
+                    Some((tag, created)) => (tag.to_owned(), parse_created(created)),
+                    None => (l.to_owned(), None),
+                })
                 .collect(),
         };
-        let mut tags: Vec<String> = tags.iter().map(|t| short_image_name(t)).collect();
-        tags.sort();
-        tags.dedup();
-        Ok(tags)
+        Ok(tags
+            .into_iter()
+            .map(|(t, created)| (short_image_name(&t), created))
+            .collect())
+    }
+
+    fn delete_template(&self, tag: &str) -> Result<()> {
+        crate::validate_image_ref(tag)?;
+        let args: &[&str] = match self.engine {
+            Engine::Sbx => &["template", "rm", "--force", tag],
+            _ => &["image", "rm", tag],
+        };
+        self.checked(args, &format!("removing the snapshot {tag}"))?;
+        Ok(())
     }
 
     fn release(&self, ws: &Workspace) -> Result<()> {
@@ -1203,17 +1279,35 @@ mod tests {
     fn reads_template_listings() {
         assert_eq!(
             parse_template_listing(
-                r#"[{"Repository":"worki-app","Tag":"1"},{"tags":["a:1","b:2"]}]"#
+                r#"[{"Repository":"worki-app","Tag":"1","CreatedAt":"2026-11-04T09:12:00Z"},{"tags":["a:1","b:2"]}]"#
             ),
-            ["worki-app:1", "a:1", "b:2"]
+            [
+                ("worki-app:1".to_string(), Some(1_793_783_520)),
+                ("a:1".to_string(), None),
+                ("b:2".to_string(), None)
+            ]
         );
         assert_eq!(
             parse_template_listing(
-                r#"{"images":[{"tag":"myimage:v1.0","id":"abc"},{"repository":"<none>","tag":"<none>"}]}"#
+                r#"{"images":[{"tag":"myimage:v1.0","id":"abc","created":1700000000},{"repository":"<none>","tag":"<none>"}]}"#
             ),
-            ["myimage:v1.0"]
+            [("myimage:v1.0".to_string(), Some(1_700_000_000))]
         );
         assert!(parse_template_listing("not json").is_empty());
+        assert_eq!(
+            parse_created("2026-11-04 10:12:00 +0100 CET"),
+            Some(1_793_783_520)
+        );
+        assert_eq!(
+            parse_created("2026-11-04 10:12:00.123456 +0100 CET"),
+            Some(1_793_783_520)
+        );
+        assert_eq!(
+            parse_created("2026-11-04T08:12:00-01:00"),
+            Some(1_793_783_520)
+        );
+        assert_eq!(parse_created("1970-01-01T00:00:00Z"), Some(0));
+        assert_eq!(parse_created("yesterday"), None);
     }
 
     #[test]

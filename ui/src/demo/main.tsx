@@ -206,6 +206,33 @@ function handle(cmd: string, args: Record<string, any>): unknown {
       };
     case "branch_log":
       return args.worktreePath === checkout ? commits : args.worktreePath === login ? commits.slice(-1) : [];
+    case "snapshots":
+      return [
+        { engine: "dockerSandbox", name: "worki-acme-web:20261104-1012", created: 1793783520, usedBy: ["acme-web"] },
+        { engine: "dockerSandbox", name: "worki-acme-web:20261020-0931", created: 1792488660, usedBy: [] },
+        { engine: "docker", name: "worki-payments-api:20261101-1630", created: 1793547000, usedBy: ["payments-api › feat-refund-webhooks"] },
+        { engine: "docker", name: "worki-infra:20260930-0815", created: 1790748900, usedBy: [] },
+      ];
+    case "delete_snapshot":
+      return null;
+    case "draft_commits": {
+      const files = (args as { files: string[] }).files;
+      const split = files.length > 1;
+      return new Promise((resolve) =>
+        setTimeout(
+          () =>
+            resolve(
+              split
+                ? [
+                    { message: "Serialize session refreshes behind the login", files: files.slice(0, -1) },
+                    { message: "Fix a typo in the checkout summary", files: files.slice(-1) },
+                  ]
+                : [{ message: "Serialize session refreshes behind the login", files }],
+            ),
+          900,
+        ),
+      );
+    }
     case "draft_pull_request":
       return new Promise((resolve) =>
         setTimeout(
@@ -269,7 +296,6 @@ const ui = {
   theme: "dark",
   terminalFontSize: 13,
   reopenSessions: true,
-  gitTaskProfile: null,
   showCommits: true,
   showPullRequests: true,
 };

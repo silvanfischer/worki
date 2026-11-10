@@ -8,6 +8,7 @@ pub mod launch;
 pub mod model;
 pub mod openers;
 pub mod paths;
+pub mod prompt;
 pub mod secrets;
 pub mod service;
 pub mod setup;

@@ -43,30 +43,28 @@ pub fn session_request(
     }
 }
 
-/// Runs the agent once without a terminal on the prompt in `$WORKI_PROMPT`, printing only its
-/// answer. Claude starts without tools, MCP servers or a saved session, on Haiku unless the
-/// profile picks a model, since it only writes a short text. `None` for agents worki doesn't
-/// know how to run that way.
-pub fn one_shot_command(profile: &AgentProfile) -> Option<String> {
-    match profile.executable()? {
-        "claude" => {
-            let model = if profile
-                .command
-                .split_whitespace()
-                .any(|w| w == "--model" || w.starts_with("--model="))
-            {
-                ""
-            } else {
-                " --model haiku"
-            };
-            Some(format!(
-                "exec {}{model} --tools \"\" --strict-mcp-config --no-session-persistence -p \"$WORKI_PROMPT\"",
-                profile.command
-            ))
+/// Writes commit messages and pull requests when the user hasn't set their own command.
+pub const DEFAULT_WRITER_COMMAND: &str =
+    "claude --model haiku {fork} --no-session-persistence -p {prompt}";
+
+/// Shell code running the user's writer `template` once without a terminal: `{prompt}` becomes
+/// the prompt in `$WORKI_PROMPT`, and `{fork}` becomes `--resume <fork> --fork-session` once
+/// Claude has saved that session's conversation, and nothing otherwise.
+pub fn writer_command(template: &str, fork: Option<&str>) -> String {
+    let prelude = match fork {
+        Some(fork) => {
+            let fork = shell_quote(fork);
+            format!(
+                "if {}; then set -- --resume {fork} --fork-session; else set --; fi;",
+                claude_saved(&fork)
+            )
         }
-        "codex" => Some(format!("exec {} exec \"$WORKI_PROMPT\"", profile.command)),
-        _ => None,
-    }
+        None => "set --;".into(),
+    };
+    let command = template
+        .replace("{fork}", "\"$@\"")
+        .replace("{prompt}", "\"$WORKI_PROMPT\"");
+    format!("{prelude} exec {command}")
 }
 
 /// `confined`: worki's isolation already keeps the agent in its worktree, so Claude Code's own
@@ -107,8 +105,14 @@ fn agent_command(
 fn claude_conversation(id: &str) -> String {
     let id = shell_quote(id);
     format!(
-        "if ls \"${{CLAUDE_CONFIG_DIR:-$HOME/.claude}}\"/projects/*/{id}.jsonl >/dev/null 2>&1; then set -- --resume {id}; else set -- --session-id {id}; fi;"
+        "if {}; then set -- --resume {id}; else set -- --session-id {id}; fi;",
+        claude_saved(&id)
     )
+}
+
+/// Shell test for a saved Claude transcript; `id` is already shell-quoted.
+fn claude_saved(id: &str) -> String {
+    format!("ls \"${{CLAUDE_CONFIG_DIR:-$HOME/.claude}}\"/projects/*/{id}.jsonl >/dev/null 2>&1")
 }
 
 /// Extra Claude Code settings (passed with `--settings`, so the user's own settings files stay
@@ -185,26 +189,32 @@ END { s = ""; for (m in o) s = s (s == "" ? "" : ",") m ":" i[m] ":" o[m] ":" w[
 #[cfg(test)]
 mod tests {
     #[test]
-    fn one_shot_commands_pass_the_prompt_from_the_environment() {
-        let profile = |command: &str| crate::model::AgentProfile {
-            id: "a".into(),
-            name: "A".into(),
-            command: command.into(),
-            install: None,
+    fn writer_command_forks_a_saved_conversation() {
+        let home = tempfile::tempdir().unwrap();
+        let run = |template: &str, fork: Option<&str>| {
+            let command =
+                super::writer_command(template, fork).replacen("exec claude", "printf '%s|'", 1);
+            let out = std::process::Command::new("/bin/sh")
+                .args(["-c", &command])
+                .env("HOME", home.path())
+                .env_remove("CLAUDE_CONFIG_DIR")
+                .env("WORKI_PROMPT", "say hi")
+                .output()
+                .unwrap();
+            String::from_utf8(out.stdout).unwrap()
         };
+        let default = super::DEFAULT_WRITER_COMMAND;
+        let fresh = "--model|haiku|--no-session-persistence|-p|say hi|";
+        assert_eq!(run(default, None), fresh);
+        assert_eq!(run(default, Some("abc")), fresh);
+        let project = home.path().join(".claude/projects/-w");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(project.join("abc.jsonl"), "").unwrap();
         assert_eq!(
-            super::one_shot_command(&profile("claude --model sonnet")).as_deref(),
-            Some("exec claude --model sonnet --tools \"\" --strict-mcp-config --no-session-persistence -p \"$WORKI_PROMPT\"")
+            run(default, Some("abc")),
+            "--model|haiku|--resume|abc|--fork-session|--no-session-persistence|-p|say hi|"
         );
-        assert_eq!(
-            super::one_shot_command(&profile("claude")).as_deref(),
-            Some("exec claude --model haiku --tools \"\" --strict-mcp-config --no-session-persistence -p \"$WORKI_PROMPT\"")
-        );
-        assert_eq!(
-            super::one_shot_command(&profile("codex")).as_deref(),
-            Some("exec codex exec \"$WORKI_PROMPT\"")
-        );
-        assert_eq!(super::one_shot_command(&profile("aider")), None);
+        assert_eq!(run("claude -p {prompt}", Some("abc")), "-p|say hi|");
     }
 
     #[test]

@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import type { AskPrompt } from "./askPrompts";
 
 export type DialogState =
   | { kind: "newWorktree"; projectId: string }
@@ -10,7 +11,7 @@ export type DialogState =
   | { kind: "settings"; tab: SettingsTab }
   | null;
 
-export type SettingsTab = "general" | "agents" | "git" | "secrets" | "isolation" | "sshHosts" | "openIn";
+export type SettingsTab = "general" | "agents" | "git" | "secrets" | "isolation" | "snapshots" | "sshHosts" | "openIn";
 
 export interface PrDraft {
   title: string;
@@ -37,12 +38,13 @@ interface UiState {
   collapsed: Record<string, boolean>;
   /** Last focused session per worktree path. */
   activeSession: Record<string, string>;
-  /** The tab "Ask agent" opened per worktree path, reused for later tasks while it runs. */
-  askSession: Record<string, string>;
   /** Pull request title and description an agent wrote, per worktree path, until the PR is created. */
   prDrafts: Record<string, PrDraft>;
   /** Changed "Ask agent" prompts; missing ones use the defaults in askPrompts.ts. */
-  askPrompts: Partial<Record<"commit" | "resolveConflicts" | "pullRequest", string>>;
+  askPrompts: Partial<Record<AskPrompt, string>>;
+  /** Command that writes commit messages and pull requests in the background; empty uses
+   * `DEFAULT_WRITER_COMMAND`. */
+  writerCommand: string;
   showChanges: boolean;
   /** Whether the changes panel lists uncommitted changes or everything since the base branch. */
   changesScope: ChangesScope;
@@ -51,8 +53,6 @@ interface UiState {
   terminalFontSize: number;
   /** Start the Claude sessions that were open at the last quit again when worki starts. */
   reopenSessions: boolean;
-  /** Agent profile that runs "Ask agent" git tasks in a new tab; null sends them to the open agent. */
-  gitTaskProfile: string | null;
   /** Commit box, commit list and rebasing in the changes panel. */
   showCommits: boolean;
   /** Pull request section and status, which ask GitHub through `gh`. */
@@ -61,16 +61,15 @@ interface UiState {
   select: (projectId: string, worktreePath: string | null) => void;
   toggleCollapsed: (projectId: string) => void;
   setActiveSession: (worktreePath: string, sessionId: string) => void;
-  setAskSession: (worktreePath: string, sessionId: string) => void;
   setPrDraft: (worktreePath: string, draft: PrDraft | null) => void;
-  setAskPrompt: (kind: "commit" | "resolveConflicts" | "pullRequest", text: string | null) => void;
+  setAskPrompt: (kind: AskPrompt, text: string | null) => void;
+  setWriterCommand: (command: string) => void;
   toggleChanges: () => void;
   setChangesScope: (scope: ChangesScope) => void;
   setPanelWidth: (panel: Panel, width: number) => void;
   setTheme: (theme: Theme) => void;
   setTerminalFontSize: (size: number) => void;
   setReopenSessions: (on: boolean) => void;
-  setGitTaskProfile: (id: string | null) => void;
   setShowCommits: (on: boolean) => void;
   setShowPullRequests: (on: boolean) => void;
   openDialog: (dialog: DialogState) => void;
@@ -84,9 +83,9 @@ export const useUi = create<UiState>()(
       selectedWorktreePath: null,
       collapsed: {},
       activeSession: {},
-      askSession: {},
       prDrafts: {},
       askPrompts: {},
+      writerCommand: "",
       showChanges: true,
       changesScope: "uncommitted",
       panelWidths: {
@@ -97,14 +96,12 @@ export const useUi = create<UiState>()(
       theme: "system",
       terminalFontSize: 13,
       reopenSessions: true,
-      gitTaskProfile: null,
       showCommits: true,
       showPullRequests: true,
       dialog: null,
       select: (selectedProjectId, selectedWorktreePath) => set({ selectedProjectId, selectedWorktreePath }),
       toggleCollapsed: (id) => set((s) => ({ collapsed: { ...s.collapsed, [id]: !s.collapsed[id] } })),
       setActiveSession: (path, id) => set((s) => ({ activeSession: { ...s.activeSession, [path]: id } })),
-      setAskSession: (path, id) => set((s) => ({ askSession: { ...s.askSession, [path]: id } })),
       setPrDraft: (path, draft) =>
         set((s) => {
           const { [path]: _, ...rest } = s.prDrafts;
@@ -115,6 +112,7 @@ export const useUi = create<UiState>()(
           const { [kind]: _, ...rest } = s.askPrompts;
           return { askPrompts: text === null ? rest : { ...rest, [kind]: text } };
         }),
+      setWriterCommand: (writerCommand) => set({ writerCommand }),
       toggleChanges: () => set((s) => ({ showChanges: !s.showChanges })),
       setChangesScope: (changesScope) => set({ changesScope }),
       setPanelWidth: (panel, width) => {
@@ -124,7 +122,6 @@ export const useUi = create<UiState>()(
       setTheme: (theme) => set({ theme }),
       setTerminalFontSize: (terminalFontSize) => set({ terminalFontSize }),
       setReopenSessions: (reopenSessions) => set({ reopenSessions }),
-      setGitTaskProfile: (gitTaskProfile) => set({ gitTaskProfile }),
       setShowCommits: (showCommits) => set({ showCommits }),
       setShowPullRequests: (showPullRequests) => set({ showPullRequests }),
       openDialog: (dialog) => set({ dialog }),
@@ -142,11 +139,11 @@ export const useUi = create<UiState>()(
         theme,
         terminalFontSize,
         reopenSessions,
-        gitTaskProfile,
         showCommits,
         showPullRequests,
         prDrafts,
         askPrompts,
+        writerCommand,
       }) => ({
         selectedProjectId,
         selectedWorktreePath,
@@ -157,11 +154,11 @@ export const useUi = create<UiState>()(
         theme,
         terminalFontSize,
         reopenSessions,
-        gitTaskProfile,
         showCommits,
         showPullRequests,
         prDrafts,
         askPrompts,
+        writerCommand,
       }),
     },
   ),

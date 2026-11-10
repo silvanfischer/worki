@@ -1,13 +1,12 @@
+import { DEFAULT_WRITER_COMMAND } from "../lib/api";
 import { ASK_PROMPTS, type AskPrompt } from "../lib/askPrompts";
-import { useAgentSettings } from "../lib/queries";
 import { useUi } from "../lib/store";
 import { Group } from "./GeneralSettings";
-import { Checkbox, Field, Select, Textarea } from "./ui";
+import { Checkbox, Field, Input, Textarea } from "./ui";
 
 export function GitSettings() {
-  const { data: agents } = useAgentSettings();
-  const gitTaskProfile = useUi((s) => s.gitTaskProfile);
-  const setGitTaskProfile = useUi((s) => s.setGitTaskProfile);
+  const writerCommand = useUi((s) => s.writerCommand);
+  const setWriterCommand = useUi((s) => s.setWriterCommand);
   const showCommits = useUi((s) => s.showCommits);
   const setShowCommits = useUi((s) => s.setShowCommits);
   const showPullRequests = useUi((s) => s.showPullRequests);
@@ -34,21 +33,20 @@ export function GitSettings() {
 
         <Group title="Agent tasks">
           <Field
-            label="Agent for “Ask agent” buttons"
-            hint="Committing, resolving conflicts and writing pull requests. A separate agent, e.g. a profile running claude --model haiku, gets one helper tab per worktree and keeps your main conversation (and its model) untouched."
+            label="Command for writing"
+            hint="Writes commit messages and pull request descriptions in the background. {fork} copies the conversation of the worktree's Claude agent when there is one, {prompt} is the task. For Codex: codex exec {prompt}"
           >
-            <Select
-              value={gitTaskProfile ?? ""}
-              onChange={(e) => setGitTaskProfile(e.target.value || null)}
-              className="h-8 max-w-72 text-[13px]"
-            >
-              <option value="">The worktree's open agent</option>
-              {(agents?.profiles ?? []).map((p) => (
-                <option key={p.id} value={p.id}>
-                  Helper tab: {p.name}
-                </option>
-              ))}
-            </Select>
+            <Input
+              value={writerCommand || DEFAULT_WRITER_COMMAND}
+              onChange={(e) => setWriterCommand(e.target.value.trim() === DEFAULT_WRITER_COMMAND ? "" : e.target.value)}
+              spellCheck={false}
+              className="h-8 font-mono text-[12px]"
+            />
+            {writerCommand && (
+              <button className="self-start text-[11px] text-muted hover:text-fg" onClick={() => setWriterCommand("")}>
+                Reset to default
+              </button>
+            )}
           </Field>
           {(Object.keys(ASK_PROMPTS) as AskPrompt[]).map((kind) => (
             <PromptField key={kind} kind={kind} />
@@ -66,7 +64,7 @@ function PromptField({ kind }: { kind: AskPrompt }) {
   return (
     <Field label={`Prompt: ${label}`} hint={hint}>
       <Textarea
-        rows={kind === "pullRequest" ? 5 : 3}
+        rows={kind === "resolveConflicts" ? 3 : 7}
         value={custom ?? text}
         onChange={(e) => setPrompt(kind, e.target.value === text ? null : e.target.value)}
         className="text-[13px]"

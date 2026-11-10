@@ -9,6 +9,7 @@ import {
   createContext,
   useContext,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -68,9 +69,30 @@ export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElem
   return <input {...props} spellCheck={false} autoCorrect="off" className={clsx(fieldClass, "h-8", className)} />;
 }
 
-export function Textarea({ className, ...props }: TextareaHTMLAttributes<HTMLTextAreaElement>) {
+/** `maxRows` makes it grow with its text from `rows` up to that many lines, then scroll. */
+export function Textarea({
+  className,
+  maxRows,
+  ...props
+}: TextareaHTMLAttributes<HTMLTextAreaElement> & { maxRows?: number }) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || !maxRows) return;
+    const style = getComputedStyle(el);
+    const line = parseFloat(style.lineHeight) || 16;
+    const chrome =
+      parseFloat(style.paddingTop) + parseFloat(style.paddingBottom) + parseFloat(style.borderTopWidth) * 2;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight + parseFloat(style.borderTopWidth) * 2, line * maxRows + chrome)}px`;
+  }, [props.value, maxRows]);
   return (
-    <textarea {...props} spellCheck={false} className={clsx(fieldClass, "py-2 font-mono text-xs", className)} />
+    <textarea
+      ref={ref}
+      {...props}
+      spellCheck={false}
+      className={clsx(fieldClass, "py-2 font-mono text-xs", maxRows && "resize-none", className)}
+    />
   );
 }
 

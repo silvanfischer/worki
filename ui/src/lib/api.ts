@@ -214,6 +214,33 @@ export function withSkipPermissions(command: string, on: boolean): string {
   return (on ? [...words, flag] : words).join(" ");
 }
 
+/** A commit an agent proposes: its message and which of the files to commit. */
+export interface CommitDraft {
+  message: string;
+  files: string[];
+}
+
+export type SnapshotEngine = "dockerSandbox" | "docker" | "podman";
+
+/** A saved environment snapshot, with the settings that start new environments from it. */
+export interface Snapshot {
+  engine: SnapshotEngine;
+  name: string;
+  /** Unix seconds, when the engine says. */
+  created: number | null;
+  usedBy: string[];
+}
+
+/** How worki runs an agent once in the background to write a text. */
+export interface Writer {
+  /** The Claude session whose conversation `{fork}` copies. */
+  fork: string | null;
+  /** Command with `{fork}` and `{prompt}` placeholders; null uses `DEFAULT_WRITER_COMMAND`. */
+  command: string | null;
+}
+
+export const DEFAULT_WRITER_COMMAND = "claude --model haiku {fork} --no-session-persistence -p {prompt}";
+
 export interface AgentSettings {
   profiles: AgentProfile[];
   defaultProfile: string | null;
@@ -302,14 +329,18 @@ export const api = {
   pullRequest: (worktreePath: string) => invoke<PullRequest | null>("pull_request", { worktreePath }),
   createPullRequest: (worktreePath: string, base: string, title: string, body: string, draft: boolean) =>
     invoke<PullRequest>("create_pull_request", { worktreePath, base, title, body, draft }),
-  draftPullRequest: (worktreePath: string, base: string, instructions: string, profileId: string | null) =>
-    invoke<{ title: string; body: string }>("draft_pull_request", { worktreePath, base, instructions, profileId }),
+  draftPullRequest: (worktreePath: string, base: string, instructions: string, writer: Writer) =>
+    invoke<{ title: string; body: string }>("draft_pull_request", { worktreePath, base, instructions, writer }),
+  draftCommits: (worktreePath: string, files: string[], instructions: string, writer: Writer) =>
+    invoke<CommitDraft[]>("draft_commits", { worktreePath, files, instructions, writer }),
   compareBase: (worktreePath: string, base: string) => invoke<string>("compare_base", { worktreePath, base }),
   fetchRemote: (worktreePath: string) => invoke<void>("fetch_remote", { worktreePath }),
   pushBranch: (worktreePath: string) => invoke<void>("push_branch", { worktreePath }),
   prReviewComments: (worktreePath: string, number: number) =>
     invoke<PrComment[]>("pr_review_comments", { worktreePath, number }),
   environmentTemplates: (isolation: Isolation) => invoke<string[]>("environment_templates", { isolation }),
+  snapshots: () => invoke<Snapshot[]>("snapshots"),
+  deleteSnapshot: (engine: SnapshotEngine, name: string) => invoke<void>("delete_snapshot", { engine, name }),
   saveEnvironmentTemplate: (projectId: string, worktreePath: string, tag: string, useForProject: boolean) =>
     invoke<Project>("save_environment_template", { projectId, worktreePath, tag, useForProject }),
   branchChanges: (worktreePath: string, base: string) =>

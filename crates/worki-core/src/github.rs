@@ -254,15 +254,9 @@ pub fn parse_comments(json: &str) -> Result<Vec<PrComment>> {
         .collect())
 }
 
-/// The prompt asking an agent for a pull request title and description: the user's
-/// `instructions`, the answer format worki reads, and `context` from `git::pr_context`.
-pub fn draft_prompt(instructions: &str, context: &str) -> String {
-    format!(
-        "{}\n\nDon't use any tools; everything you need is below. Answer with only a JSON object \
-{{\"title\": \"...\", \"body\": \"...\"}} and nothing else.\n\n{context}",
-        instructions.trim()
-    )
-}
+/// How the agent answers with a pull request title and description, so worki can read them.
+pub const DRAFT_ANSWER: &str =
+    r#"Answer with only a JSON object {"title": "...", "body": "..."} and nothing else."#;
 
 /// The JSON object in an agent's answer, ignoring any text or code fence around it.
 pub fn parse_draft(answer: &str) -> Option<PrDraft> {

@@ -1,7 +1,10 @@
 use std::path::{Path, PathBuf};
 
 use crate::host::Host;
-use crate::model::{BaseUpdate, BranchChanges, ChangedFile, CommitInfo, Worktree, WorktreeStatus};
+use crate::model::{
+    BaseUpdate, BranchChanges, ChangedFile, CommitDraft, CommitInfo, Worktree, WorktreeStatus,
+};
+use crate::prompt::Part;
 use crate::{Error, Result};
 
 /// Resolves any path inside a repository or one of its worktrees to the main checkout.
@@ -343,7 +346,7 @@ async fn merge_base(host: &Host, worktree: &Path, base: &str) -> Result<String> 
 const MAX_DIFF: usize = 30_000;
 
 /// The branch's commits, changed files and diff since it left `base`, for an agent to describe.
-pub async fn pr_context(host: &Host, worktree: &Path, base: &str) -> Result<String> {
+pub async fn pr_context(host: &Host, worktree: &Path, base: &str) -> Result<Vec<Part>> {
     let from = merge_base(host, worktree, base).await?;
     let log = host
         .git(
@@ -358,9 +361,112 @@ pub async fn pr_context(host: &Host, worktree: &Path, base: &str) -> Result<Stri
     let stat = host
         .git(worktree, ["diff", "--stat", &from, "HEAD"])
         .await?;
-    let mut diff = host
+    let diff = host
         .git(worktree, ["diff", "--no-ext-diff", &from, "HEAD"])
         .await?;
+    Ok(vec![
+        Part {
+            name: "commits",
+            label: "Commits",
+            text: log,
+        },
+        Part {
+            name: "files",
+            label: "Changed files",
+            text: stat,
+        },
+        Part {
+            name: "diff",
+            label: "Diff",
+            text: cut_off(diff),
+        },
+    ])
+}
+
+/// The uncommitted changes to `files`, untracked ones included, and the latest commit subjects
+/// for their style, for an agent to write a commit message.
+pub async fn commit_context(host: &Host, worktree: &Path, files: &[String]) -> Result<Vec<Part>> {
+    let log = host
+        .git(worktree, ["log", "-10", "--format=- %s"])
+        .await
+        .unwrap_or_default();
+    let mut args = vec!["diff", "HEAD", "--no-ext-diff", "--no-color", "-M", "--"];
+    args.extend(files.iter().map(String::as_str));
+    let mut diff = host.git(worktree, &args).await?;
+    let mut args = vec!["ls-files", "--others", "--exclude-standard", "-z", "--"];
+    args.extend(files.iter().map(String::as_str));
+    let untracked = host.git(worktree, &args).await?;
+    for file in untracked.split('\0').filter(|f| !f.is_empty()) {
+        let (_, out) = host
+            .git_output(
+                worktree,
+                &[
+                    "diff",
+                    "--no-index",
+                    "--no-color",
+                    "--no-ext-diff",
+                    "--",
+                    "/dev/null",
+                    file,
+                ],
+            )
+            .await?;
+        diff.push_str(&String::from_utf8_lossy(&out.stdout));
+        if diff.len() > MAX_DIFF {
+            break;
+        }
+    }
+    Ok(vec![
+        Part {
+            name: "log",
+            label: "Recent commit messages",
+            text: log,
+        },
+        Part {
+            name: "files",
+            label: "Files to commit",
+            text: files.iter().map(|f| format!("{f}\n")).collect(),
+        },
+        Part {
+            name: "diff",
+            label: "Changes to commit",
+            text: cut_off(diff),
+        },
+    ])
+}
+
+/// How the agent answers with the commits to make, so worki can read them.
+pub const COMMITS_ANSWER: &str = r#"Answer with only a JSON array of the commits to make, in order: [{"message": "...", "files": ["path", ...]}], and nothing else. Every file to commit belongs to exactly one commit."#;
+
+/// The commits in an agent's answer, ignoring any text or code fence around the JSON. Only
+/// `files` are kept, each in its first commit; files the agent left out join the last commit.
+pub fn parse_commits(answer: &str, files: &[String]) -> Option<Vec<CommitDraft>> {
+    let json = &answer[answer.find('[')?..=answer.rfind(']')?];
+    let drafts: Vec<CommitDraft> = serde_json::from_str(json).ok()?;
+    let mut left: Vec<&String> = files.iter().collect();
+    let mut commits: Vec<CommitDraft> = drafts
+        .into_iter()
+        .filter_map(|d| {
+            let files: Vec<String> = d
+                .files
+                .into_iter()
+                .filter(|f| match left.iter().position(|l| *l == f) {
+                    Some(i) => {
+                        left.remove(i);
+                        true
+                    }
+                    None => false,
+                })
+                .collect();
+            let message = d.message.trim().to_owned();
+            (!files.is_empty() && !message.is_empty()).then_some(CommitDraft { message, files })
+        })
+        .collect();
+    commits.last_mut()?.files.extend(left.into_iter().cloned());
+    Some(commits)
+}
+
+fn cut_off(mut diff: String) -> String {
     if diff.len() > MAX_DIFF {
         let cut = (0..=MAX_DIFF)
             .rev()
@@ -369,9 +475,7 @@ pub async fn pr_context(host: &Host, worktree: &Path, base: &str) -> Result<Stri
         diff.truncate(cut);
         diff.push_str("\n[diff cut off]\n");
     }
-    Ok(format!(
-        "Commits:\n{log}\nChanged files:\n{stat}\nDiff:\n{diff}"
-    ))
+    diff
 }
 
 /// Everything the worktree changes compared to where it left `base`: its commits plus
@@ -591,6 +695,25 @@ pub fn parse_shortstat(text: &str) -> (u32, u32) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn reads_the_commits_from_a_fenced_answer() {
+        let files = ["a.rs", "b.rs", "c.rs"].map(String::from);
+        let commits = super::parse_commits(
+            "```json\n[{\"message\": \" Fix a \", \"files\": [\"a.rs\", \"x.rs\"]}, {\"message\": \"Add b\\n\\nWhy.\", \"files\": [\"b.rs\", \"a.rs\"]}, {\"message\": \"Empty\", \"files\": []}]\n```",
+            &files,
+        )
+        .unwrap();
+        assert_eq!(commits.len(), 2);
+        assert_eq!(
+            (commits[0].message.as_str(), commits[0].files.clone()),
+            ("Fix a", vec!["a.rs".to_string()])
+        );
+        assert_eq!(commits[1].message, "Add b\n\nWhy.");
+        assert_eq!(commits[1].files, ["b.rs", "c.rs"]);
+        assert_eq!(super::parse_commits("no json", &files), None);
+        assert_eq!(super::parse_commits("[]", &files), None);
+    }
+
     #[test]
     fn parses_name_status_with_renames() {
         let files = parse_name_status("M\0src/a.rs\0R087\0old.rs\0new name.rs\0D\0gone.txt\0");

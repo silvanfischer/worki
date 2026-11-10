@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { AppWindow, Bot, GitBranch, KeyRound, Server, Settings, Shield, X } from "lucide-react";
+import { AppWindow, Bot, Camera, GitBranch, KeyRound, Server, Settings, Shield, X } from "lucide-react";
 import { type ReactNode, useEffect } from "react";
 
 import { useAgentSettings, useIsolationSettings } from "../lib/queries";
@@ -10,6 +10,7 @@ import { GitSettings } from "./GitSettings";
 import { IsolationDialog } from "./IsolationDialog";
 import { OpenInSettings } from "./OpenInSettings";
 import { SecretsEditor } from "./SecretsEditor";
+import { SnapshotSettings } from "./SnapshotSettings";
 import { SshHostsSettings } from "./SshHostsSettings";
 import { EmbeddedDialog, IconButton } from "./ui";
 
@@ -19,6 +20,7 @@ const tabs: { id: SettingsTab; label: string; icon: ReactNode }[] = [
   { id: "git", label: "Git", icon: <GitBranch size={14} /> },
   { id: "secrets", label: "Secrets", icon: <KeyRound size={14} /> },
   { id: "isolation", label: "Isolation", icon: <Shield size={14} /> },
+  { id: "snapshots", label: "Snapshots", icon: <Camera size={14} /> },
   { id: "sshHosts", label: "SSH hosts", icon: <Server size={14} /> },
   { id: "openIn", label: "Open in", icon: <AppWindow size={14} /> },
 ];
@@ -83,6 +85,7 @@ export function SettingsView({ tab }: { tab: SettingsTab }) {
             {tab === "isolation" && isolation && (
               <IsolationDialog current={isolation.default} onClose={closeDialog} />
             )}
+            {tab === "snapshots" && <SnapshotSettings />}
             {tab === "sshHosts" && <SshHostsSettings />}
             {tab === "openIn" && <OpenInSettings />}
           </EmbeddedDialog.Provider>

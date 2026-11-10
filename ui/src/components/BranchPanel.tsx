@@ -17,7 +17,17 @@ import {
 } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
-import { api, type CommitInfo, errorMessage, type PullRequest, type SessionInfo, type Worktree } from "../lib/api";
+import {
+  api,
+  type CommitDraft,
+  type CommitInfo,
+  DEFAULT_WRITER_COMMAND,
+  errorMessage,
+  type PullRequest,
+  type SessionInfo,
+  type Worktree,
+  type Writer,
+} from "../lib/api";
 import {
   keys,
   useAgentSettings,
@@ -33,54 +43,44 @@ import { useUi } from "../lib/store";
 import { toast } from "../lib/toast";
 import { Button, Checkbox, Dialog, ErrorText, Field, Input, Textarea } from "./ui";
 
-/** Where "Ask agent" tasks go. With an agent picked for them in the settings, one helper tab per
- * worktree, started with the first task and kept apart from the agents the user works with;
- * otherwise the open agent tab (the newest running agent if the open tab isn't one). */
+/** Where agent tasks go: the worktree's open agent (the newest running agent if the open tab
+ * isn't one), else a new tab with the default agent. Texts worki fills in itself are written in
+ * the background by the same agent, starting from its conversation. */
 function useAgentTarget(worktreePath: string) {
   const qc = useQueryClient();
   const { data: sessions = [] } = useSessions();
   const { data: projects = [] } = useProjects();
   const { data: agents } = useAgentSettings();
   const activeId = useUi((s) => s.activeSession[worktreePath]);
-  const helperId = useUi((s) => s.askSession[worktreePath]);
   const setActive = useUi((s) => s.setActiveSession);
-  const setHelper = useUi((s) => s.setAskSession);
-  const taskProfileId = useUi((s) => s.gitTaskProfile);
-  const profile = agents?.profiles.find((p) => p.id === taskProfileId);
-  const here = sessions.filter((s) => s.worktreePath === worktreePath);
-  const helper = here.find((s) => s.id === helperId && s.state.kind === "running");
-  const open = profile ? undefined : reviewTarget(here, activeId, helperId);
-  const target: { title: string } | undefined = profile
-    ? { title: helper ? "the helper tab" : `a new ${profile.name} helper tab` }
-    : open;
-  /** The agent that writes text worki fills in itself, such as a pull request description. */
-  const writerProfileId = profile?.id ?? open?.profileId ?? null;
+  const writerCommand = useUi((s) => s.writerCommand);
+  const open = reviewTarget(
+    sessions.filter((s) => s.worktreePath === worktreePath),
+    activeId,
+  );
+  const fallback = agents?.profiles.find((p) => p.id === agents.defaultProfile) ?? agents?.profiles[0];
+  const target: { title: string } | undefined = open ?? (fallback && { title: `a new ${fallback.name} tab` });
+  const command = writerCommand.trim() || DEFAULT_WRITER_COMMAND;
+  const writer: Writer = { fork: open?.id ?? null, command };
   const ask = async (prompt: string) => {
     try {
-      const existing = helper ?? open;
-      if (existing) {
-        await sendReview(existing.id, prompt);
-        setActive(worktreePath, existing.id);
-      } else if (profile) {
+      if (open) {
+        await sendReview(open.id, prompt);
+        setActive(worktreePath, open.id);
+      } else if (fallback) {
         const project = projects.find(
           (p) => worktreePath === p.repoPath || worktreePath.startsWith(`${p.worktreeRoot}/`),
         );
         if (!project) return;
-        const stale = here.find((s) => s.id === helperId);
-        if (stale) await api.closeSession(stale.id).catch(() => {});
-        const info = await api.spawnSession(project.id, worktreePath, profile.id, 120, 32, null, prompt);
-        qc.setQueryData<SessionInfo[]>(keys.sessions, (old = []) => [
-          ...old.filter((s) => s.id !== stale?.id && s.id !== info.id),
-          info,
-        ]);
-        setHelper(worktreePath, info.id);
+        const info = await api.spawnSession(project.id, worktreePath, fallback.id, 120, 32, null, prompt);
+        qc.setQueryData<SessionInfo[]>(keys.sessions, (old = []) => [...old.filter((s) => s.id !== info.id), info]);
         setActive(worktreePath, info.id);
       }
     } catch (e) {
       toast(errorMessage(e));
     }
   };
-  return { target, ask, writerProfileId };
+  return { target, ask, writer, writerName: command.split(/\s+/)[0] };
 }
 
 function useRefreshGit(worktreePath: string) {
@@ -99,9 +99,25 @@ export function CommitBox({ worktreePath, files, total }: { worktreePath: string
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const refresh = useRefreshGit(worktreePath);
-  const { target, ask } = useAgentTarget(worktreePath);
+  const { writer, writerName } = useAgentTarget(worktreePath);
+  const [writing, setWriting] = useState(false);
+  const [drafts, setDrafts] = useState<CommitDraft[] | null>(null);
   const blocked =
     files.length === 0 ? "Check at least one file to commit." : !message.trim() ? "Write a commit message to commit." : null;
+
+  async function write() {
+    setWriting(true);
+    setError(null);
+    try {
+      const commits = await api.draftCommits(worktreePath, files, askPrompt("commitMessage"), writer);
+      if (commits.length === 1) setMessage(commits[0].message);
+      else setDrafts(commits);
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setWriting(false);
+    }
+  }
 
   async function commit() {
     if (blocked) return;
@@ -118,13 +134,71 @@ export function CommitBox({ worktreePath, files, total }: { worktreePath: string
     }
   }
 
+  async function commitAll(commits: CommitDraft[]) {
+    setBusy(true);
+    setError(null);
+    let left = commits;
+    try {
+      for (const c of commits) {
+        await api.commitChanges(worktreePath, c.files, c.message);
+        left = left.slice(1);
+      }
+      setDrafts(null);
+    } catch (e) {
+      setDrafts(left);
+      setError(errorMessage(e));
+    } finally {
+      setBusy(false);
+      await refresh();
+    }
+  }
+
+  if (drafts)
+    return (
+      <div className="flex flex-col gap-2 border-t border-line p-3">
+        <span className="text-xs font-medium">{drafts.length} commits</span>
+        {drafts.map((d, i) => (
+          <div key={i} className="flex flex-col gap-1">
+            <Textarea
+              rows={2}
+              maxRows={8}
+              value={d.message}
+              onChange={(e) => setDrafts(drafts.map((x, j) => (j === i ? { ...x, message: e.target.value } : x)))}
+              disabled={busy}
+              className="text-[13px]"
+            />
+            <span className="truncate font-mono text-[10px] text-faint" title={d.files.join("\n")}>
+              {d.files.join(", ")}
+            </span>
+          </div>
+        ))}
+        <div className="flex gap-2">
+          <Button
+            variant="primary"
+            className="flex-1"
+            onClick={() => commitAll(drafts)}
+            disabled={busy || drafts.some((d) => !d.message.trim())}
+          >
+            {busy ? <LoaderCircle size={12} className="animate-spin" /> : <GitCommitHorizontal size={13} />}
+            Commit all {drafts.length}
+          </Button>
+          <Button onClick={() => setDrafts(null)} disabled={busy}>
+            Discard
+          </Button>
+        </div>
+        <ErrorText>{error}</ErrorText>
+      </div>
+    );
+
   return (
     <div className="flex flex-col gap-2 border-t border-line p-3">
       <Textarea
         rows={2}
+        maxRows={12}
         value={message}
         onChange={(e) => setMessage(e.target.value)}
-        placeholder="Commit message"
+        placeholder={writing ? "Writing…" : "Commit message"}
+        disabled={writing}
         className="text-[13px]"
         onKeyDown={(e) => e.key === "Enter" && (e.metaKey || e.ctrlKey) && commit()}
       />
@@ -133,21 +207,23 @@ export function CommitBox({ worktreePath, files, total }: { worktreePath: string
           variant="primary"
           className="flex-1"
           onClick={commit}
-          disabled={busy || !!blocked}
+          disabled={busy || writing || !!blocked}
           title={blocked ?? `Commit ${files.length} of ${total} uncommitted ${total === 1 ? "file" : "files"} (⌘↩)`}
         >
           {busy ? <LoaderCircle size={12} className="animate-spin" /> : <GitCommitHorizontal size={13} />}
           Commit{files.length < total && ` ${files.length}/${total}`}
         </Button>
         <Button
-          onClick={() =>
-            ask(askPrompt("commit"))
+          onClick={write}
+          disabled={writing || files.length === 0}
+          title={
+            files.length === 0
+              ? "Check at least one file first"
+              : `Have ${writerName} write the commits for the checked files, split up where that makes sense`
           }
-          disabled={!target}
-          title={target ? `Ask ${target.title} to commit the changes itself` : "Start an agent in this worktree first"}
         >
-          <Bot size={13} />
-          Ask agent
+          {writing ? <LoaderCircle size={12} className="animate-spin" /> : <Bot size={13} />}
+          {writing ? "Writing…" : "Ask agent"}
         </Button>
       </div>
       {blocked && !error && <p className="text-[11px] text-faint">{blocked}</p>}
@@ -456,7 +532,7 @@ function CreatePrDialog({
   const [busy, setBusy] = useState(false);
   const target = base.replace(/^origin\//, "");
   const [error, setError] = useState<string | null>(null);
-  const { writerProfileId } = useAgentTarget(worktree.path);
+  const { writer } = useAgentTarget(worktree.path);
   const [writing, setWriting] = useState(false);
 
   async function write() {
@@ -467,7 +543,7 @@ function CreatePrDialog({
         worktree.path,
         base,
         askPrompt("pullRequest", { base: target }),
-        writerProfileId,
+        writer,
       );
       setTitle(draft.title);
       setBody(draft.body);

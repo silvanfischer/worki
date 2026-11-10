@@ -21,6 +21,7 @@ const SSH_HOSTS_KEY: &str = "sshHosts";
 const SAVED_SESSIONS_KEY: &str = "agentSessions";
 /// Per-worktree isolation choices, keyed by worktree path.
 const WORKTREE_ISOLATION_KEY: &str = "worktreeIsolation";
+const SNAPSHOTS_KEY: &str = "snapshots";
 
 type WorktreeChoices = BTreeMap<String, ProjectIsolation>;
 
@@ -464,6 +465,13 @@ impl ProjectService {
         let worktree = worktree.to_path_buf();
         let tag = tag.trim().to_owned();
         let saved = blocking(move || backend.save_template(&worktree, &tag)).await?;
+        if let Some(snapshot) = SnapshotEngine::snapshot_of(&saved) {
+            let mut recorded: Vec<(SnapshotEngine, String)> = self.setting(SNAPSHOTS_KEY)?;
+            if !recorded.contains(&snapshot) {
+                recorded.push(snapshot);
+                self.store.set_setting(SNAPSHOTS_KEY, &recorded)?;
+            }
+        }
         if !use_for_project {
             return Ok(project);
         }
@@ -491,6 +499,113 @@ impl ProjectService {
 
     pub async fn environment_templates(&self, isolation: Isolation) -> Result<Vec<String>> {
         blocking(move || isolation.backend().templates()).await
+    }
+
+    /// Snapshots on this machine: ones worki saved or named `worki-…`, and ones a setting starts
+    /// environments from, newest first. Engines that aren't running are left out.
+    pub async fn snapshots(&self) -> Result<Vec<Snapshot>> {
+        let users = self.snapshot_users()?;
+        let recorded: Vec<(SnapshotEngine, String)> = self.setting(SNAPSHOTS_KEY)?;
+        let found = blocking(|| {
+            Ok(SnapshotEngine::ALL
+                .into_iter()
+                .flat_map(|engine| {
+                    let names = engine
+                        .isolation()
+                        .backend()
+                        .dated_templates()
+                        .unwrap_or_default();
+                    names
+                        .into_iter()
+                        .map(move |(name, created)| (engine, name, created))
+                })
+                .collect::<Vec<_>>())
+        })
+        .await?;
+        let mut snapshots: Vec<Snapshot> = found
+            .into_iter()
+            .filter(|(engine, name, _)| {
+                let key = (*engine, name.clone());
+                (name.starts_with("worki-") && name != worki_isolation::DEFAULT_CONTAINER_IMAGE)
+                    || recorded.contains(&key)
+                    || users.iter().any(|(used, _)| *used == key)
+            })
+            .map(|(engine, name, created)| Snapshot {
+                used_by: users
+                    .iter()
+                    .filter(|((e, n), _)| *e == engine && *n == name)
+                    .map(|(_, by)| by.clone())
+                    .collect(),
+                engine,
+                name,
+                created,
+            })
+            .collect();
+        snapshots
+            .sort_by(|a, b| (b.created, &b.name, b.engine).cmp(&(a.created, &a.name, a.engine)));
+        snapshots.dedup_by(|a, b| a.engine == b.engine && a.name == b.name);
+        Ok(snapshots)
+    }
+
+    /// Removes a snapshot no setting starts environments from anymore.
+    pub async fn delete_snapshot(&self, engine: SnapshotEngine, name: &str) -> Result<()> {
+        let key = (engine, name.to_owned());
+        let users: Vec<String> = self
+            .snapshot_users()?
+            .into_iter()
+            .filter(|(used, _)| *used == key)
+            .map(|(_, by)| by)
+            .collect();
+        if !users.is_empty() {
+            return Err(Error::Isolation(format!(
+                "{name} is still used by {}; pick another isolation there first",
+                users.join(", ")
+            )));
+        }
+        let tag = name.to_owned();
+        blocking(move || engine.isolation().backend().delete_template(&tag)).await?;
+        let mut recorded: Vec<(SnapshotEngine, String)> = self.setting(SNAPSHOTS_KEY)?;
+        recorded.retain(|r| *r != key);
+        self.store.set_setting(SNAPSHOTS_KEY, &recorded)
+    }
+
+    /// Every setting that starts new environments from a snapshot, with who it belongs to.
+    fn snapshot_users(&self) -> Result<Vec<((SnapshotEngine, String), String)>> {
+        let global = self.isolation_settings()?.default;
+        let projects: Vec<Project> = self
+            .list_projects()?
+            .into_iter()
+            .filter(|p| p.remote.is_none())
+            .collect();
+        let mut users = Vec::new();
+        users.extend(
+            SnapshotEngine::snapshot_of(&global).map(|s| (s, "The default isolation".to_owned())),
+        );
+        for p in &projects {
+            if p.isolation != ProjectIsolation::Inherit {
+                users.extend(
+                    SnapshotEngine::snapshot_of(&p.isolation.resolve(&global))
+                        .map(|s| (s, p.name.clone())),
+                );
+            }
+        }
+        for (path, choice) in self.worktree_choices()? {
+            let path = Path::new(&path);
+            let Some(project) = projects.iter().find(|p| p.contains(path)) else {
+                continue;
+            };
+            if choice != ProjectIsolation::Inherit {
+                let worktree = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                users.extend(
+                    SnapshotEngine::snapshot_of(&choice.resolve(&global))
+                        .map(|s| (s, format!("{} › {worktree}", project.name))),
+                );
+            }
+        }
+        Ok(users)
     }
 
     pub fn isolation_for_worktree(&self, project: &Project, worktree: &Path) -> Result<Isolation> {
@@ -723,41 +838,76 @@ impl ProjectService {
         github::review_comments(&self.host_for_path(worktree)?, worktree, number).await
     }
 
-    /// Has an agent write the pull request's title and description following `instructions`,
-    /// running it once in the worktree's isolation. Without `profile_id`, the default agent
-    /// writes it.
+    /// Has an agent write the pull request's title and description following `instructions`.
     pub async fn draft_pull_request(
         &self,
         worktree: &Path,
         base: &str,
         instructions: &str,
-        profile_id: Option<&str>,
+        writer: &Writer,
     ) -> Result<PrDraft> {
+        let context = git::pr_context(&self.host_for_path(worktree)?, worktree, base).await?;
+        let (name, answer) = self
+            .write_once(
+                worktree,
+                writer,
+                crate::prompt::fill(instructions, &context, github::DRAFT_ANSWER),
+            )
+            .await?;
+        github::parse_draft(&answer).ok_or_else(|| {
+            Error::Isolation(format!("{name} didn't answer with a title and description"))
+        })
+    }
+
+    /// Has an agent split the uncommitted changes to `files` into commits and write their
+    /// messages.
+    pub async fn draft_commits(
+        &self,
+        worktree: &Path,
+        files: &[String],
+        instructions: &str,
+        writer: &Writer,
+    ) -> Result<Vec<CommitDraft>> {
+        let context = git::commit_context(&self.host_for_path(worktree)?, worktree, files).await?;
+        let (name, answer) = self
+            .write_once(
+                worktree,
+                writer,
+                crate::prompt::fill(instructions, &context, git::COMMITS_ANSWER),
+            )
+            .await?;
+        git::parse_commits(&answer, files)
+            .ok_or_else(|| Error::Isolation(format!("{name} didn't answer with commits")))
+    }
+
+    /// Runs the writer once in the worktree's isolation on `prompt`; returns the agent's name
+    /// and its answer.
+    async fn write_once(
+        &self,
+        worktree: &Path,
+        writer: &Writer,
+        prompt: String,
+    ) -> Result<(String, String)> {
         let project = self
             .list_projects()?
             .into_iter()
             .find(|p| p.contains(worktree))
             .ok_or_else(|| Error::ProjectNotFound(worktree.display().to_string()))?;
-        let settings = self.agent_settings()?;
-        let profile = profile_id
-            .and_then(|id| settings.profile(id))
-            .or_else(|| settings.default_profile())
-            .or(settings.profiles.first())
-            .cloned()
-            .ok_or_else(|| Error::Isolation("add an agent in the Agents settings first".into()))?;
-        let command = crate::launch::one_shot_command(&profile).ok_or_else(|| {
-            Error::Isolation(format!(
-                "{} can't write pull requests; pick a Claude Code or Codex agent under Settings › Git",
-                profile.name
-            ))
-        })?;
-        let context = git::pr_context(&Host::of(&project), worktree, base).await?;
+        let template = writer
+            .command
+            .as_deref()
+            .map(str::trim)
+            .filter(|c| !c.is_empty())
+            .unwrap_or(crate::launch::DEFAULT_WRITER_COMMAND);
+        let name = template
+            .split_whitespace()
+            .next()
+            .unwrap_or("The agent")
+            .to_owned();
+        let command = crate::launch::writer_command(template, writer.fork.as_deref());
         let isolation = self.grant_access(&project, Some(worktree)).await?;
         let mut env = self.secret_env(&isolation)?;
-        env.push((
-            "WORKI_PROMPT".into(),
-            github::draft_prompt(instructions, &context),
-        ));
+        env.push(("WORKI_PROMPT".into(), prompt));
         let req = LaunchRequest {
             cwd: worktree.to_path_buf(),
             command: Some(command),
@@ -766,13 +916,7 @@ impl ProjectService {
             session: None,
         };
         let launch = blocking(move || isolation.backend().launch(&req)).await?;
-        let answer = run_captured(launch).await?;
-        github::parse_draft(&answer).ok_or_else(|| {
-            Error::Isolation(format!(
-                "{} didn't answer with a title and description",
-                profile.name
-            ))
-        })
+        Ok((name, run_captured(launch).await?))
     }
 
     pub async fn branch_changes(&self, worktree: &Path, base: &str) -> Result<BranchChanges> {

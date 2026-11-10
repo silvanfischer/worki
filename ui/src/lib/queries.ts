@@ -28,6 +28,7 @@ export const keys = {
   branchLog: (path: string, base: string) => ["branchLog", path, base] as const,
   pullRequest: (path: string) => ["pullRequest", path] as const,
   environmentTemplates: (kind: string) => ["environmentTemplates", kind] as const,
+  snapshots: ["environmentTemplates", "snapshots"] as const,
   openers: ["openers"] as const,
   appIcon: (app: string) => ["appIcon", app] as const,
 };
@@ -68,6 +69,8 @@ export const useEnvironmentTemplates = (isolation: Isolation) =>
     queryFn: () => api.environmentTemplates(isolation),
     staleTime: 30_000,
   });
+
+export const useSnapshots = () => useQuery({ queryKey: keys.snapshots, queryFn: api.snapshots });
 
 export const useIsolationSettings = () =>
   useQuery({ queryKey: keys.isolationSettings, queryFn: api.isolationSettings });

@@ -156,6 +156,77 @@ pub enum BaseUpdate {
     },
 }
 
+/// Where a snapshot lives: an sbx template, or a Docker or Podman image.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "camelCase")]
+pub enum SnapshotEngine {
+    DockerSandbox,
+    Docker,
+    Podman,
+}
+
+impl SnapshotEngine {
+    pub const ALL: [Self; 3] = [Self::DockerSandbox, Self::Docker, Self::Podman];
+
+    /// An isolation on this engine, to reach its snapshots.
+    pub fn isolation(self) -> Isolation {
+        match self {
+            Self::DockerSandbox => Isolation::DockerSandbox {
+                image: worki_isolation::DEFAULT_SANDBOX_IMAGE.into(),
+                template: None,
+            },
+            Self::Docker => Isolation::Docker {
+                image: worki_isolation::DEFAULT_CONTAINER_IMAGE.into(),
+            },
+            Self::Podman => Isolation::Podman {
+                image: worki_isolation::DEFAULT_CONTAINER_IMAGE.into(),
+            },
+        }
+    }
+
+    /// The snapshot new environments of `isolation` start from, if any.
+    pub fn snapshot_of(isolation: &Isolation) -> Option<(Self, String)> {
+        let custom = |image: &str| image != worki_isolation::DEFAULT_CONTAINER_IMAGE;
+        match isolation {
+            Isolation::DockerSandbox {
+                template: Some(t), ..
+            } => Some((Self::DockerSandbox, t.clone())),
+            Isolation::Docker { image } if custom(image) => Some((Self::Docker, image.clone())),
+            Isolation::Podman { image } if custom(image) => Some((Self::Podman, image.clone())),
+            _ => None,
+        }
+    }
+}
+
+/// A saved environment snapshot, with the settings that start new environments from it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Snapshot {
+    pub engine: SnapshotEngine,
+    pub name: String,
+    /// Unix seconds, when the engine says.
+    pub created: Option<i64>,
+    /// "The default isolation", project names, or "project › worktree".
+    pub used_by: Vec<String>,
+}
+
+/// How worki runs an agent once in the background to write a text: `command`, or
+/// [`crate::launch::DEFAULT_WRITER_COMMAND`], where `{fork}` copies the conversation of the
+/// Claude session `fork` and `{prompt}` is the task.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Writer {
+    pub fork: Option<String>,
+    pub command: Option<String>,
+}
+
+/// A commit an agent proposes: its message and which of the files to commit.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CommitDraft {
+    pub message: String,
+    pub files: Vec<String>,
+}
+
 /// A pull request title and description an agent wrote.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PrDraft {

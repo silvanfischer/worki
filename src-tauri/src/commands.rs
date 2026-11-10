@@ -197,6 +197,24 @@ pub async fn environment_templates(
 }
 
 #[tauri::command]
+pub async fn snapshots(state: State<'_, AppState>) -> CmdResult<Vec<Snapshot>> {
+    state.projects.snapshots().await.map_err(err)
+}
+
+#[tauri::command]
+pub async fn delete_snapshot(
+    state: State<'_, AppState>,
+    engine: SnapshotEngine,
+    name: String,
+) -> CmdResult<()> {
+    state
+        .projects
+        .delete_snapshot(engine, &name)
+        .await
+        .map_err(err)
+}
+
+#[tauri::command]
 pub async fn save_environment_template(
     state: State<'_, AppState>,
     project_id: String,
@@ -269,11 +287,26 @@ pub async fn draft_pull_request(
     worktree_path: PathBuf,
     base: String,
     instructions: String,
-    profile_id: Option<String>,
+    writer: Writer,
 ) -> CmdResult<PrDraft> {
     state
         .projects
-        .draft_pull_request(&worktree_path, &base, &instructions, profile_id.as_deref())
+        .draft_pull_request(&worktree_path, &base, &instructions, &writer)
+        .await
+        .map_err(err)
+}
+
+#[tauri::command]
+pub async fn draft_commits(
+    state: State<'_, AppState>,
+    worktree_path: PathBuf,
+    files: Vec<String>,
+    instructions: String,
+    writer: Writer,
+) -> CmdResult<Vec<CommitDraft>> {
+    state
+        .projects
+        .draft_commits(&worktree_path, &files, &instructions, &writer)
         .await
         .map_err(err)
 }
