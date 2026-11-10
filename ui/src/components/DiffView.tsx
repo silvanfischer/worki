@@ -324,8 +324,9 @@ function CommentEditor({
   const [text, setText] = useState(initial);
   const [error, setError] = useState<string | null>(null);
   const submit = () => text.trim() && onSubmit(text.trim());
+  const canSend = !!onSend && !!sendTo;
   const send = () => {
-    if (!text.trim() || !onSend) return;
+    if (!text.trim() || !canSend) return;
     setError(null);
     onSend(text.trim()).catch((e) => setError(errorMessage(e)));
   };
@@ -339,7 +340,11 @@ function CommentEditor({
         placeholder="What should the agent change here?"
         className="font-sans text-[13px]"
         onKeyDown={(e) => {
-          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submit();
+          if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+            e.preventDefault();
+            if (e.metaKey || e.ctrlKey || !canSend) submit();
+            else send();
+          }
           if (e.key === "Escape") onCancel();
         }}
       />
@@ -347,19 +352,25 @@ function CommentEditor({
         <Button variant="ghost" onClick={onCancel}>
           Cancel
         </Button>
-        {onSend && (
-          <Button
-            onClick={send}
-            disabled={!text.trim() || !sendTo}
-            title={sendTo ? `Send only this comment to ${sendTo} now` : "Start an agent in this worktree to send comments"}
-          >
-            <Send size={12} />
-            Send now
-          </Button>
-        )}
-        <Button variant="primary" onClick={submit} disabled={!text.trim()}>
+        <Button
+          variant={canSend ? undefined : "primary"}
+          onClick={submit}
+          disabled={!text.trim()}
+          title={canSend ? "⌘↩" : "↩"}
+        >
           {submitLabel}
         </Button>
+        {onSend && (
+          <Button
+            variant={canSend ? "primary" : undefined}
+            onClick={send}
+            disabled={!text.trim() || !canSend}
+            title={canSend ? `Send only this comment to ${sendTo} now (↩)` : "Start an agent in this worktree to send comments"}
+          >
+            <Send size={12} />
+            Send to {sendTo ?? "agent"}
+          </Button>
+        )}
       </div>
       <ErrorText>{error}</ErrorText>
     </div>
