@@ -219,7 +219,7 @@ impl SessionHost {
         let lines = lock(&chat.protocol)
             .answer(request_id, answer)
             .ok_or_else(|| anyhow!("the agent isn't waiting for {request_id} anymore"))?;
-        chat.send(&lines)?;
+        // Recorded before it's sent, so the agent's reply can't come before it in the history.
         let allowed = !matches!(answer, PermissionAnswer::Deny { .. });
         emit(
             &session,
@@ -229,7 +229,7 @@ impl SessionHost {
                 allowed,
             }],
         );
-        Ok(())
+        chat.send(&lines)
     }
 
     /// Switches a chat agent's model, permission mode or effort; the agent confirms it with a
