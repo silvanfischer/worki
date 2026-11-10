@@ -114,3 +114,12 @@ button {
   background: var(--selected);
   border-radius: 4px;
 }
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}

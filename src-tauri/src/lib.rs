@@ -4,9 +4,10 @@ mod isolation;
 mod openers;
 mod sessions;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use tauri::{Emitter, Manager, RunEvent};
+use tauri::{AppHandle, Emitter, Manager, RunEvent, WindowEvent};
 use worki_core::ProjectService;
 use worki_pty::{SessionHost, SessionInfo};
 
@@ -144,21 +145,52 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building worki");
 
-    app.run(|app, event| {
-        if let RunEvent::Exit = event {
-            let state = app.state::<AppState>();
-            state.sessions.kill_all();
-            let stop = state
-                .projects
-                .isolation_settings()
-                .is_ok_and(|s| s.stop_on_quit);
-            if stop {
-                for isolation in state.projects.isolations_in_use().unwrap_or_default() {
-                    if let Err(e) = isolation.backend().shutdown() {
-                        tracing::warn!("stopping {}: {e:#}", isolation.label());
-                    }
-                }
+    app.run(|app, event| match event {
+        RunEvent::WindowEvent {
+            label,
+            event: WindowEvent::CloseRequested { api, .. },
+            ..
+        } if label == "main" && !STOPPED.load(Ordering::SeqCst) => {
+            api.prevent_close();
+            quit(app);
+        }
+        RunEvent::ExitRequested { api, .. } if !STOPPED.load(Ordering::SeqCst) => {
+            api.prevent_exit();
+            quit(app);
+        }
+        _ => {}
+    });
+}
+
+static QUITTING: AtomicBool = AtomicBool::new(false);
+static STOPPED: AtomicBool = AtomicBool::new(false);
+
+/// Keeps the window open while sessions end and environments stop, so the UI can show that
+/// quitting is in progress, then exits.
+fn quit(app: &AppHandle) {
+    if QUITTING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    app.emit("app-quitting", ()).ok();
+    let app = app.clone();
+    std::thread::spawn(move || {
+        stop_everything(&app.state::<AppState>());
+        STOPPED.store(true, Ordering::SeqCst);
+        app.exit(0);
+    });
+}
+
+fn stop_everything(state: &AppState) {
+    state.sessions.kill_all();
+    let stop = state
+        .projects
+        .isolation_settings()
+        .is_ok_and(|s| s.stop_on_quit);
+    if stop {
+        for isolation in state.projects.isolations_in_use().unwrap_or_default() {
+            if let Err(e) = isolation.backend().shutdown() {
+                tracing::warn!("stopping {}: {e:#}", isolation.label());
             }
         }
-    });
+    }
 }

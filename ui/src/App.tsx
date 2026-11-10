@@ -9,6 +9,7 @@ import { AddRemoteProjectDialog } from "./components/AddRemoteProjectDialog";
 import { CommandPalette } from "./components/CommandPalette";
 import { NewWorktreeDialog } from "./components/NewWorktreeDialog";
 import { ProjectSettingsDialog } from "./components/ProjectSettingsDialog";
+import { QuittingOverlay } from "./components/QuittingOverlay";
 import { RemoveWorktreeDialog } from "./components/RemoveWorktreeDialog";
 import { SaveEnvironmentDialog } from "./components/SaveEnvironmentDialog";
 import { SettingsView } from "./components/SettingsView";
@@ -107,6 +108,7 @@ export function App() {
 
   return (
     <div className="flex h-full">
+      <QuittingOverlay />
       <Sidebar />
       <main className="min-w-0 flex-1 border-l border-line bg-panel">
         {project && worktree ? (
