@@ -67,6 +67,28 @@ checks it and cleans it up again.
   <img src="docs/screenshots/settings.png" alt="Isolation settings with checks and agents installed in the sandbox" width="900">
 </p>
 
+## Chat or terminal
+
+<p align="center">
+  <img src="docs/screenshots/chat.png" alt="Claude Code as a chat: a diagram, a chart and a permission request" width="900">
+</p>
+
+Run Claude Code in its terminal, or as a chat that worki draws itself:
+
+- **The conversation, readable.** Answers stream in as Markdown, tool calls fold into one line
+  each and open to show the command, the diff or the output.
+- **Questions as buttons.** Permission requests get Allow and Deny, the agent's questions their
+  options, and Esc stops a turn.
+- **Switch while you talk.** Model, effort and permission mode sit under the message box.
+- **Attach files and paste screenshots.** worki reads them itself, so they reach agents in any
+  isolation.
+- **Visuals in place.** Diagrams (Mermaid), drawings (SVG) and charts (HTML, in a sandboxed frame)
+  match worki's theme, open full-window with zoom, and save as SVG, PNG or HTML.
+- **Picks up where you left off.** Chats reopen with their history when worki starts.
+
+Choose the default under Settings › General; the **+** menu offers both. Codex runs in a terminal
+for now.
+
 ## From task to pull request
 
 <p align="center">
