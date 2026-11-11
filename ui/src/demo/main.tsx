@@ -386,6 +386,23 @@ function handle(cmd: string, args: Record<string, any>): unknown {
     }
     case "session_continue_command":
       return `sbx exec -it -w ${checkout} -e IS_SANDBOX=1 worki-feat-checkout-redesign-3f2a bash -lc 'claude --resume ${args.id}'`;
+    case "fetch_remote":
+      return new Promise((resolve) => setTimeout(() => resolve(null), 800));
+    case "list_branches":
+      return [
+        "main",
+        "feat/checkout-redesign",
+        "fix/login-race",
+        "chore/react-19",
+        "feat/cart-badges",
+        "fix/checkout-rounding",
+        "origin/main",
+        "origin/feat/checkout-redesign",
+        "origin/fix/login-race",
+        "origin/release/2026.11",
+        "origin/feat/search-filters",
+        "origin/fix/checkout-tax-rounding",
+      ];
     case "interrupt_chat":
       sendChat({ type: "notice", text: "Request interrupted by user" }, { type: "turnEnded", ok: false, interrupted: true, error: null });
       return null;

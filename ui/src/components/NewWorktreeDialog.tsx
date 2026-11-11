@@ -1,11 +1,13 @@
 import { useQueryClient } from "@tanstack/react-query";
+import { RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { api, errorMessage, isolationLabel, type LogLine, type Project, type ProjectIsolation } from "../lib/api";
 import { keys, useBranches, useProjectDefaultIsolation, useSetupScripts } from "../lib/queries";
 import { useUi } from "../lib/store";
+import { BranchPicker } from "./BranchPicker";
 import { IsolationPicker } from "./IsolationPicker";
-import { Button, Checkbox, Dialog, ErrorText, Field, Input, LogView, Select } from "./ui";
+import { Button, Checkbox, Dialog, ErrorText, Field, Input, LogView } from "./ui";
 
 type Phase = "edit" | "running" | "setupFailed";
 
@@ -18,6 +20,21 @@ export function NewWorktreeDialog({ project, onClose }: { project: Project; onCl
 
   const [name, setName] = useState("");
   const [base, setBase] = useState(project.defaultBase);
+  const [fetching, setFetching] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+
+  async function fetchLatest() {
+    setFetching(true);
+    setFetchError(null);
+    try {
+      await api.fetchRemote(project.repoPath);
+      await qc.invalidateQueries({ queryKey: keys.branches(project.id) });
+    } catch (e) {
+      setFetchError(errorMessage(e));
+    } finally {
+      setFetching(false);
+    }
+  }
   const [runSetup, setRunSetup] = useState(true);
   const [isolation, setIsolation] = useState<ProjectIsolation>({ kind: "inherit" });
   const projectDefault = useProjectDefaultIsolation(project);
@@ -28,7 +45,6 @@ export function NewWorktreeDialog({ project, onClose }: { project: Project; onCl
   const branch = branchName(name);
   const nameTaken = branches.includes(branch);
   const localBranches = branches.filter((b) => !b.startsWith("origin/"));
-  const remoteBranches = branches.filter((b) => b.startsWith("origin/"));
   const canSubmit = !!branch && !nameTaken && !!base && phase === "edit";
 
   useEffect(() => {
@@ -90,31 +106,27 @@ export function NewWorktreeDialog({ project, onClose }: { project: Project; onCl
           submit();
         }}
       >
-        <Field label="Start from">
-          <Select
-            value={base}
-            onChange={(e) => setBase(e.target.value)}
-            disabled={phase !== "edit"}
-            className="h-8 w-full text-[13px]"
-          >
-            {branches.length === 0 && <option value={base}>{base}</option>}
-            <optgroup label="Local branches">
-              {localBranches.map((b) => (
-                <option key={b} value={b}>
-                  {b}
-                </option>
-              ))}
-            </optgroup>
-            {remoteBranches.length > 0 && (
-              <optgroup label="Remote branches">
-                {remoteBranches.map((b) => (
-                  <option key={b} value={b}>
-                    {b}
-                  </option>
-                ))}
-              </optgroup>
-            )}
-          </Select>
+        <Field label="Start from" hint={fetchError && <span className="text-removed">Couldn't fetch: {fetchError}</span>}>
+          <div className="flex gap-2">
+            <div className="min-w-0 flex-1">
+              <BranchPicker
+                value={base}
+                branches={branches.length > 0 ? branches : [base]}
+                onChange={setBase}
+                disabled={phase !== "edit"}
+              />
+            </div>
+            <Button
+              type="button"
+              onClick={fetchLatest}
+              disabled={fetching || phase !== "edit"}
+              title="Fetch the latest branches from the remote"
+              className="h-8"
+            >
+              <RefreshCw size={12} className={fetching ? "animate-spin" : undefined} />
+              {fetching ? "Fetching…" : "Fetch"}
+            </Button>
+          </div>
         </Field>
         <Field
           label="Worktree name"
