@@ -73,7 +73,7 @@ export function IsolationPicker<T extends ProjectIsolation>({
       <Select
         value={value.kind}
         onChange={(e) => pick(e.target.value as Kind)}
-        className="h-8 w-full max-w-96 text-[13px]"
+        className="h-8 w-full text-[13px]"
       >
         {visible.map((o) => (
           <option key={o.kind} value={o.kind}>
