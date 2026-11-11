@@ -16,7 +16,7 @@ until curl -sf "http://localhost:$PORT/demo.html" >/dev/null; do sleep 0.3; done
 PROFILE=$(mktemp -d)
 for scene in main chat terminal branch isolation settings; do
   "$CHROME" --headless=new --disable-gpu --hide-scrollbars --force-dark-mode \
-    --force-device-scale-factor=2 --window-size=1280,800 --virtual-time-budget=5000 \
+    --force-device-scale-factor=2 --window-size=1600,1000 --virtual-time-budget=5000 \
     --user-data-dir="$PROFILE" --screenshot="$OUT/$scene.png" \
     "http://localhost:$PORT/demo.html?scene=$scene" 2>/dev/null
   echo "$OUT/$scene.png"
