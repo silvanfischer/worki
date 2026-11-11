@@ -955,6 +955,7 @@ impl ProjectService {
             path.display()
         )));
         git::add_worktree(host, repo, &path, branch, base).await?;
+        git::set_branch_base(host, repo, branch, base).await?;
 
         let worktree = find_worktree(host, repo, &path).await?;
         if req.isolation != ProjectIsolation::Inherit {

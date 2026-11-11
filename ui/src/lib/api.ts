@@ -119,6 +119,8 @@ export interface ProjectPatch {
 export interface Worktree {
   path: string;
   branch: string | null;
+  /** What the branch was started from, when worki created it. */
+  base: string | null;
   head: string;
   isMain: boolean;
   locked: boolean;

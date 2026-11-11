@@ -24,9 +24,55 @@ pub async fn main_checkout(host: &Host, path: &Path) -> Result<PathBuf> {
 }
 
 pub async fn list_worktrees(host: &Host, repo: &Path) -> Result<Vec<Worktree>> {
-    Ok(parse_worktree_porcelain(
-        &host.git(repo, ["worktree", "list", "--porcelain"]).await?,
-    ))
+    let mut worktrees =
+        parse_worktree_porcelain(&host.git(repo, ["worktree", "list", "--porcelain"]).await?);
+    let bases = branch_bases(host, repo).await;
+    for wt in &mut worktrees {
+        wt.base = wt.branch.as_ref().and_then(|b| bases.get(b).cloned());
+    }
+    Ok(worktrees)
+}
+
+/// Kept in the branch's git config, so it follows the branch when it's renamed and goes away
+/// when it's deleted.
+const BASE_KEY: &str = "workibase";
+
+/// Records what a new branch was started from; the branch is compared with it later.
+pub async fn set_branch_base(host: &Host, repo: &Path, branch: &str, base: &str) -> Result<()> {
+    host.git(
+        repo,
+        [
+            "config",
+            "--local",
+            &format!("branch.{branch}.{BASE_KEY}"),
+            base,
+        ],
+    )
+    .await
+    .map(drop)
+}
+
+/// What each branch was started from, by branch name.
+async fn branch_bases(host: &Host, repo: &Path) -> std::collections::HashMap<String, String> {
+    let pattern = format!(r"^branch\..*\.{BASE_KEY}$");
+    let out = host
+        .git(repo, ["config", "--local", "--get-regexp", &pattern])
+        .await
+        .unwrap_or_default();
+    parse_branch_bases(&out)
+}
+
+fn parse_branch_bases(config: &str) -> std::collections::HashMap<String, String> {
+    config
+        .lines()
+        .filter_map(|line| {
+            let (key, base) = line.split_once(' ')?;
+            let branch = key
+                .strip_prefix("branch.")?
+                .strip_suffix(&format!(".{BASE_KEY}"))?;
+            Some((branch.to_owned(), base.trim().to_owned()))
+        })
+        .collect()
 }
 
 pub fn parse_worktree_porcelain(text: &str) -> Vec<Worktree> {
@@ -35,6 +81,7 @@ pub fn parse_worktree_porcelain(text: &str) -> Vec<Worktree> {
         let mut wt = Worktree {
             path: PathBuf::new(),
             branch: None,
+            base: None,
             head: String::new(),
             is_main: out.is_empty(),
             locked: false,
@@ -732,6 +779,16 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn reads_what_branches_were_started_from() {
+        let bases = parse_branch_bases(
+            "branch.feat/login.workibase origin/develop\nbranch.fix.v1.2.workibase main\n",
+        );
+        assert_eq!(bases["feat/login"], "origin/develop");
+        assert_eq!(bases["fix.v1.2"], "main");
+        assert_eq!(bases.len(), 2);
+    }
 
     #[test]
     fn parses_worktree_list() {

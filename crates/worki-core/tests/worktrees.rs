@@ -85,6 +85,8 @@ async fn project_and_worktree_lifecycle() {
 
     let wts = svc.list_worktrees(&project.id).await.unwrap();
     assert_eq!(wts.len(), 2);
+    assert_eq!(wts[0].base, None);
+    assert_eq!(wts[1].base.as_deref(), Some("main"));
 
     let wt_path = created.worktree.path.clone();
     let main_path = wts[0].path.clone();

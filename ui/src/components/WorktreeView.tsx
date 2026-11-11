@@ -26,7 +26,7 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
   const comments = useWorktreeComments(worktree.path);
   const scope = useUi((s) => s.changesScope);
   const setScope = useUi((s) => s.setChangesScope);
-  const base = useCompareBase(worktree.path, project.defaultBase);
+  const base = useCompareBase(worktree.path, worktree.base ?? project.defaultBase);
   const showCommits = useUi((s) => s.showCommits);
   const showPullRequests = useUi((s) => s.showPullRequests);
   const hasBranchTab = !!base;

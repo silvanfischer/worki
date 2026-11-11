@@ -107,6 +107,9 @@ pub struct ProjectPatch {
 pub struct Worktree {
     pub path: PathBuf,
     pub branch: Option<String>,
+    /// What the branch was started from, when worki created it.
+    #[serde(default)]
+    pub base: Option<String>,
     pub head: String,
     pub is_main: bool,
     pub locked: bool,
