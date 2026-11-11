@@ -171,7 +171,6 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
                     />
                   )}
                   {showCommits && <BranchCommits worktreePath={worktree.path} base={base} />}
-                  {showPullRequests && worktree.branch && !onBase && <PrSection worktree={worktree} base={base} />}
                   <Section
                     title={`Files changed vs ${base}${branch.data ? ` (${branch.data.files.length})` : ""}`}
                     aside={branch.data && <DiffStat insertions={branch.data.insertions} deletions={branch.data.deletions} />}
@@ -185,6 +184,7 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
                       onOpen={setDiffFile}
                     />
                   </Section>
+                  {showPullRequests && worktree.branch && !onBase && <PrSection worktree={worktree} base={base} />}
                 </>
               )}
             </div>
