@@ -1,9 +1,18 @@
 import { useEffect, useState } from "react";
 
-import { api, type ChatEvent, type ChatQuestion, type ModelChoice } from "./api";
+import { api, type BackgroundTask, type ChatEvent, type ChatQuestion, type ModelChoice } from "./api";
 
 export type ChatItem =
-  | { kind: "user"; key: string; text: string; attachments: string[] }
+  | {
+      kind: "user";
+      key: string;
+      text: string;
+      attachments: string[];
+      /** Set for messages sent in this session. */
+      messageId: string | null;
+      /** Sent while the agent was busy and not read by it yet. */
+      queued: boolean;
+    }
   | { kind: "text"; key: string; text: string; done: boolean }
   | {
       kind: "tool";
@@ -37,6 +46,11 @@ export interface Chat {
   exited: { code: number; error: string | null } | null;
   /** Open permission requests, oldest first. */
   open: Extract<ChatItem, { kind: "permission" }>[];
+  /** What the agent does between tool calls, such as `thinking`; null once the turn ends. */
+  status: { status: string; tool: string | null } | null;
+  /** When the current turn started, in ms. */
+  turnStarted: number | null;
+  background: (BackgroundTask & { started: number })[];
 }
 
 /** Builds the conversation from chat events. A changed item is replaced by a new object, so
@@ -49,12 +63,35 @@ export class ChatModel {
   private exited: Chat["exited"] = null;
   private settings: Chat["settings"] = null;
   private options: Chat["options"] = null;
+  private status: Chat["status"] = null;
+  private turnStarted: number | null = null;
+  private background: Chat["background"] = [];
+  /** Item keys of the messages the agent hasn't read yet, by message id. */
+  private unread = new Map<string, string>();
   private seq = 0;
 
   apply(event: ChatEvent) {
     switch (event.type) {
-      case "user":
-        this.push(null, { kind: "user", key: `u${this.seq++}`, text: event.text, attachments: event.attachments ?? [] });
+      case "user": {
+        const key = `u${this.seq++}`;
+        const messageId = event.id ?? null;
+        const queued = messageId !== null && this.turnStarted !== null;
+        if (messageId) this.unread.set(messageId, key);
+        if (!queued) this.turnStarted = Date.now();
+        this.push(null, {
+          kind: "user",
+          key,
+          text: event.text,
+          attachments: event.attachments ?? [],
+          messageId,
+          queued,
+        });
+        break;
+      }
+      case "userRead":
+        this.turnStarted ??= Date.now();
+        this.markRead(this.unread.get(event.id));
+        this.unread.delete(event.id);
         break;
       case "textDelta": {
         const item = this.byKey.get(event.id);
@@ -102,12 +139,27 @@ export class ChatModel {
       case "notice":
         this.push(null, { kind: "notice", key: `n${this.seq++}`, text: event.text, tone: "info" });
         break;
+      case "status":
+        this.status = { status: event.status, tool: event.tool };
+        break;
+      case "backgroundTasks": {
+        const seen = new Map(this.background.map((t) => [t.id, t.started]));
+        this.background = event.tasks.map((t) => ({ ...t, started: seen.get(t.id) ?? Date.now() }));
+        break;
+      }
       case "turnEnded":
+        this.status = null;
+        this.turnStarted = null;
         this.closeOpen();
         if (event.error)
           this.push(null, { kind: "notice", key: `n${this.seq++}`, text: event.error, tone: "error" });
         break;
       case "exited":
+        this.status = null;
+        this.turnStarted = null;
+        this.background = [];
+        for (const key of this.unread.values()) this.markRead(key);
+        this.unread.clear();
         this.closeOpen();
         this.exited = { code: event.code, error: event.error };
         break;
@@ -130,6 +182,9 @@ export class ChatModel {
       options: this.options,
       exited: this.exited,
       open,
+      status: this.status,
+      turnStarted: this.turnStarted,
+      background: this.background,
     };
   }
 
@@ -153,6 +208,11 @@ export class ChatModel {
     }
     const at = this.items.findIndex((i) => i.key === item.key);
     if (at >= 0) this.items[at] = item;
+  }
+
+  private markRead(key: string | undefined) {
+    const item = key ? this.byKey.get(key) : undefined;
+    if (item?.kind === "user" && item.queued) this.replace({ ...item, queued: false });
   }
 
   private closeOpen() {

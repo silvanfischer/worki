@@ -34,10 +34,16 @@ pub enum ChatEvent {
         models: Vec<ModelChoice>,
         permission_modes: Vec<String>,
     },
-    /// The user's message, as worki sent it, with the names of what was attached.
+    /// The user's message, as worki sent it, with the names of what was attached. `id` is set
+    /// for a message sent in this session, which the agent then reads (`UserRead`), possibly
+    /// only after its current step.
     User {
+        id: Option<String>,
         text: String,
         attachments: Vec<String>,
+    },
+    UserRead {
+        id: String,
     },
     /// A piece of text the agent is writing; `id` names the text block it belongs to.
     TextDelta {
@@ -72,16 +78,43 @@ pub enum ChatEvent {
         questions: Vec<Question>,
     },
     /// The permission request was answered (here or by the agent giving up on it).
-    PermissionResolved { request_id: String, allowed: bool },
+    PermissionResolved {
+        request_id: String,
+        allowed: bool,
+    },
     /// Something the agent reports outside the conversation, such as an interruption.
-    Notice { text: String },
+    Notice {
+        text: String,
+    },
+    /// What the main agent is doing between tool calls: `requesting`, `thinking`, `writing`,
+    /// or `tool` while it writes the input of the tool `tool`.
+    Status {
+        status: String,
+        tool: Option<String>,
+    },
+    /// The jobs the agent runs in the background, all of them each time the list changes.
+    BackgroundTasks {
+        tasks: Vec<BackgroundTask>,
+    },
     TurnEnded {
         ok: bool,
         interrupted: bool,
         error: Option<String>,
     },
     /// The agent process ended; `error` holds the end of what it printed when it failed.
-    Exited { code: u32, error: Option<String> },
+    Exited {
+        code: u32,
+        error: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct BackgroundTask {
+    pub id: String,
+    /// Such as `local_bash` or `local_agent`.
+    pub kind: String,
+    pub description: String,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -230,12 +263,24 @@ pub trait ChatProtocol: Send {
         Vec::new()
     }
 
-    fn message(&mut self, text: &str, attachments: &[Attachment]) -> Vec<String>;
+    /// `id` names the message for `UserRead`.
+    fn message(&mut self, id: &str, text: &str, attachments: &[Attachment]) -> Vec<String>;
 
     /// `None` when `request_id` isn't an open request.
     fn answer(&mut self, request_id: &str, answer: &PermissionAnswer) -> Option<Vec<String>>;
 
     fn interrupt(&mut self) -> Vec<String>;
+
+    /// Moves the commands the agent runs in the foreground to the background, so it goes on
+    /// with queued messages; `None` when the agent can't.
+    fn background(&mut self) -> Option<Vec<String>> {
+        None
+    }
+
+    /// Stops a job the agent runs in the background; `None` when the agent can't.
+    fn stop_task(&mut self, _task_id: &str) -> Option<Vec<String>> {
+        None
+    }
 
     /// `None` when the agent can't change this setting.
     fn set(&mut self, setting: &ChatSetting) -> Option<Vec<String>>;

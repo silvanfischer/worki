@@ -126,6 +126,7 @@ const chatEvents: object[] = [
   { type: "text", id: "m1:0", parent: null, text: "I'll look at how the summary handles an empty cart first." },
   { type: "toolCall", id: "t1", name: "Read", parent: null, input: { file_path: `${checkout}/src/checkout/Summary.tsx` } },
   { type: "toolResult", id: "t1", parent: null, isError: false, output: "export function Summary({ cart }: Props) {\n  const subtotal = …" },
+  { type: "backgroundTasks", tasks: [{ id: "b1", kind: "local_bash", description: "Start the dev server" }] },
   {
     type: "toolCall",
     id: "t2",
@@ -351,7 +352,10 @@ function handle(cmd: string, args: Record<string, any>): unknown {
       return 1;
     }
     case "send_chat_message": {
-      sendChat({ type: "user", text: args.text, attachments: (args.attachments ?? []).map((a: { path?: string; name?: string }) => a.name ?? a.path?.split("/").pop()) });
+      sendChat(
+        { type: "user", id: `m${now}`, text: args.text, attachments: (args.attachments ?? []).map((a: { path?: string; name?: string }) => a.name ?? a.path?.split("/").pop()) },
+        { type: "userRead", id: `m${now}` },
+      );
       let i = 0;
       const words = "Sure — I'll take care of that next.".split(" ");
       const tick = () => {
@@ -407,6 +411,9 @@ function handle(cmd: string, args: Record<string, any>): unknown {
         "origin/feat/search-filters",
         "origin/fix/checkout-tax-rounding",
       ];
+    case "stop_chat_tasks":
+      sendChat({ type: "backgroundTasks", tasks: [] });
+      return null;
     case "interrupt_chat":
       sendChat({ type: "notice", text: "Request interrupted by user" }, { type: "turnEnded", ok: false, interrupted: true, error: null });
       return null;

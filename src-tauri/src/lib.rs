@@ -148,6 +148,8 @@ pub fn run() {
             sessions::send_chat_message,
             sessions::answer_chat_permission,
             sessions::interrupt_chat,
+            sessions::background_chat_commands,
+            sessions::stop_chat_tasks,
             sessions::session_continue_command,
             sessions::change_chat_setting,
             sessions::attach_session,

@@ -702,6 +702,20 @@ pub fn change_chat_setting(
 }
 
 #[tauri::command]
+pub fn stop_chat_tasks(
+    state: State<'_, AppState>,
+    id: String,
+    task_ids: Vec<String>,
+) -> CmdResult<()> {
+    state.sessions.stop_tasks(&id, &task_ids).map_err(err)
+}
+
+#[tauri::command]
+pub fn background_chat_commands(state: State<'_, AppState>, id: String) -> CmdResult<()> {
+    state.sessions.background(&id).map_err(err)
+}
+
+#[tauri::command]
 pub fn interrupt_chat(state: State<'_, AppState>, id: String) -> CmdResult<()> {
     state.sessions.interrupt(&id).map_err(err)
 }

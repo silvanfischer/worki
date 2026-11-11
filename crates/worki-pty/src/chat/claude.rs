@@ -7,8 +7,8 @@ use std::collections::HashMap;
 use serde_json::{json, Value};
 
 use super::{
-    Attachment, ChatEvent, ChatProtocol, ChatSetting, ModelChoice, PermissionAnswer, Question,
-    StateUpdate,
+    Attachment, BackgroundTask, ChatEvent, ChatProtocol, ChatSetting, ModelChoice,
+    PermissionAnswer, Question, StateUpdate,
 };
 
 /// Claude Code's permission modes worki offers. Skipping all prompts isn't among them: Claude
@@ -73,6 +73,12 @@ impl ClaudeProtocol {
             let error = response["error"].as_str().unwrap_or("the agent refused");
             return match request["subtype"].as_str() {
                 Some("initialize" | "interrupt") | None => Vec::new(),
+                Some("background_tasks") => vec![ChatEvent::Notice {
+                    text: format!("Couldn't move the command to the background: {error}"),
+                }],
+                Some("stop_task") => vec![ChatEvent::Notice {
+                    text: format!("Couldn't stop the background job: {error}"),
+                }],
                 Some(what) => vec![ChatEvent::Notice {
                     text: format!("Couldn't change the setting ({what}): {error}"),
                 }],
@@ -214,6 +220,19 @@ impl ClaudeProtocol {
                 if let Some(current) = self.streaming.get_mut(&parent) {
                     current.1 = event["index"].as_u64().unwrap_or(0);
                 }
+                if parent.is_none() {
+                    let block = &event["content_block"];
+                    let (status, tool) = match block["type"].as_str() {
+                        Some("thinking" | "redacted_thinking") => ("thinking", None),
+                        Some("text") => ("writing", None),
+                        Some("tool_use") => ("tool", block["name"].as_str().map(str::to_owned)),
+                        _ => return Vec::new(),
+                    };
+                    return vec![ChatEvent::Status {
+                        status: status.into(),
+                        tool,
+                    }];
+                }
             }
             Some("content_block_delta") if event["delta"]["type"] == "text_delta" => {
                 let Some((id, _)) = self.streaming.get(&parent) else {
@@ -337,7 +356,7 @@ impl ChatProtocol for ClaudeProtocol {
         vec![self.control(json!({ "subtype": "initialize", "hooks": null }))]
     }
 
-    fn message(&mut self, text: &str, attachments: &[Attachment]) -> Vec<String> {
+    fn message(&mut self, id: &str, text: &str, attachments: &[Attachment]) -> Vec<String> {
         let mut content: Vec<Value> = attachments
             .iter()
             .map(|a| match a {
@@ -362,6 +381,7 @@ impl ChatProtocol for ClaudeProtocol {
             "message": { "role": "user", "content": content },
             "parent_tool_use_id": null,
             "session_id": self.session_id,
+            "uuid": id,
         })
         .to_string()]
     }
@@ -393,6 +413,16 @@ impl ChatProtocol for ClaudeProtocol {
         vec![self.control(json!({ "subtype": "interrupt" }))]
     }
 
+    fn background(&mut self) -> Option<Vec<String>> {
+        Some(vec![self.control(json!({ "subtype": "background_tasks" }))])
+    }
+
+    fn stop_task(&mut self, task_id: &str) -> Option<Vec<String>> {
+        Some(vec![self.control(
+            json!({ "subtype": "stop_task", "task_id": task_id }),
+        )])
+    }
+
     fn set(&mut self, setting: &ChatSetting) -> Option<Vec<String>> {
         let request = match setting {
             ChatSetting::Model(model) => json!({ "subtype": "set_model", "model": model }),
@@ -422,8 +452,33 @@ impl ChatProtocol for ClaudeProtocol {
                 self.changed = true;
                 vec![self.session()]
             }
+            Some("system") if msg["subtype"] == "status" => match msg["status"].as_str() {
+                Some(status) if !status.is_empty() => vec![ChatEvent::Status {
+                    status: status.to_owned(),
+                    tool: None,
+                }],
+                _ => Vec::new(),
+            },
+            Some("system") if msg["subtype"] == "background_tasks_changed" => {
+                let tasks = msg["tasks"].as_array().cloned().unwrap_or_default();
+                let str = |t: &Value, key: &str| t[key].as_str().unwrap_or_default().to_owned();
+                vec![ChatEvent::BackgroundTasks {
+                    tasks: tasks
+                        .iter()
+                        .map(|t| BackgroundTask {
+                            id: str(t, "task_id"),
+                            kind: str(t, "task_type"),
+                            description: str(t, "description"),
+                        })
+                        .collect(),
+                }]
+            }
             Some("stream_event") => self.stream_event(&msg, parent),
             Some("assistant") => self.assistant(&msg, parent),
+            Some("user") if msg["isReplay"] == true => match msg["uuid"].as_str() {
+                Some(id) => vec![ChatEvent::UserRead { id: id.to_owned() }],
+                None => Vec::new(),
+            },
             Some("user") => self.user(&msg, parent),
             Some("result") => self.result(&msg),
             Some("control_request") => self.control_request(&msg),
@@ -552,6 +607,7 @@ fn past_user_message(content: &Value) -> Vec<ChatEvent> {
         events.insert(
             0,
             ChatEvent::User {
+                id: None,
                 text: text.join("\n\n"),
                 attachments,
             },
@@ -636,6 +692,14 @@ mod tests {
                     permission_mode: Some("default".into()),
                     effort: None,
                 },
+                ChatEvent::Status {
+                    status: "requesting".into(),
+                    tool: None,
+                },
+                ChatEvent::Status {
+                    status: "tool".into(),
+                    tool: Some("Bash".into()),
+                },
                 ChatEvent::ToolCall {
                     id: "toolu_1".into(),
                     name: "Bash".into(),
@@ -647,6 +711,14 @@ mod tests {
                     output: "hello.txt".into(),
                     is_error: false,
                     parent: None,
+                },
+                ChatEvent::Status {
+                    status: "thinking".into(),
+                    tool: None,
+                },
+                ChatEvent::Status {
+                    status: "writing".into(),
+                    tool: None,
                 },
                 ChatEvent::TextDelta {
                     id: "msg_2:1".into(),
@@ -691,6 +763,70 @@ mod tests {
             }]
         );
         assert_eq!(p.take_state(), None);
+    }
+
+    #[test]
+    fn reports_when_a_queued_message_is_read() {
+        let mut p = ClaudeProtocol::new("s");
+        let events = p.parse(
+            r#"{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Now run: echo second"}]},"session_id":"s","parent_tool_use_id":null,"uuid":"u1","isReplay":true}"#,
+        );
+        assert_eq!(events, [ChatEvent::UserRead { id: "u1".into() }]);
+    }
+
+    #[test]
+    fn stops_a_background_task() {
+        let mut p = ClaudeProtocol::new("s");
+        let request: Value = serde_json::from_str(&p.stop_task("byn260eu5").unwrap()[0]).unwrap();
+        assert_eq!(
+            request["request"],
+            json!({ "subtype": "stop_task", "task_id": "byn260eu5" })
+        );
+    }
+
+    #[test]
+    fn moves_foreground_commands_to_the_background() {
+        let mut p = ClaudeProtocol::new("s");
+        let sent = p.message("u1", "run cms tests", &[]);
+        assert_eq!(
+            serde_json::from_str::<Value>(&sent[0]).unwrap()["uuid"],
+            "u1"
+        );
+        let request: Value = serde_json::from_str(&p.background().unwrap()[0]).unwrap();
+        assert_eq!(request["request"], json!({ "subtype": "background_tasks" }));
+        let id = request["request_id"].as_str().unwrap();
+        let events = p.parse(
+            &json!({ "type": "control_response", "response": { "subtype": "error", "request_id": id, "error": "disabled" } })
+                .to_string(),
+        );
+        assert_eq!(
+            events,
+            [ChatEvent::Notice {
+                text: "Couldn't move the command to the background: disabled".into()
+            }]
+        );
+    }
+
+    #[test]
+    fn lists_background_tasks() {
+        let mut p = ClaudeProtocol::new("s");
+        let events = p.parse(
+            r#"{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"b0hq7vzs2","run_id":"r","task_type":"local_bash","description":"Sleep for four seconds"}],"session_id":"s"}"#,
+        );
+        assert_eq!(
+            events,
+            [ChatEvent::BackgroundTasks {
+                tasks: vec![BackgroundTask {
+                    id: "b0hq7vzs2".into(),
+                    kind: "local_bash".into(),
+                    description: "Sleep for four seconds".into(),
+                }],
+            }]
+        );
+        let events = p.parse(
+            r#"{"type":"system","subtype":"background_tasks_changed","tasks":[],"session_id":"s"}"#,
+        );
+        assert_eq!(events, [ChatEvent::BackgroundTasks { tasks: vec![] }]);
     }
 
     #[test]
@@ -891,6 +1027,7 @@ mod tests {
             events,
             [
                 ChatEvent::User {
+                    id: None,
                     text: "Fix it".into(),
                     attachments: vec!["image".into(), "notes.md".into()],
                 },
@@ -927,7 +1064,7 @@ mod tests {
         let mut p = ClaudeProtocol::new("s");
         let start: Value = serde_json::from_str(&p.start()[0]).unwrap();
         assert_eq!(start["request"]["subtype"], "initialize");
-        let message: Value = serde_json::from_str(&p.message("hi", &[])[0]).unwrap();
+        let message: Value = serde_json::from_str(&p.message("m1", "hi", &[])[0]).unwrap();
         assert_eq!(message["type"], "user");
         assert_eq!(message["message"]["content"][0]["text"], "hi");
         let attachments = [
@@ -941,7 +1078,8 @@ mod tests {
                 text: "# Notes".into(),
             },
         ];
-        let message: Value = serde_json::from_str(&p.message("look", &attachments)[0]).unwrap();
+        let message: Value =
+            serde_json::from_str(&p.message("m1", "look", &attachments)[0]).unwrap();
         let content = &message["message"]["content"];
         assert_eq!(content[0]["source"]["media_type"], "image/png");
         assert_eq!(

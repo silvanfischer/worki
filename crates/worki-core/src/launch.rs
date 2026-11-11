@@ -82,7 +82,7 @@ pub fn chat_request(
             };
             format!(
                 "{} exec {} -p --input-format stream-json --output-format stream-json --verbose \
---include-partial-messages --permission-prompt-tool stdio --append-system-prompt {}{sandbox} \"$@\"",
+--include-partial-messages --replay-user-messages --permission-prompt-tool stdio --append-system-prompt {}{sandbox} \"$@\"",
                 claude_conversation(session_id),
                 profile.command,
                 shell_quote(CHAT_PROMPT),
@@ -590,7 +590,7 @@ mod tests {
         assert_eq!(
             String::from_utf8(out.stdout).unwrap(),
             "--model|opus|-p|--input-format|stream-json|--output-format|stream-json|--verbose|\
---include-partial-messages|--permission-prompt-tool|stdio|--append-system-prompt|PROMPT|\
+--include-partial-messages|--replay-user-messages|--permission-prompt-tool|stdio|--append-system-prompt|PROMPT|\
 --settings|{\"sandbox\":{\"enabled\":false}}|--session-id|abc|"
                 .replace("PROMPT", CHAT_PROMPT)
         );

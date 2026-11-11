@@ -3,14 +3,17 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import clsx from "clsx";
 import {
   ArrowUp,
+  Bot,
   Check,
   ChevronRight,
   CircleAlert,
+  Clock,
   LoaderCircle,
   MessageCircleQuestion,
   Paperclip,
   ShieldQuestion,
   Square,
+  SquareTerminal,
   X,
 } from "lucide-react";
 import { isValidElement, memo, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -72,10 +75,7 @@ export function ChatView({ session }: { session: SessionInfo }) {
             <Item key={item.key} item={item} session={session} />
           ))}
           {session.activity === "working" && chat.open.length === 0 && (
-            <div className="flex items-center gap-2 fs-chat-xs text-muted">
-              <LoaderCircle size={12} className="animate-spin" />
-              Working…
-            </div>
+            <Activity chat={chat} root={session.worktreePath} />
           )}
           {chat.exited?.error && <ErrorText>{chat.exited.error}</ErrorText>}
         </div>
@@ -88,21 +88,7 @@ export function ChatView({ session }: { session: SessionInfo }) {
 const Item = memo(function Item({ item, session }: { item: ChatItem; session: SessionInfo }) {
   switch (item.kind) {
     case "user":
-      return (
-        <div className="flex max-w-[85%] flex-col gap-1.5 self-end rounded-lg bg-selected px-3 py-2 fs-chat whitespace-pre-wrap">
-          {item.text}
-          {item.attachments.length > 0 && (
-            <div className="flex flex-wrap gap-1">
-              {item.attachments.map((name, i) => (
-                <span key={i} className="flex items-center gap-1 rounded bg-hover px-1.5 py-0.5 fs-chat-xs text-muted">
-                  <Paperclip size={10} />
-                  {name}
-                </span>
-              ))}
-            </div>
-          )}
-        </div>
-      );
+      return <UserMessage item={item} session={session} />;
     case "text":
       return <MarkdownText text={item.text} />;
     case "tool":
@@ -190,6 +176,157 @@ function MarkdownText({ text }: { text: string }) {
 function relative(path: unknown, root: string): string {
   const p = typeof path === "string" ? path : "";
   return p.startsWith(`${root}/`) ? p.slice(root.length + 1) : p;
+}
+
+type UserItem = Extract<ChatItem, { kind: "user" }>;
+
+function UserMessage({ item, session }: { item: UserItem; session: SessionInfo }) {
+  return (
+    <div
+      className={clsx(
+        "flex max-w-[85%] flex-col gap-1.5 self-end rounded-lg px-3 py-2 fs-chat whitespace-pre-wrap",
+        item.queued ? "border border-dashed border-line bg-hover" : "bg-selected",
+      )}
+    >
+      {item.text}
+      {item.attachments.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {item.attachments.map((name, i) => (
+            <span key={i} className="flex items-center gap-1 rounded bg-hover px-1.5 py-0.5 fs-chat-xs text-muted">
+              <Paperclip size={10} />
+              {name}
+            </span>
+          ))}
+        </div>
+      )}
+      {item.queued && <QueuedNote session={session} />}
+    </div>
+  );
+}
+
+/** Claude reads a message sent mid-turn only after its current step, which can be a long
+ * command. Stopping that command, or moving it to the background, makes it read the message
+ * now. */
+function QueuedNote({ session }: { session: SessionInfo }) {
+  const [error, setError] = useState<string | null>(null);
+  const button = "rounded border border-line bg-elevated px-1.5 py-0.5 font-medium text-fg hover:bg-hover disabled:opacity-50";
+  return (
+    <div className="flex flex-col gap-1 font-sans whitespace-normal">
+      <div className="flex flex-wrap items-center gap-2 fs-chat-xs text-muted">
+        <Clock size={11} className="shrink-0" />
+        <span>Queued until the current step finishes</span>
+        <button
+          onClick={() => api.interruptChat(session.id).catch((e) => setError(errorMessage(e)))}
+          title="Stop the current step so the agent reads this now"
+          className={button}
+        >
+          Send now
+        </button>
+        <button
+          onClick={() => api.backgroundChatCommands(session.id).catch((e) => setError(errorMessage(e)))}
+          title="Move the running command to the background, where it keeps going, and start on this now"
+          className={button}
+        >
+          Run alongside
+        </button>
+      </div>
+      <ErrorText>{error}</ErrorText>
+    </div>
+  );
+}
+
+function useNow(active: boolean) {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    if (!active) return;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [active]);
+  return now;
+}
+
+function elapsed(since: number, now: number): string {
+  const s = Math.max(0, Math.floor((now - since) / 1000));
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
+}
+
+/** The tool call that's running, followed by what its subagent is running, if any. */
+function runningTools(items: ChatItem[]): Tool[] {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const item = items[i];
+    if (item.kind === "tool" && !item.result) return [item, ...runningTools(item.children)];
+  }
+  return [];
+}
+
+const STATUS_LABELS: Record<string, string> = {
+  requesting: "Waiting for the model",
+  thinking: "Thinking",
+  writing: "Writing",
+  compacting: "Compacting the conversation",
+};
+
+function activityLabel(chat: Chat, root: string): string {
+  const tools = runningTools(chat.items);
+  if (tools.length > 0)
+    return tools.map((t) => [t.name, summary(t.name, t.input, root)].filter(Boolean).join(" ")).join(" › ");
+  const status = chat.status;
+  if (!status) return "Working";
+  if (status.status === "tool") return status.tool ? `Preparing ${status.tool}` : "Preparing a tool call";
+  return STATUS_LABELS[status.status] ?? status.status.charAt(0).toUpperCase() + status.status.slice(1);
+}
+
+/** What the agent is doing right now, and for how long the turn has run. */
+function Activity({ chat, root }: { chat: Chat; root: string }) {
+  const now = useNow(true);
+  return (
+    <div className="flex min-w-0 items-center gap-2 fs-chat-xs text-muted">
+      <LoaderCircle size={12} className="shrink-0 animate-spin" />
+      <span className="min-w-0 truncate">{activityLabel(chat, root)}…</span>
+      {chat.turnStarted && <span className="shrink-0 text-faint tabular-nums">{elapsed(chat.turnStarted, now)}</span>}
+    </div>
+  );
+}
+
+function BackgroundJobs({ tasks, onStop }: { tasks: Chat["background"]; onStop: (ids: string[]) => void }) {
+  const [open, setOpen] = useState(true);
+  const now = useNow(open);
+  return (
+    <div className="flex flex-col">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-fit items-center gap-1.5 rounded px-1 py-0.5 fs-chat-xs text-muted hover:bg-hover hover:text-fg"
+      >
+        <ChevronRight size={12} className={clsx("shrink-0 transition-transform", open && "rotate-90")} />
+        <LoaderCircle size={11} className="shrink-0 animate-spin" />
+        {tasks.length === 1 ? "1 background job" : `${tasks.length} background jobs`}
+      </button>
+      {open && (
+        <ul className="ml-4 flex flex-col gap-0.5 border-l border-line py-0.5 pl-3">
+          {tasks.map((t) => (
+            <li key={t.id} className="flex min-w-0 items-center gap-2 fs-chat-xs">
+              {t.kind.includes("agent") ? (
+                <Bot size={12} className="shrink-0 text-muted" />
+              ) : (
+                <SquareTerminal size={12} className="shrink-0 text-muted" />
+              )}
+              <span className="min-w-0 truncate">{t.description || t.id}</span>
+              <span className="shrink-0 text-faint tabular-nums">{elapsed(t.started, now)}</span>
+              <button
+                aria-label={`Stop ${t.description || t.id}`}
+                title="Stop this job"
+                onClick={() => onStop([t.id])}
+                className="flex size-4 shrink-0 items-center justify-center rounded text-faint hover:bg-hover hover:text-fg"
+              >
+                <X size={11} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
 }
 
 /** One line saying what the tool call does. */
@@ -536,10 +673,16 @@ function Composer({ session, chat, onSend }: { session: SessionInfo; chat: Chat;
   }
 
   const stop = () => api.interruptChat(session.id).catch((e) => setError(errorMessage(e)));
+  const stopJobs = (ids: string[]) => api.stopChatTasks(session.id, ids).catch((e) => setError(errorMessage(e)));
+  const stopAll = () => {
+    if (busy) stop();
+    if (chat.background.length > 0) stopJobs(chat.background.map((t) => t.id));
+  };
 
   return (
     <div className="shrink-0 border-t border-line px-5 py-3">
       <div className="mx-auto flex max-w-5xl flex-col gap-1.5">
+        {chat.background.length > 0 && <BackgroundJobs tasks={chat.background} onStop={stopJobs} />}
         <div className="flex flex-col gap-1.5 rounded-lg border border-line bg-panel px-2 py-1.5 focus-within:border-accent">
           {attached.length > 0 && (
             <div className="flex flex-wrap gap-1.5 px-1 pt-0.5">
@@ -577,9 +720,9 @@ function Composer({ session, chat, onSend }: { session: SessionInfo; chat: Chat;
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
                 send();
-              } else if (e.key === "Escape" && busy) {
+              } else if (e.key === "Escape" && (busy || chat.background.length > 0)) {
                 e.preventDefault();
-                stop();
+                stopAll();
               }
             }}
             placeholder={busy ? "Add to what the agent is doing…" : `Message ${session.title}`}
@@ -587,8 +730,8 @@ function Composer({ session, chat, onSend }: { session: SessionInfo; chat: Chat;
           />
           {busy && !ready ? (
             <button
-              onClick={stop}
-              title="Stop (Esc)"
+              onClick={stopAll}
+              title={chat.background.length > 0 ? "Stop, including background jobs (Esc)" : "Stop (Esc)"}
               className="flex size-7 shrink-0 items-center justify-center rounded-md bg-fg text-panel hover:opacity-80"
             >
               <Square size={11} fill="currentColor" />

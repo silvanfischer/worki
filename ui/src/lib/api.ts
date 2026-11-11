@@ -284,10 +284,18 @@ export interface ChatQuestion {
 
 /** What happened in a chat session, the same for every agent. `parent` names the tool call a
  * subagent works for. */
+export interface BackgroundTask {
+  id: string;
+  /** Such as `local_bash` or `local_agent`. */
+  kind: string;
+  description: string;
+}
+
 export type ChatEvent =
   | { type: "session"; model: string | null; permissionMode: string | null; effort: string | null }
   | { type: "options"; models: ModelChoice[]; permissionModes: string[] }
-  | { type: "user"; text: string; attachments: string[] }
+  | { type: "user"; id: string | null; text: string; attachments: string[] }
+  | { type: "userRead"; id: string }
   | { type: "textDelta"; id: string; text: string; parent: string | null }
   | { type: "text"; id: string; text: string; parent: string | null }
   | { type: "toolCall"; id: string; name: string; input: unknown; parent: string | null }
@@ -295,6 +303,8 @@ export type ChatEvent =
   | { type: "permission"; requestId: string; tool: string; input: unknown; questions: ChatQuestion[] }
   | { type: "permissionResolved"; requestId: string; allowed: boolean }
   | { type: "notice"; text: string }
+  | { type: "status"; status: string; tool: string | null }
+  | { type: "backgroundTasks"; tasks: BackgroundTask[] }
   | { type: "turnEnded"; ok: boolean; interrupted: boolean; error: string | null }
   | { type: "exited"; code: number; error: string | null };
 
@@ -427,6 +437,9 @@ export const api = {
   answerChatPermission: (id: string, requestId: string, answer: PermissionAnswer) =>
     invoke<void>("answer_chat_permission", { id, requestId, answer }),
   interruptChat: (id: string) => invoke<void>("interrupt_chat", { id }),
+  /** Moves the agent's foreground commands to the background, so it reads queued messages now. */
+  backgroundChatCommands: (id: string) => invoke<void>("background_chat_commands", { id }),
+  stopChatTasks: (id: string, taskIds: string[]) => invoke<void>("stop_chat_tasks", { id, taskIds }),
   /** The command that continues the session in the user's own terminal, where it ran. */
   sessionContinueCommand: (id: string) => invoke<string>("session_continue_command", { id }),
   changeChatSetting: (id: string, setting: ChatSetting) => invoke<void>("change_chat_setting", { id, setting }),

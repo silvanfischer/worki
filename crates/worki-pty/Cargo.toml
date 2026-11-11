@@ -10,7 +10,7 @@ base64 = "0.23"
 serde.workspace = true
 serde_json.workspace = true
 portable-pty.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
-uuid.workspace = true

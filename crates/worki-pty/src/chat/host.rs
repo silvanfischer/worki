@@ -195,15 +195,47 @@ impl SessionHost {
     pub fn send_message(&self, id: &str, text: &str, attachments: &[Attachment]) -> Result<()> {
         let session = self.get(id)?;
         let chat = session.io.chat().context("not a chat session")?;
-        let lines = lock(&chat.protocol).message(text, attachments);
+        let message_id = uuid::Uuid::new_v4().to_string();
+        let lines = lock(&chat.protocol).message(&message_id, text, attachments);
         emit(
             &session,
             &self.on_change,
             &[ChatEvent::User {
+                id: Some(message_id),
                 text: text.into(),
                 attachments: attachments.iter().map(|a| a.name().to_owned()).collect(),
             }],
         );
+        chat.send(&lines)
+    }
+
+    /// Stops jobs the chat agent runs in the background; a `BackgroundTasks` event then lists
+    /// the ones left.
+    pub fn stop_tasks(&self, id: &str, task_ids: &[String]) -> Result<()> {
+        let session = self.get(id)?;
+        let chat = session.io.chat().context("not a chat session")?;
+        let mut lines = Vec::new();
+        {
+            let mut protocol = lock(&chat.protocol);
+            for task_id in task_ids {
+                lines.extend(
+                    protocol
+                        .stop_task(task_id)
+                        .ok_or_else(|| anyhow!("this agent can't stop background jobs"))?,
+                );
+            }
+        }
+        chat.send(&lines)
+    }
+
+    /// Moves the chat agent's foreground commands to the background; they keep running and
+    /// the agent reads its queued messages.
+    pub fn background(&self, id: &str) -> Result<()> {
+        let session = self.get(id)?;
+        let chat = session.io.chat().context("not a chat session")?;
+        let lines = lock(&chat.protocol)
+            .background()
+            .ok_or_else(|| anyhow!("this agent can't move commands to the background"))?;
         chat.send(&lines)
     }
 
@@ -321,7 +353,7 @@ fn emit(session: &Session, on_change: &OnChange, events: &[ChatEvent]) {
         let mut turn = lock(&chat.turn);
         for event in events {
             match event {
-                ChatEvent::User { .. } => turn.working = true,
+                ChatEvent::User { .. } | ChatEvent::UserRead { .. } => turn.working = true,
                 ChatEvent::Permission {
                     request_id,
                     tool,
@@ -412,7 +444,7 @@ mod tests {
         fn start(&mut self) -> Vec<String> {
             vec!["ready".into()]
         }
-        fn message(&mut self, text: &str, _: &[Attachment]) -> Vec<String> {
+        fn message(&mut self, _: &str, text: &str, _: &[Attachment]) -> Vec<String> {
             vec![format!("say {text}"), "ask".into()]
         }
         fn answer(&mut self, request_id: &str, _: &PermissionAnswer) -> Option<Vec<String>> {
