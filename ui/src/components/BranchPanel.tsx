@@ -348,7 +348,7 @@ function CommitRows({ commits }: { commits: CommitInfo[] }) {
   return (
     <div className="flex max-h-48 flex-col overflow-y-auto">
       {commits.map((c) => (
-        <div key={c.sha} className="flex h-8 items-center gap-2 fs-panel" title={`${c.sha.slice(0, 8)} · ${c.author}`}>
+        <div key={c.sha} className="flex h-7 items-center gap-2 fs-panel" title={`${c.sha.slice(0, 8)} · ${c.author}`}>
           <GitCommitHorizontal size={12} className="shrink-0 text-faint" />
           <span className="min-w-0 flex-1 truncate">{c.subject}</span>
           <span className="shrink-0 fs-panel-sm text-faint">{ago(c.time)}</span>

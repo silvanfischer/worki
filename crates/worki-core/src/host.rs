@@ -1,11 +1,14 @@
 //! Where a project's files live: this Mac, or a machine reached over SSH. Git and the few file
 //! operations worki does on repositories go through here.
 
+use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Output;
+use std::sync::Mutex;
 
 use tokio::process::Command;
+use worki_isolation::host_which;
 use worki_isolation::ssh::{remote_sh, shell_quote, ssh_command, SshTarget};
 
 use crate::model::Project;
@@ -87,15 +90,20 @@ impl Host {
         }
     }
 
-    /// Runs `program args…` in `dir` through the user's login shell, so tools installed with
-    /// Homebrew and the like (e.g. `gh`) are on PATH even though worki started from the Dock.
+    /// Runs `program args…` in `dir`. Locally, `program` is found the way the user's own terminal
+    /// finds it (`host_which`), since worki started from the Dock has only the system PATH.
     pub async fn tool_output(&self, dir: &Path, program: &str, args: &[&str]) -> Result<Output> {
         let script = "cd \"$1\" && shift && exec \"$@\"";
-        let dir = dir.to_string_lossy();
-        let mut full: Vec<&str> = vec![&dir, program];
+        let dir_text = dir.to_string_lossy();
+        let mut full: Vec<&str> = vec![&dir_text, program];
         full.extend(args);
         match self {
             Self::Local => {
+                if let Some(path) = local_tool(program).await {
+                    let mut cmd = Command::new(path);
+                    cmd.args(args).current_dir(dir);
+                    return run(cmd).await;
+                }
                 let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
                 let mut cmd = Command::new(shell);
                 cmd.args(["-lc", script, "_"]).args(&full);
@@ -238,6 +246,17 @@ async fn ssh_output(host: &SshTarget, script: &str, args: &[&str]) -> Result<Out
         return Err(remote_error(host, &out.stderr));
     }
     Ok(out)
+}
+
+async fn local_tool(program: &str) -> Option<PathBuf> {
+    static FOUND: Mutex<BTreeMap<String, PathBuf>> = Mutex::new(BTreeMap::new());
+    if let Some(path) = FOUND.lock().ok()?.get(program) {
+        return Some(path.clone());
+    }
+    let name = program.to_owned();
+    let path = PathBuf::from(tokio::task::spawn_blocking(move || host_which(&name)).await.ok()??);
+    FOUND.lock().ok()?.insert(program.to_owned(), path.clone());
+    Some(path)
 }
 
 async fn run(mut cmd: Command) -> Result<Output> {

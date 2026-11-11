@@ -179,6 +179,7 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
                       files={branch.data?.files}
                       error={branch.error}
                       empty={`Nothing changed since ${base}.`}
+                      inSection
                       comments={comments}
                       diffFile={diffFile}
                       onOpen={setDiffFile}
@@ -296,6 +297,7 @@ function FileList({
   comments,
   diffFile,
   onOpen,
+  inSection,
 }: {
   files: ChangedFile[] | undefined;
   error: unknown;
@@ -306,9 +308,11 @@ function FileList({
   comments: { file: string }[];
   diffFile: string | null;
   onOpen: (file: string | null) => void;
+  /** Lines the rows up with the other lists in a branch section. */
+  inSection?: boolean;
 }) {
   return (
-    <div className="px-3 py-3">
+    <div className={inSection ? "-mx-2" : "px-2.5 py-2"}>
       {!!error && <p className="px-2 fs-panel text-removed">{String(error)}</p>}
       {files?.length === 0 && <p className="px-2 py-1 fs-panel text-faint">{empty}</p>}
       {files?.map((f) => (
@@ -354,7 +358,7 @@ function ChangeRow({
   return (
     <div
       onClick={onOpen}
-      className={clsx("flex h-8 items-center gap-2.5 rounded-md px-2.5", selected ? "bg-selected" : "hover:bg-hover")}
+      className={clsx("flex h-7 items-center gap-2 rounded-md px-2", selected ? "bg-selected" : "hover:bg-hover")}
       title={`${file.path} — click to view the diff`}
     >
       {checked !== undefined && (
@@ -369,7 +373,7 @@ function ChangeRow({
       )}
       <span
         className={clsx(
-          "w-3 text-center font-mono fs-panel-sm font-semibold",
+          "w-[12px] text-center font-mono fs-panel-sm font-semibold",
           kind === "A" || kind === "U" ? "text-added" : kind === "D" ? "text-removed" : "text-warn",
         )}
       >

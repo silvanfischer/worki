@@ -44,6 +44,24 @@ async fn blocking<T: Send + 'static>(
         .map_err(err_chain)
 }
 
+/// Opens the window at most of the screen's usable area, up to a size where more room stops
+/// helping.
+fn fit_to_screen(window: &tauri::WebviewWindow) {
+    let Ok(Some(monitor)) = window.current_monitor() else {
+        return;
+    };
+    let area = monitor
+        .work_area()
+        .size
+        .to_logical::<f64>(monitor.scale_factor());
+    let size = tauri::LogicalSize::new(
+        (area.width * 0.9).min(1800.0),
+        (area.height * 0.9).min(1120.0),
+    );
+    window.set_size(size).ok();
+    window.center().ok();
+}
+
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -61,6 +79,10 @@ pub fn run() {
                 projects: Arc::new(projects),
                 sessions: Arc::new(sessions),
             });
+
+            if let Some(window) = app.get_webview_window("main") {
+                fit_to_screen(&window);
+            }
 
             #[cfg(target_os = "macos")]
             if let Some(window) = app.get_webview_window("main") {
