@@ -160,8 +160,8 @@ export function CommitBox({ worktreePath, files, total }: { worktreePath: string
 
   if (drafts)
     return (
-      <div className="flex flex-col gap-2 border-t border-line p-3">
-        <span className="text-xs font-medium">{drafts.length} commits</span>
+      <div className="flex flex-col gap-3 border-t border-line p-5">
+        <span className="fs-panel font-medium">{drafts.length} commits</span>
         {drafts.map((d, i) => (
           <div key={i} className="flex flex-col gap-1">
             <Textarea
@@ -170,9 +170,9 @@ export function CommitBox({ worktreePath, files, total }: { worktreePath: string
               value={d.message}
               onChange={(e) => setDrafts(drafts.map((x, j) => (j === i ? { ...x, message: e.target.value } : x)))}
               disabled={busy}
-              className="text-[13px]"
+              className="fs-panel"
             />
-            <span className="truncate font-mono text-[10px] text-faint" title={d.files.join("\n")}>
+            <span className="truncate font-mono fs-panel-xs text-faint" title={d.files.join("\n")}>
               {d.files.join(", ")}
             </span>
           </div>
@@ -196,7 +196,7 @@ export function CommitBox({ worktreePath, files, total }: { worktreePath: string
     );
 
   return (
-    <div className="flex flex-col gap-2 border-t border-line p-3">
+    <div className="flex flex-col gap-3 border-t border-line p-5">
       <Textarea
         rows={2}
         maxRows={12}
@@ -204,7 +204,7 @@ export function CommitBox({ worktreePath, files, total }: { worktreePath: string
         onChange={(e) => setMessage(e.target.value)}
         placeholder={writing ? "Writing…" : "Commit message"}
         disabled={writing}
-        className="text-[13px]"
+        className="fs-panel"
         onKeyDown={(e) => e.key === "Enter" && (e.metaKey || e.ctrlKey) && commit()}
       />
       <div className="flex gap-2">
@@ -231,7 +231,7 @@ export function CommitBox({ worktreePath, files, total }: { worktreePath: string
           {writing ? "Writing…" : "Ask agent"}
         </Button>
       </div>
-      {blocked && !error && <p className="text-[11px] text-faint">{blocked}</p>}
+      {blocked && !error && <p className="fs-panel-sm text-faint">{blocked}</p>}
       <ErrorText>{error}</ErrorText>
     </div>
   );
@@ -248,9 +248,9 @@ function ago(seconds: number): string {
 /** A titled block of the changes panel. */
 export function Section({ title, aside, children }: { title: ReactNode; aside?: ReactNode; children: ReactNode }) {
   return (
-    <section className="flex flex-col gap-1.5 border-b border-line px-3 py-2.5">
+    <section className="flex flex-col gap-2.5 border-b border-line px-5 py-4">
       <div className="flex items-center justify-between gap-2">
-        <h3 className="truncate text-[11px] font-semibold tracking-wide text-faint uppercase">{title}</h3>
+        <h3 className="truncate fs-panel-sm font-semibold tracking-wide text-faint uppercase">{title}</h3>
         {aside}
       </div>
       {children}
@@ -295,11 +295,11 @@ export function BranchStatus({
 
   const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
   return (
-    <div className="flex flex-col gap-2 border-b border-line px-3 py-2.5">
+    <div className="flex flex-col gap-3 border-b border-line px-5 py-4">
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1">
-          <div className="truncate font-mono text-xs">{branch}</div>
-          <div className="text-[11px] text-muted">
+          <div className="truncate font-mono fs-panel">{branch}</div>
+          <div className="fs-panel-sm text-muted">
             {ahead === 0 && behind === 0
               ? `Same as ${base}`
               : [ahead > 0 && `${plural(ahead, "commit")} ahead`, behind > 0 && `${behind} behind`]
@@ -318,12 +318,12 @@ export function BranchStatus({
         </Button>
       </div>
       {behind > 0 && !conflicts && (
-        <p className="text-[11px] text-faint">
+        <p className="fs-panel-sm text-faint">
           {base} has {plural(behind, "new commit")}. Rebase to build on them before opening a pull request.
         </p>
       )}
       {conflicts && (
-        <div className="flex flex-col gap-2 rounded-md bg-warn/10 p-2 text-xs">
+        <div className="flex flex-col gap-2 rounded-md bg-warn/10 p-2 fs-panel">
           <span>
             Rebasing on {base} conflicts in {conflicts.join(", ")}. Nothing was changed.
           </span>
@@ -348,10 +348,10 @@ function CommitRows({ commits }: { commits: CommitInfo[] }) {
   return (
     <div className="flex max-h-48 flex-col overflow-y-auto">
       {commits.map((c) => (
-        <div key={c.sha} className="flex h-6 items-center gap-2 text-xs" title={`${c.sha.slice(0, 8)} · ${c.author}`}>
+        <div key={c.sha} className="flex h-8 items-center gap-2 fs-panel" title={`${c.sha.slice(0, 8)} · ${c.author}`}>
           <GitCommitHorizontal size={12} className="shrink-0 text-faint" />
           <span className="min-w-0 flex-1 truncate">{c.subject}</span>
-          <span className="shrink-0 text-[11px] text-faint">{ago(c.time)}</span>
+          <span className="shrink-0 fs-panel-sm text-faint">{ago(c.time)}</span>
         </div>
       ))}
     </div>
@@ -364,7 +364,7 @@ export function BranchCommits({ worktreePath, base }: { worktreePath: string; ba
   return (
     <Section title={`Commits${commits.length ? ` (${commits.length})` : ""}`}>
       {commits.length === 0 ? (
-        <p className="text-xs text-faint">None yet. Commit your work in the Changes tab.</p>
+        <p className="fs-panel text-faint">None yet. Commit your work in the Changes tab.</p>
       ) : (
         <CommitRows commits={commits} />
       )}
@@ -422,10 +422,10 @@ export function PrSection({ worktree, base }: { worktree: Worktree; base: string
 
   return (
     <Section title="Pull request">
-      {isLoading && <p className="text-xs text-faint">Checking GitHub…</p>}
-      {error && <p className="text-xs text-removed">{errorMessage(error)}</p>}
+      {isLoading && <p className="fs-panel text-faint">Checking GitHub…</p>}
+      {error && <p className="fs-panel text-removed">{errorMessage(error)}</p>}
       {!isLoading && !error && !pr && (
-        <p className="text-xs text-faint">
+        <p className="fs-panel text-faint">
           {commits.length === 0
             ? "None yet. Once the branch has commits, you can open one here."
             : `None yet. Creating one pushes ${worktree.branch} and opens it on GitHub.`}
@@ -446,7 +446,7 @@ export function PrSection({ worktree, base }: { worktree: Worktree; base: string
         <>
           <button
             onClick={() => openUrl(pr.url).catch((e) => toast(`Couldn't open the pull request: ${errorMessage(e)}`))}
-            className="flex items-start gap-2 text-left text-xs hover:text-accent"
+            className="flex items-start gap-2 text-left fs-panel hover:text-accent"
             title="Open on GitHub"
           >
             <PrStateIcon pr={pr} />
@@ -495,7 +495,7 @@ function Checks({ pr }: { pr: PullRequest }) {
   const total = pr.checksPassed + pr.checksFailed + pr.checksPending;
   if (total === 0) return null;
   return (
-    <span className="flex items-center gap-3 text-[11px] text-muted">
+    <span className="flex items-center gap-3 fs-panel-sm text-muted">
       {pr.checksFailed > 0 && (
         <span className="flex items-center gap-1 text-removed">
           <CircleX size={12} /> {pr.checksFailed} failed

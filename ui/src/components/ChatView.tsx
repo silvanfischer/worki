@@ -66,13 +66,13 @@ export function ChatView({ session }: { session: SessionInfo }) {
       >
         <div className="mx-auto flex max-w-5xl flex-col gap-3 px-5 py-4">
           {chat.items.length === 0 && (
-            <p className="py-10 text-center text-xs text-faint">Ask {session.title} something to start.</p>
+            <p className="py-10 text-center fs-chat-xs text-faint">Ask {session.title} something to start.</p>
           )}
           {chat.items.map((item) => (
             <Item key={item.key} item={item} session={session} />
           ))}
           {session.activity === "working" && chat.open.length === 0 && (
-            <div className="flex items-center gap-2 text-xs text-muted">
+            <div className="flex items-center gap-2 fs-chat-xs text-muted">
               <LoaderCircle size={12} className="animate-spin" />
               Working…
             </div>
@@ -89,12 +89,12 @@ const Item = memo(function Item({ item, session }: { item: ChatItem; session: Se
   switch (item.kind) {
     case "user":
       return (
-        <div className="flex max-w-[85%] flex-col gap-1.5 self-end rounded-lg bg-selected px-3 py-2 text-[13px] whitespace-pre-wrap">
+        <div className="flex max-w-[85%] flex-col gap-1.5 self-end rounded-lg bg-selected px-3 py-2 fs-chat whitespace-pre-wrap">
           {item.text}
           {item.attachments.length > 0 && (
             <div className="flex flex-wrap gap-1">
               {item.attachments.map((name, i) => (
-                <span key={i} className="flex items-center gap-1 rounded bg-hover px-1.5 py-0.5 text-[11px] text-muted">
+                <span key={i} className="flex items-center gap-1 rounded bg-hover px-1.5 py-0.5 fs-chat-xs text-muted">
                   <Paperclip size={10} />
                   {name}
                 </span>
@@ -111,7 +111,7 @@ const Item = memo(function Item({ item, session }: { item: ChatItem; session: Se
       return item.state === "open" ? (
         <PermissionCard request={item} session={session} />
       ) : (
-        <div className="flex items-center gap-1.5 text-[11px] text-faint">
+        <div className="flex items-center gap-1.5 fs-chat-xs text-faint">
           {item.state === "allowed" ? <Check size={11} /> : <X size={11} />}
           {item.questions.length > 0
             ? item.state === "allowed"
@@ -124,7 +124,7 @@ const Item = memo(function Item({ item, session }: { item: ChatItem; session: Se
       return (
         <div
           className={clsx(
-            "flex items-center gap-1.5 text-[11px]",
+            "flex items-center gap-1.5 fs-chat-xs",
             item.tone === "error" ? "text-removed" : "text-faint",
           )}
         >
@@ -152,8 +152,8 @@ const markdown: Components = {
   ul: ({ children }) => <ul className="my-1.5 list-disc pl-5">{children}</ul>,
   ol: ({ children }) => <ol className="my-1.5 list-decimal pl-5">{children}</ol>,
   li: ({ children }) => <li className="my-0.5">{children}</li>,
-  h1: ({ children }) => <h3 className="mt-3 mb-1 text-[15px] font-semibold">{children}</h3>,
-  h2: ({ children }) => <h3 className="mt-3 mb-1 text-[14px] font-semibold">{children}</h3>,
+  h1: ({ children }) => <h3 className="mt-3 mb-1 fs-chat-xl font-semibold">{children}</h3>,
+  h2: ({ children }) => <h3 className="mt-3 mb-1 fs-chat-lg font-semibold">{children}</h3>,
   h3: ({ children }) => <h4 className="mt-2 mb-1 font-semibold">{children}</h4>,
   blockquote: ({ children }) => <blockquote className="my-1.5 border-l-2 border-line pl-3 text-muted">{children}</blockquote>,
   pre: ({ children }) => {
@@ -162,15 +162,15 @@ const markdown: Components = {
     if (language && VISUAL_LANGUAGES.includes(language))
       return <ChatVisual language={language} source={String(code?.children ?? "").replace(/\n$/, "")} />;
     return (
-      <pre className="my-2 overflow-x-auto rounded-md bg-hover px-3 py-2 font-mono text-xs [&_code]:bg-transparent [&_code]:p-0">
+      <pre className="my-2 overflow-x-auto rounded-md bg-hover px-3 py-2 font-mono fs-chat-xs [&_code]:bg-transparent [&_code]:p-0">
         {children}
       </pre>
     );
   },
-  code: ({ children }) => <code className="rounded bg-hover px-1 py-0.5 font-mono text-[12px]">{children}</code>,
+  code: ({ children }) => <code className="rounded bg-hover px-1 py-0.5 font-mono fs-chat-sm">{children}</code>,
   table: ({ children }) => (
     <div className="my-2 overflow-x-auto">
-      <table className="text-xs [&_td]:border [&_td]:border-line [&_td]:px-2 [&_td]:py-1 [&_th]:border [&_th]:border-line [&_th]:px-2 [&_th]:py-1">
+      <table className="fs-chat-xs [&_td]:border [&_td]:border-line [&_td]:px-2 [&_td]:py-1 [&_th]:border [&_th]:border-line [&_th]:px-2 [&_th]:py-1">
         {children}
       </table>
     </div>
@@ -179,7 +179,7 @@ const markdown: Components = {
 
 function MarkdownText({ text }: { text: string }) {
   return (
-    <div className="text-[13px] break-words">
+    <div className="fs-chat break-words">
       <Markdown remarkPlugins={[remarkGfm]} components={markdown}>
         {text}
       </Markdown>
@@ -231,11 +231,11 @@ function ToolCall({ tool, session }: { tool: Tool; session: SessionInfo }) {
     <div className="flex flex-col">
       <button
         onClick={() => setOpen((o) => !o)}
-        className="flex min-w-0 items-center gap-1.5 rounded px-1 py-0.5 text-left text-xs text-muted hover:bg-hover hover:text-fg"
+        className="flex min-w-0 items-center gap-1.5 rounded px-1 py-0.5 text-left fs-chat-xs text-muted hover:bg-hover hover:text-fg"
       >
         <ChevronRight size={12} className={clsx("shrink-0 transition-transform", open && "rotate-90")} />
         <span className={clsx("shrink-0 font-medium", failed ? "text-removed" : "text-fg")}>{tool.name}</span>
-        <span className="min-w-0 truncate font-mono text-[11px]">{summary(tool.name, tool.input, root)}</span>
+        <span className="min-w-0 truncate font-mono fs-chat-xs">{summary(tool.name, tool.input, root)}</span>
         {!tool.result && <LoaderCircle size={11} className="shrink-0 animate-spin" />}
       </button>
       {open && (
@@ -258,7 +258,7 @@ function ToolInput({ name, input }: { name: string; input: Record<string, unknow
   if (name === "Write" && typeof input.content === "string")
     return <Changes edits={[{ old_string: "", new_string: input.content }]} />;
   if (name === "Bash" && typeof input.command === "string")
-    return <pre className="overflow-x-auto font-mono text-[11px] whitespace-pre-wrap">$ {input.command}</pre>;
+    return <pre className="overflow-x-auto font-mono fs-chat-xs whitespace-pre-wrap">$ {input.command}</pre>;
   if (name === "ExitPlanMode" && typeof input.plan === "string") return <MarkdownText text={input.plan} />;
   return <Output text={JSON.stringify(input, null, 2)} />;
 }
@@ -283,7 +283,7 @@ function Lines({ lines }: { lines: { kind: "add" | "del" | "plain"; text: string
   const [all, setAll] = useState(false);
   const shown = all ? lines : lines.slice(0, COLLAPSED);
   return (
-    <div className="overflow-x-auto rounded-md border border-line font-mono text-[11px] leading-[1.6]">
+    <div className="overflow-x-auto rounded-md border border-line font-mono fs-chat-xs leading-[1.6]">
       {shown.map((l, i) => (
         <div
           key={i}
@@ -310,7 +310,7 @@ function Output({ text, error }: { text: string; error?: boolean }) {
   if (!text.trim()) return null;
   const lines = text.replace(/\n$/, "").split("\n");
   return error ? (
-    <div className="text-[11px] whitespace-pre-wrap text-removed">{text}</div>
+    <div className="fs-chat-xs whitespace-pre-wrap text-removed">{text}</div>
   ) : (
     <Lines lines={lines.map((t) => ({ kind: "plain", text: t }))} />
   );
@@ -340,7 +340,7 @@ function PermissionCard({ request, session }: { request: Permission; session: Se
 function Card({ icon, title, children }: { icon: ReactNode; title: ReactNode; children: ReactNode }) {
   return (
     <div className="flex flex-col gap-2.5 rounded-lg border border-accent/40 bg-elevated p-3 shadow-sm">
-      <div className="flex items-center gap-2 text-[13px] font-medium">
+      <div className="flex items-center gap-2 fs-chat font-medium">
         <span className="text-accent">{icon}</span>
         {title}
       </div>
@@ -360,7 +360,7 @@ function AllowCard({ request, session }: { request: Permission; session: Session
       title={plan ? "Ready to start on this plan?" : `Allow ${request.tool}?`}
     >
       {!plan && (
-        <span className="truncate font-mono text-[11px] text-muted">
+        <span className="truncate font-mono fs-chat-xs text-muted">
           {summary(request.tool, request.input, session.worktreePath)}
         </span>
       )}
@@ -403,7 +403,7 @@ function QuestionCard({ request, session }: { request: Permission; session: Sess
     <Card icon={<MessageCircleQuestion size={14} />} title={request.questions.length === 1 ? request.questions[0].question : "Questions"}>
       {request.questions.map((q) => (
         <div key={q.question} className="flex flex-col gap-1.5">
-          {request.questions.length > 1 && <span className="text-xs font-medium">{q.question}</span>}
+          {request.questions.length > 1 && <span className="fs-chat-xs font-medium">{q.question}</span>}
           <div className="flex flex-col gap-1">
             {q.options.map((o) => {
               const on = picked[q.question]?.includes(o.label);
@@ -417,8 +417,8 @@ function QuestionCard({ request, session }: { request: Permission; session: Sess
                     on ? "border-accent bg-accent/10" : "border-line",
                   )}
                 >
-                  <span className="text-[13px]">{o.label}</span>
-                  {o.description && <span className="text-[11px] text-muted">{o.description}</span>}
+                  <span className="fs-chat">{o.label}</span>
+                  {o.description && <span className="fs-chat-xs text-muted">{o.description}</span>}
                 </button>
               );
             })}
@@ -428,7 +428,7 @@ function QuestionCard({ request, session }: { request: Permission; session: Sess
               onKeyDown={(e) => e.key === "Enter" && complete && submit()}
               placeholder="Something else…"
               disabled={busy}
-              className="h-8 rounded-md border border-line bg-panel px-2.5 text-[13px] focus:border-accent focus:outline-none"
+              className="h-8 rounded-md border border-line bg-panel px-2.5 fs-chat focus:border-accent focus:outline-none"
             />
           </div>
         </div>
@@ -544,7 +544,7 @@ function Composer({ session, chat, onSend }: { session: SessionInfo; chat: Chat;
           {attached.length > 0 && (
             <div className="flex flex-wrap gap-1.5 px-1 pt-0.5">
               {attached.map((a) => (
-                <span key={a.id} className="flex items-center gap-1.5 rounded-md border border-line bg-elevated py-0.5 pr-1 pl-1.5 text-[11px]">
+                <span key={a.id} className="flex items-center gap-1.5 rounded-md border border-line bg-elevated py-0.5 pr-1 pl-1.5 fs-chat-xs">
                   {a.preview ? <img src={a.preview} alt="" className="size-5 rounded object-cover" /> : <Paperclip size={11} className="text-muted" />}
                   <span className="max-w-40 truncate">{a.name}</span>
                   <button
@@ -583,7 +583,7 @@ function Composer({ session, chat, onSend }: { session: SessionInfo; chat: Chat;
               }
             }}
             placeholder={busy ? "Add to what the agent is doing…" : `Message ${session.title}`}
-            className="flex-1 border-transparent! bg-transparent px-1 py-1 font-sans text-[13px] outline-none!"
+            className="flex-1 border-transparent! bg-transparent px-1 py-1 font-sans fs-chat outline-none!"
           />
           {busy && !ready ? (
             <button
@@ -637,7 +637,7 @@ function Settings({ session, chat, onError }: { session: SessionInfo; chat: Chat
     onError(null);
     api.changeChatSetting(session.id, setting).catch((e) => onError(errorMessage(e)));
   };
-  const select = "h-6 max-w-44 border-transparent bg-transparent text-[11px] text-muted hover:bg-hover hover:text-fg";
+  const select = "h-6 max-w-44 border-transparent bg-transparent fs-chat-xs text-muted hover:bg-hover hover:text-fg";
 
   return (
     <div className="flex flex-wrap items-center gap-1">

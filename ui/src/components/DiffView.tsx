@@ -71,15 +71,15 @@ export function DiffView({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex h-9 shrink-0 items-center gap-2 border-b border-line px-2">
-        <span className="selectable min-w-0 flex-1 truncate pl-1 font-mono text-xs">{file}</span>
-        {base && <span className="text-[11px] text-faint">vs {base}</span>}
+      <div className="flex h-13 shrink-0 items-center gap-2 border-b border-line px-3">
+        <span className="selectable min-w-0 flex-1 truncate pl-1 font-mono fs-diff">{file}</span>
+        {base && <span className="fs-diff-sm text-faint">vs {base}</span>}
         {parsed && <DiffStat insertions={added} deletions={removed} />}
         <IconButton label="Close diff" onClick={onClose}>
           <X size={14} />
         </IconButton>
       </div>
-      <div className="selectable @container min-h-0 flex-1 overflow-auto font-mono text-xs leading-[1.6]">
+      <div className="selectable @container min-h-0 flex-1 overflow-auto font-mono fs-diff leading-[1.6]">
         {isLoading && <p className="p-3 text-faint">Loading diff…</p>}
         {error && (
           <div className="p-3">
@@ -126,10 +126,10 @@ export function DiffView({
                         l.kind === "del" && "bg-removed/12",
                       )}
                     >
-                      <td className="w-12 border-r border-line px-2 text-right text-faint select-none">
+                      <td className="w-[4.5em] border-r border-line px-2 text-right text-faint select-none">
                         {l.oldNo ?? ""}
                       </td>
-                      <td className="relative w-12 border-r border-line px-2 text-right text-faint select-none">
+                      <td className="relative w-[4.5em] border-r border-line px-2 text-right text-faint select-none">
                         <button
                           title="Comment on this line"
                           onClick={() => setDrafting(key)}
@@ -204,7 +204,7 @@ function GapRow({
   const button = "flex items-center gap-1 rounded px-1.5 hover:bg-accent/20 hover:text-fg";
   return (
     <tr className="bg-accent/10 text-muted select-none">
-      <td colSpan={3} className="py-0.5 font-sans text-[11px]">
+      <td colSpan={3} className="py-0.5 font-sans fs-diff-sm">
         <div className={clsx(PINNED, "flex items-center gap-2")}>
           {!atStart && (
             <button className={button} title={`Show ${step} more lines below`} onClick={() => onReveal({ head: step })}>
@@ -253,7 +253,7 @@ function CommentRow({ worktreePath, comment }: { worktreePath: string; comment: 
             />
           ) : (
             <div className="flex items-start gap-2">
-              <p className="flex-1 cursor-text text-[13px] whitespace-pre-wrap" onClick={() => setEditing(true)}>
+              <p className="flex-1 cursor-text fs-diff whitespace-pre-wrap" onClick={() => setEditing(true)}>
                 {comment.text}
               </p>
               <IconButton label="Delete comment" onClick={() => remove(worktreePath, comment.id)}>
@@ -286,13 +286,13 @@ function OrphanComments({
   if (orphans.length === 0) return null;
   return (
     <div className="border-t border-line p-3 font-sans">
-      <p className="mb-2 text-[11px] font-semibold tracking-wide text-faint uppercase">Comments on lines not in the diff</p>
+      <p className="mb-2 fs-diff-sm font-semibold tracking-wide text-faint uppercase">Comments on lines not in the diff</p>
       <table className="w-full">
         <tbody>
           {orphans.map((c) => (
             <Fragment key={c.id}>
               <tr>
-                <td className="font-mono text-xs text-faint">
+                <td className="font-mono fs-diff-sm text-faint">
                   {c.side === "old" ? "removed line " : "line "}
                   {c.line}: {c.code.trim()}
                 </td>
@@ -338,7 +338,7 @@ function CommentEditor({
         value={text}
         onChange={(e) => setText(e.target.value)}
         placeholder="What should the agent change here?"
-        className="font-sans text-[13px]"
+        className="font-sans fs-diff"
         onKeyDown={(e) => {
           if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
             e.preventDefault();

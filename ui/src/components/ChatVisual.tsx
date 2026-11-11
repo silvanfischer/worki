@@ -482,8 +482,8 @@ async function download(svg: SVGSVGElement | null, name: string, format: "svg" |
 function Source({ source, note }: { source: string; note?: string }) {
   return (
     <div className="my-2">
-      <pre className="overflow-x-auto rounded-md bg-hover px-3 py-2 font-mono text-xs">{source}</pre>
-      {note && <p className="mt-1 text-[11px] text-faint">{note}</p>}
+      <pre className="overflow-x-auto rounded-md bg-hover px-3 py-2 font-mono fs-chat-xs">{source}</pre>
+      {note && <p className="mt-1 fs-chat-xs text-faint">{note}</p>}
     </div>
   );
 }

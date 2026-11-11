@@ -78,6 +78,46 @@
   color-scheme: light;
 }
 
+@utility fs-panel {
+  font-size: var(--panel-font, 13px);
+}
+@utility fs-panel-sm {
+  font-size: calc(var(--panel-font, 13px) - 1px);
+}
+@utility fs-panel-xs {
+  font-size: calc(var(--panel-font, 13px) - 2px);
+}
+@utility fs-diff {
+  font-size: var(--diff-font, 13px);
+}
+@utility fs-diff-sm {
+  font-size: calc(var(--diff-font, 13px) - 1px);
+}
+@utility fs-sidebar {
+  font-size: var(--sidebar-font, 13px);
+}
+@utility fs-sidebar-sm {
+  font-size: calc(var(--sidebar-font, 13px) - 1px);
+}
+@utility fs-sidebar-xs {
+  font-size: calc(var(--sidebar-font, 13px) - 2px);
+}
+@utility fs-chat-xl {
+  font-size: calc(var(--chat-font, 14px) + 2px);
+}
+@utility fs-chat-lg {
+  font-size: calc(var(--chat-font, 14px) + 1px);
+}
+@utility fs-chat {
+  font-size: var(--chat-font, 14px);
+}
+@utility fs-chat-sm {
+  font-size: calc(var(--chat-font, 14px) - 1px);
+}
+@utility fs-chat-xs {
+  font-size: calc(var(--chat-font, 14px) - 2px);
+}
+
 html,
 body,
 #root {

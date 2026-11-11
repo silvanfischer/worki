@@ -1,10 +1,11 @@
 import clsx from "clsx";
-import { AppWindow, Bot, Camera, GitBranch, KeyRound, Server, Settings, Shield, X } from "lucide-react";
+import { AppWindow, Bot, Camera, GitBranch, KeyRound, Palette, Server, Settings, Shield, X } from "lucide-react";
 import { type ReactNode, useEffect } from "react";
 
 import { useAgentSettings, useIsolationSettings } from "../lib/queries";
 import { type SettingsTab, useUi } from "../lib/store";
 import { AgentSettingsDialog } from "./AgentSettingsDialog";
+import { AppearanceSettings } from "./AppearanceSettings";
 import { GeneralSettings } from "./GeneralSettings";
 import { GitSettings } from "./GitSettings";
 import { IsolationDialog } from "./IsolationDialog";
@@ -16,6 +17,7 @@ import { EmbeddedDialog, IconButton } from "./ui";
 
 const tabs: { id: SettingsTab; label: string; icon: ReactNode }[] = [
   { id: "general", label: "General", icon: <Settings size={14} /> },
+  { id: "appearance", label: "Appearance", icon: <Palette size={14} /> },
   { id: "agents", label: "Agents", icon: <Bot size={14} /> },
   { id: "git", label: "Git", icon: <GitBranch size={14} /> },
   { id: "secrets", label: "Secrets", icon: <KeyRound size={14} /> },
@@ -72,6 +74,7 @@ export function SettingsView({ tab }: { tab: SettingsTab }) {
           </IconButton>
           <EmbeddedDialog.Provider value>
             {tab === "general" && <GeneralSettings />}
+            {tab === "appearance" && <AppearanceSettings />}
             {tab === "git" && <GitSettings />}
             {tab === "agents" && agents && <AgentSettingsDialog settings={agents} onClose={closeDialog} />}
             {tab === "secrets" && (

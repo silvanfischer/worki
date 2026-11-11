@@ -39,7 +39,7 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
 
   return (
     <div className="flex h-full flex-col">
-      <header data-tauri-drag-region className="flex h-11 shrink-0 items-center gap-3 border-b border-line bg-bar px-4">
+      <header data-tauri-drag-region className="flex h-13 shrink-0 items-center gap-3.5 border-b border-line bg-bar px-5">
         <GitBranch size={15} className="text-muted" />
         <div data-tauri-drag-region className="flex min-w-0 flex-1 items-baseline gap-2">
           <h1 className="truncate text-[14px] font-semibold">{worktreeLabel(worktree)}</h1>
@@ -109,7 +109,7 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
         {showChanges && (
           <aside className="relative flex min-h-0 shrink-0 flex-col border-l border-line bg-bar" style={{ width: widths.changes }}>
             <ResizeHandle panel="changes" edge="left" />
-            <div className="flex h-9 shrink-0 items-center gap-1 border-b border-line px-2">
+            <div className="flex h-13 shrink-0 items-center gap-2 border-b border-line px-4">
               {(["uncommitted", "branch"] as const)
                 .filter((t) => t === "uncommitted" || hasBranchTab)
                 .map((t) => (
@@ -122,13 +122,13 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
                         : `This branch compared with ${base}: commits, pull request and all changed files`
                     }
                     className={clsx(
-                      "flex h-7 items-center gap-1.5 rounded-md px-2 text-xs",
+                      "flex h-8 items-center gap-1.5 rounded-md px-3 fs-panel",
                       tab === t ? "bg-selected font-medium text-fg" : "text-muted hover:bg-hover hover:text-fg",
                     )}
                   >
                     {t === "uncommitted" ? "Changes" : "Branch"}
                     {t === "uncommitted" && !!status?.changedFiles.length && (
-                      <span className="text-[11px] text-faint" title="Uncommitted files">
+                      <span className="fs-panel-sm text-faint" title="Uncommitted files">
                         {status.changedFiles.length}
                       </span>
                     )}
@@ -220,7 +220,7 @@ function ReviewBar({ worktreePath, onOpen }: { worktreePath: string; onOpen: (fi
   const [error, setError] = useState<string | null>(null);
   const [picked, setPicked] = useState<string | null>(null);
   if (comments.length === 0)
-    return <p className="border-t border-line px-3 py-2 text-[11px] text-faint">Hover a line in a diff to comment on it.</p>;
+    return <p className="border-t border-line px-5 py-4 fs-panel-sm text-faint">Hover a line in a diff to comment on it.</p>;
 
   const agents = sessions.filter((s) => s.worktreePath === worktreePath && s.profileId && s.state.kind === "running");
   const target = agents.find((s) => s.id === picked) ?? reviewTarget(agents, activeId);
@@ -239,29 +239,29 @@ function ReviewBar({ worktreePath, onOpen }: { worktreePath: string; onOpen: (fi
   }
 
   return (
-    <div className="flex flex-col gap-2 border-t border-line p-3">
+    <div className="flex flex-col gap-3 border-t border-line p-5">
       <div className="flex items-baseline justify-between">
-        <span className="text-xs font-medium">
+        <span className="fs-panel font-medium">
           {comments.length} comment{comments.length === 1 ? "" : "s"}
         </span>
-        <button className="text-[11px] text-muted hover:text-fg" onClick={() => clear(worktreePath)}>
+        <button className="fs-panel-sm text-muted hover:text-fg" onClick={() => clear(worktreePath)}>
           Discard
         </button>
       </div>
       <div className="flex flex-col">
         {files.map((f) => (
-          <button key={f} onClick={() => onOpen(f)} className="truncate text-left font-mono text-[11px] text-muted hover:text-fg">
+          <button key={f} onClick={() => onOpen(f)} className="truncate text-left font-mono fs-panel-sm text-muted hover:text-fg">
             {f}
           </button>
         ))}
       </div>
       {agents.length > 1 && target && (
-        <label className="flex items-center gap-2 text-[11px] text-muted">
+        <label className="flex items-center gap-2 fs-panel-sm text-muted">
           To
           <Select
             value={target.id}
             onChange={(e) => setPicked(e.target.value)}
-            className="h-7 min-w-0 flex-1 text-xs"
+            className="h-7 min-w-0 flex-1 fs-panel"
           >
             {agents.map((a, i) => (
               <option key={a.id} value={a.id}>
@@ -281,7 +281,7 @@ function ReviewBar({ worktreePath, onOpen }: { worktreePath: string; onOpen: (fi
         <Send size={12} />
         {target ? `Send to ${target.title}` : "Send to agent"}
       </Button>
-      {!target && <p className="text-[11px] text-faint">Start an agent in this worktree to send the review.</p>}
+      {!target && <p className="fs-panel-sm text-faint">Start an agent in this worktree to send the review.</p>}
       <ErrorText>{error}</ErrorText>
     </div>
   );
@@ -308,9 +308,9 @@ function FileList({
   onOpen: (file: string | null) => void;
 }) {
   return (
-    <div className="px-1.5 py-1">
-      {!!error && <p className="px-2 text-xs text-removed">{String(error)}</p>}
-      {files?.length === 0 && <p className="px-2 py-1 text-xs text-faint">{empty}</p>}
+    <div className="px-3 py-3">
+      {!!error && <p className="px-2 fs-panel text-removed">{String(error)}</p>}
+      {files?.length === 0 && <p className="px-2 py-1 fs-panel text-faint">{empty}</p>}
       {files?.map((f) => (
         <ChangeRow
           key={f.path}
@@ -354,7 +354,7 @@ function ChangeRow({
   return (
     <div
       onClick={onOpen}
-      className={clsx("flex h-6 items-center gap-2 rounded px-1.5", selected ? "bg-selected" : "hover:bg-hover")}
+      className={clsx("flex h-8 items-center gap-2.5 rounded-md px-2.5", selected ? "bg-selected" : "hover:bg-hover")}
       title={`${file.path} — click to view the diff`}
     >
       {checked !== undefined && (
@@ -364,23 +364,23 @@ function ChangeRow({
           onClick={(e) => e.stopPropagation()}
           onChange={(e) => onCheck(e.target.checked)}
           title={checked ? "Included in the next commit" : "Left out of the next commit"}
-          className="size-3 shrink-0 accent-[var(--accent)]"
+          className="size-3.5 shrink-0 accent-[var(--accent)]"
         />
       )}
       <span
         className={clsx(
-          "w-3 text-center font-mono text-[11px] font-semibold",
+          "w-3 text-center font-mono fs-panel-sm font-semibold",
           kind === "A" || kind === "U" ? "text-added" : kind === "D" ? "text-removed" : "text-warn",
         )}
       >
         {kind}
       </span>
-      <span className="min-w-0 truncate text-xs">
+      <span className="min-w-0 truncate fs-panel">
         {file.path.slice(slash + 1)}
         {slash > 0 && <span className="ml-1.5 text-faint">{file.path.slice(0, slash)}</span>}
       </span>
       {comments > 0 && (
-        <span className="ml-auto rounded-full bg-accent px-1.5 text-[10px] text-accent-fg" title={`${comments} review comments`}>
+        <span className="ml-auto rounded-full bg-accent px-1.5 fs-panel-xs text-accent-fg" title={`${comments} review comments`}>
           {comments}
         </span>
       )}

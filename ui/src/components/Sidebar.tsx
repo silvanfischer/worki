@@ -34,11 +34,11 @@ export function Sidebar() {
   const width = useUi((s) => s.panelWidths.sidebar);
 
   return (
-    <aside className="relative flex h-full shrink-0 flex-col" style={{ width }}>
+    <aside className="fs-sidebar relative flex h-full shrink-0 flex-col" style={{ width }}>
       <ResizeHandle panel="sidebar" edge="right" />
-      <div data-tauri-drag-region className="h-11 shrink-0" />
+      <div data-tauri-drag-region className="h-13 shrink-0" />
       <div className="flex items-center justify-between px-3 pb-1">
-        <span className="text-[11px] font-semibold tracking-wide text-faint uppercase">Projects</span>
+        <span className="fs-sidebar-xs font-semibold tracking-wide text-faint uppercase">Projects</span>
         <Menu
           trigger={(toggle) => (
             <IconButton label="Add project" onClick={toggle}>
@@ -66,7 +66,7 @@ export function Sidebar() {
           <ProjectNode key={p.id} project={p} />
         ))}
         {projects.length === 0 && (
-          <p className="px-2 py-4 text-xs leading-relaxed text-faint">
+          <p className="px-2 py-4 fs-sidebar-xs leading-relaxed text-faint">
             No projects yet. Add a git repository to start managing its worktrees.
           </p>
         )}
@@ -117,7 +117,7 @@ function ProjectNode({ project }: { project: Project }) {
       </div>
       {!collapsed && (
         <div className="mt-0.5 flex flex-col gap-px">
-          {error && <p className="px-7 py-1 text-xs text-removed">{String(error)}</p>}
+          {error && <p className="px-7 py-1 fs-sidebar-xs text-removed">{String(error)}</p>}
           {worktrees.map((wt) => (
             <WorktreeRow key={wt.path} project={project} worktree={wt} />
           ))}
@@ -174,7 +174,7 @@ function WorktreeRow({ project, worktree }: { project: Project; worktree: Worktr
       )}
       {comments > 0 && (
         <span
-          className="flex items-center gap-0.5 text-[11px] text-accent group-hover:hidden"
+          className="flex items-center gap-0.5 fs-sidebar-xs text-accent group-hover:hidden"
           title={`${comments} review comment${comments === 1 ? "" : "s"} not sent yet`}
         >
           <MessageSquare size={11} />
@@ -209,7 +209,7 @@ function NeedsYou({ projects }: { projects: Project[] }) {
   if (waiting.length === 0) return null;
   return (
     <div className="mb-2 rounded-lg bg-warn/8 p-1">
-      <div className="flex items-center gap-1.5 px-2 pt-1 pb-1 text-[11px] font-semibold tracking-wide text-warn uppercase">
+      <div className="flex items-center gap-1.5 px-2 pt-1 pb-1 fs-sidebar-xs font-semibold tracking-wide text-warn uppercase">
         <BellRing size={11} />
         Needs you
       </div>
@@ -226,10 +226,10 @@ function NeedsYou({ projects }: { projects: Project[] }) {
               title={s.attention ?? `${s.title} is waiting for you`}
               className="flex min-w-0 flex-1 flex-col px-2 py-1 text-left"
             >
-              <span className="truncate text-[13px]">
+              <span className="truncate fs-sidebar">
                 {s.title} <span className="text-faint">· {name}</span>
               </span>
-              {s.attention && <span className="truncate text-[11px] text-muted">{s.attention}</span>}
+              {s.attention && <span className="truncate fs-sidebar-xs text-muted">{s.attention}</span>}
             </button>
             <IconButton
               label="Skip for now: hides this without answering"

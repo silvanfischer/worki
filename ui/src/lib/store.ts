@@ -12,7 +12,7 @@ export type DialogState =
   | { kind: "settings"; tab: SettingsTab }
   | null;
 
-export type SettingsTab = "general" | "agents" | "git" | "secrets" | "isolation" | "snapshots" | "sshHosts" | "openIn";
+export type SettingsTab = "general" | "appearance" | "agents" | "git" | "secrets" | "isolation" | "snapshots" | "sshHosts" | "openIn";
 
 export interface PrDraft {
   title: string;
@@ -23,7 +23,7 @@ export type ChangesScope = "uncommitted" | "branch";
 
 export type Theme = "system" | "light" | "dark";
 
-export const TERMINAL_FONT_SIZES = [11, 12, 13, 14, 15, 16, 18];
+export const FONT_SIZES = [11, 12, 13, 14, 15, 16, 18];
 
 export type Panel = "sidebar" | "diff" | "changes";
 
@@ -52,6 +52,10 @@ interface UiState {
   panelWidths: Record<Panel, number>;
   theme: Theme;
   terminalFontSize: number;
+  panelFontSize: number;
+  diffFontSize: number;
+  chatFontSize: number;
+  sidebarFontSize: number;
   /** Start the Claude sessions that were open at the last quit again when worki starts. */
   reopenSessions: boolean;
   /** How agents that can chat open by default: as a chat or in a terminal. */
@@ -74,6 +78,10 @@ interface UiState {
   setPanelWidth: (panel: Panel, width: number) => void;
   setTheme: (theme: Theme) => void;
   setTerminalFontSize: (size: number) => void;
+  setPanelFontSize: (size: number) => void;
+  setDiffFontSize: (size: number) => void;
+  setChatFontSize: (size: number) => void;
+  setSidebarFontSize: (size: number) => void;
   setReopenSessions: (on: boolean) => void;
   setAgentView: (view: SessionKind) => void;
   setAutoUpdate: (on: boolean) => void;
@@ -102,6 +110,10 @@ export const useUi = create<UiState>()(
       },
       theme: "system",
       terminalFontSize: 13,
+      panelFontSize: 13,
+      diffFontSize: 13,
+      chatFontSize: 14,
+      sidebarFontSize: 13,
       reopenSessions: true,
       agentView: "terminal",
       autoUpdate: true,
@@ -130,6 +142,10 @@ export const useUi = create<UiState>()(
       },
       setTheme: (theme) => set({ theme }),
       setTerminalFontSize: (terminalFontSize) => set({ terminalFontSize }),
+      setPanelFontSize: (panelFontSize) => set({ panelFontSize }),
+      setDiffFontSize: (diffFontSize) => set({ diffFontSize }),
+      setChatFontSize: (chatFontSize) => set({ chatFontSize }),
+      setSidebarFontSize: (sidebarFontSize) => set({ sidebarFontSize }),
       setReopenSessions: (reopenSessions) => set({ reopenSessions }),
       setAgentView: (agentView) => set({ agentView }),
       setAutoUpdate: (autoUpdate) => set({ autoUpdate }),
@@ -149,6 +165,10 @@ export const useUi = create<UiState>()(
         panelWidths,
         theme,
         terminalFontSize,
+        panelFontSize,
+        diffFontSize,
+        chatFontSize,
+        sidebarFontSize,
         reopenSessions,
         agentView,
         autoUpdate,
@@ -166,6 +186,10 @@ export const useUi = create<UiState>()(
         panelWidths,
         theme,
         terminalFontSize,
+        panelFontSize,
+        diffFontSize,
+        chatFontSize,
+        sidebarFontSize,
         reopenSessions,
         agentView,
         autoUpdate,

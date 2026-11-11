@@ -1,26 +1,16 @@
 import { useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { LoaderCircle, MessageSquare, Monitor, Moon, RefreshCw, SquareTerminal, Sun } from "lucide-react";
+import { LoaderCircle, MessageSquare, RefreshCw, SquareTerminal } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
 import { api, errorMessage } from "../lib/api";
 import { keys, useIsolationSettings } from "../lib/queries";
-import { TERMINAL_FONT_SIZES, type Theme, useUi } from "../lib/store";
+import { useUi } from "../lib/store";
 import { checkForUpdates, useUpdates } from "../lib/updates";
-import { Button, Checkbox, ErrorText, Field, Select } from "./ui";
-
-const themes: { id: Theme; label: string; icon: ReactNode }[] = [
-  { id: "system", label: "System", icon: <Monitor size={13} /> },
-  { id: "light", label: "Light", icon: <Sun size={13} /> },
-  { id: "dark", label: "Dark", icon: <Moon size={13} /> },
-];
+import { Button, Checkbox, ErrorText, Field } from "./ui";
 
 export function GeneralSettings() {
   const qc = useQueryClient();
-  const theme = useUi((s) => s.theme);
-  const setTheme = useUi((s) => s.setTheme);
-  const fontSize = useUi((s) => s.terminalFontSize);
-  const setFontSize = useUi((s) => s.setTerminalFontSize);
   const agentView = useUi((s) => s.agentView);
   const setAgentView = useUi((s) => s.setAgentView);
   const autoUpdate = useUi((s) => s.autoUpdate);
@@ -46,39 +36,6 @@ export function GeneralSettings() {
     <section className="flex min-h-0 flex-1 flex-col">
       <h2 className="px-6 pt-5 pb-3 text-[15px] font-semibold">General</h2>
       <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-6 pb-6">
-        <Group title="Appearance">
-          <Field label="Theme">
-            <div className="flex w-fit rounded-md border border-line p-0.5">
-              {themes.map((t) => (
-                <button
-                  key={t.id}
-                  onClick={() => setTheme(t.id)}
-                  className={clsx(
-                    "flex h-7 items-center gap-1.5 rounded px-3 text-[13px]",
-                    theme === t.id ? "bg-selected font-medium text-fg" : "text-muted hover:text-fg",
-                  )}
-                >
-                  {t.icon}
-                  {t.label}
-                </button>
-              ))}
-            </div>
-          </Field>
-          <Field label="Terminal font size">
-            <Select
-              value={fontSize}
-              onChange={(e) => setFontSize(Number(e.target.value))}
-              className="h-8 w-24 text-[13px]"
-            >
-              {TERMINAL_FONT_SIZES.map((size) => (
-                <option key={size} value={size}>
-                  {size} pt
-                </option>
-              ))}
-            </Select>
-          </Field>
-        </Group>
-
         <Group title="Agents">
           <Field
             label="Open agents as"
