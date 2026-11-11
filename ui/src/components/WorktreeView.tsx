@@ -39,7 +39,7 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
 
   return (
     <div className="flex h-full flex-col">
-      <header data-tauri-drag-region className="flex h-11 shrink-0 items-center gap-3 border-b border-line px-4">
+      <header data-tauri-drag-region className="flex h-11 shrink-0 items-center gap-3 border-b border-line bg-bar px-4">
         <GitBranch size={15} className="text-muted" />
         <div data-tauri-drag-region className="flex min-w-0 flex-1 items-baseline gap-2">
           <h1 className="truncate text-[14px] font-semibold">{worktreeLabel(worktree)}</h1>
@@ -107,7 +107,7 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
         )}
 
         {showChanges && (
-          <aside className="relative flex min-h-0 shrink-0 flex-col border-l border-line" style={{ width: widths.changes }}>
+          <aside className="relative flex min-h-0 shrink-0 flex-col border-l border-line bg-bar" style={{ width: widths.changes }}>
             <ResizeHandle panel="changes" edge="left" />
             <div className="flex h-9 shrink-0 items-center gap-1 border-b border-line px-2">
               {(["uncommitted", "branch"] as const)

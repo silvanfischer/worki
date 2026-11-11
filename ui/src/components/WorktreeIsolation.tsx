@@ -58,7 +58,7 @@ export function WorktreeIsolationBadge({ project, worktree }: { project: Project
             ? `Remote project · ${isolationLabel(effective)}`
             : `${effective.kind === "none" ? "No isolation" : isolationLabel(effective)} · ${isolationSource(project, data.choice)} · click to change or save a snapshot`
         }
-        className="flex h-7 max-w-40 items-center gap-1.5 rounded-md border border-line px-2 text-xs text-muted enabled:hover:border-muted enabled:hover:bg-hover enabled:hover:text-fg disabled:border-transparent"
+        className="flex h-7 max-w-40 items-center gap-1.5 rounded-md border border-line bg-elevated px-2 text-xs enabled:hover:bg-hover disabled:border-transparent disabled:bg-transparent disabled:text-muted"
       >
         <Shield size={13} className={clsx("shrink-0", effective.kind === "none" ? "text-faint" : "text-accent")} />
         <span className="truncate">{shortIsolationLabel(effective)}</span>

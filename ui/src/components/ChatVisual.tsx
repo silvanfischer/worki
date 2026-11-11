@@ -151,8 +151,8 @@ const LIGHT = {
   fontFamily: FONT,
   fontSize: "14px",
   background: "#ffffff",
-  primaryColor: "#eef0fe",
-  primaryBorderColor: "#a5abf6",
+  primaryColor: "#eaf2fd",
+  primaryBorderColor: "#93b9ec",
   primaryTextColor: "#1d1d1f",
   secondaryColor: "#f4f4f5",
   secondaryBorderColor: "#d4d4d8",
@@ -165,18 +165,18 @@ const LIGHT = {
   clusterBorder: "#e4e4e7",
   noteBkgColor: "#fff7e6",
   noteBorderColor: "#f5d38a",
-  actorBkg: "#eef0fe",
-  actorBorder: "#a5abf6",
+  actorBkg: "#eaf2fd",
+  actorBorder: "#93b9ec",
   signalColor: "#6e6e73",
-  labelBoxBkgColor: "#eef0fe",
+  labelBoxBkgColor: "#eaf2fd",
 };
 
 const DARK = {
   ...LIGHT,
   darkMode: true,
   background: "#1c1c1e",
-  primaryColor: "#2b2c4a",
-  primaryBorderColor: "#6366f1",
+  primaryColor: "#1f2d42",
+  primaryBorderColor: "#4c97f0",
   primaryTextColor: "#f5f5f7",
   secondaryColor: "#2c2c2e",
   secondaryBorderColor: "#48484a",
@@ -189,10 +189,10 @@ const DARK = {
   clusterBorder: "#3a3a3c",
   noteBkgColor: "#3a3220",
   noteBorderColor: "#7a6224",
-  actorBkg: "#2b2c4a",
-  actorBorder: "#6366f1",
+  actorBkg: "#1f2d42",
+  actorBorder: "#4c97f0",
   signalColor: "#a1a1a6",
-  labelBoxBkgColor: "#2b2c4a",
+  labelBoxBkgColor: "#1f2d42",
 };
 
 const MERMAID_CSS = `
