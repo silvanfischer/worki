@@ -23,6 +23,8 @@ pub struct ClaudeProtocol {
     /// worki's control requests waiting for an answer, by request id, with what they ask.
     asked: HashMap<String, Value>,
     effort: Option<String>,
+    /// Display names of the models Claude Code offers, by model id.
+    model_names: HashMap<String, String>,
     /// The message and content block being streamed, per subagent (`None` for the main agent).
     streaming: HashMap<Option<String>, (String, u64)>,
     /// Open permission requests and the tool input they were asked with.
@@ -95,11 +97,26 @@ impl ClaudeProtocol {
                             .filter_map(|l| l.as_str().map(str::to_owned))
                             .collect(),
                     })
-                    .filter(|m| !m.value.is_empty())
-                    .collect();
+                    .filter(|m: &ModelChoice| !m.value.is_empty())
+                    .collect::<Vec<_>>();
+                for m in models.iter().filter(|m| m.value != "default") {
+                    if let Some(id) = &m.model {
+                        self.model_names
+                            .entry(id.clone())
+                            .or_insert(m.label.clone());
+                    }
+                }
+                // Until the first turn says otherwise, the agent runs its default model.
+                if self.state.model.is_none() {
+                    self.state.model = models
+                        .iter()
+                        .find(|m| m.value == "default")
+                        .and_then(|m| m.model.clone());
+                }
                 if let Some(mode) = answer["current_permission_mode"].as_str() {
                     self.state.permission_mode = Some(mode.into());
                 }
+                self.changed = true;
                 vec![
                     ChatEvent::Options {
                         models,
@@ -481,8 +498,12 @@ impl ChatProtocol for ClaudeProtocol {
         if !std::mem::take(&mut self.changed) {
             return None;
         }
+        let mut agent = self.state.clone();
+        agent.model = agent
+            .model
+            .map(|id| self.model_names.get(&id).cloned().unwrap_or(id));
         Some(StateUpdate {
-            agent: Some(self.state.clone()),
+            agent: Some(agent),
             usage: self.usage.take(),
         })
     }
@@ -781,7 +802,8 @@ mod tests {
                         "models": [
                             { "value": "opus", "resolvedModel": "claude-opus-5-5", "displayName": "Opus 5.5",
                               "description": "For complex work", "supportedEffortLevels": ["low", "high"] },
-                            { "value": "haiku", "resolvedModel": "claude-haiku-5-5", "displayName": "Haiku 5.5" }
+                            { "value": "haiku", "resolvedModel": "claude-haiku-5-5", "displayName": "Haiku 5.5" },
+                            { "value": "default", "resolvedModel": "claude-opus-5-5", "displayName": "Default (recommended)" }
                         ]
                     }
                 }
@@ -799,6 +821,10 @@ mod tests {
         assert_eq!(models[0].effort_levels, ["low", "high"]);
         assert!(models[1].effort_levels.is_empty());
         assert!(permission_modes.contains(&"acceptEdits".to_string()));
+        // The status bar shows the default model by name before the first turn.
+        let state = p.take_state().unwrap().agent.unwrap();
+        assert_eq!(state.model.as_deref(), Some("Opus 5.5"));
+        assert_eq!(state.permission_mode.as_deref(), Some("default"));
 
         let respond = |p: &mut ClaudeProtocol, line: &str, answer: Value| {
             let request: Value = serde_json::from_str(line).unwrap();
