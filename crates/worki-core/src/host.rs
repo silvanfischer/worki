@@ -254,7 +254,11 @@ async fn local_tool(program: &str) -> Option<PathBuf> {
         return Some(path.clone());
     }
     let name = program.to_owned();
-    let path = PathBuf::from(tokio::task::spawn_blocking(move || host_which(&name)).await.ok()??);
+    let path = PathBuf::from(
+        tokio::task::spawn_blocking(move || host_which(&name))
+            .await
+            .ok()??,
+    );
     FOUND.lock().ok()?.insert(program.to_owned(), path.clone());
     Some(path)
 }
