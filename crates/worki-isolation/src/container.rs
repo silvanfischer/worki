@@ -175,6 +175,55 @@ impl Container {
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     }
 
+    /// Whether the installed sbx still offers the commands and flags worki uses, and prints a
+    /// sandbox list worki can read.
+    fn sbx_compatibility(&self) -> Check {
+        let version = self
+            .checked(["version"], "asking sbx for its version")
+            .ok()
+            .and_then(|v| v.split_whitespace().nth(2).map(str::to_owned))
+            .unwrap_or_else(|| "sbx".into());
+        let mut problems = Vec::new();
+        for (command, flags) in SBX_USES {
+            let mut args = command.to_vec();
+            args.push("--help");
+            match self.command().and_then(|mut c| Ok(c.args(&args).output()?)) {
+                Ok(out) if out.status.success() => {
+                    let help = String::from_utf8_lossy(&out.stdout);
+                    let missing = missing_flags(&help, flags);
+                    if !missing.is_empty() {
+                        problems.push(format!(
+                            "`sbx {}` has no {}",
+                            command.join(" "),
+                            missing.join(", ")
+                        ));
+                    }
+                }
+                _ => problems.push(format!("`sbx {}` is gone", command.join(" "))),
+            }
+        }
+        if let Err(e) = self
+            .checked(["ls", "--json"], "listing sandboxes")
+            .and_then(|json| parse_sbx_listing(&json))
+        {
+            problems.push(format!("{e:#}"));
+        }
+        let check = Check::new(
+            "compatible",
+            problems.is_empty(),
+            format!("worki works with {version}"),
+            format!("{version} changed in ways worki doesn't handle yet"),
+        );
+        if problems.is_empty() {
+            check
+        } else {
+            check.detail(format!(
+                "{}. Creating or starting sandboxes may fail; look for a worki update, or go back to an earlier sbx.",
+                problems.join("; ")
+            ))
+        }
+    }
+
     /// Force-removes the named environments.
     fn remove_all(&self, names: &[String], what: &str) -> Result<()> {
         if names.is_empty() {
@@ -218,7 +267,9 @@ impl Container {
         let mut args: Vec<String> = Vec::new();
         match self.engine {
             Engine::Sbx => {
-                args.extend(["create", "--name", name, "-q"].map(String::from));
+                // No `-q`: newer sbx versions turned agents into `create` subcommands that
+                // reject it, and worki doesn't show sbx's progress output anyway.
+                args.extend(["create", "--name", name].map(String::from));
                 match &self.template {
                     Some(template) => args.extend([
                         "-t".into(),
@@ -249,8 +300,18 @@ impl Container {
                 ]);
             }
         }
-        self.checked(&args, &format!("creating the {}", self.engine.noun()))
-            .map(drop)
+        match self.checked(&args, &format!("creating the {}", self.engine.noun())) {
+            Ok(_) => Ok(()),
+            // Created before but not found in the listing (e.g. the engine changed its output
+            // format): use it rather than fail. sbx starts it on `exec`; containers need a start.
+            Err(e) if already_exists(&e) => match self.engine {
+                Engine::Sbx => Ok(()),
+                _ => self
+                    .checked(["start", name], "starting the container")
+                    .map(drop),
+            },
+            Err(e) => Err(e),
+        }
     }
 
     /// Docker and Podman can't `exec` into a stopped container (sbx starts it itself).
@@ -393,23 +454,66 @@ fn stream_lines(cmd: &mut Command, log: &mut dyn FnMut(String)) -> Result<()> {
     Ok(())
 }
 
-/// `sbx ls --json`: `{"sandboxes":[{name, status, workspaces:[…]}]}`.
+/// `sbx ls --json`: a list of `{name, status, workspaces:[…]}` (sbx 0.51 and later), or the same
+/// list under `sandboxes` (earlier versions).
 fn parse_sbx_listing(json: &str) -> Result<Vec<Listed>> {
     let value: Value = serde_json::from_str(json).context("unexpected `sbx ls --json` output")?;
-    Ok(value["sandboxes"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|s| {
-            Some(Listed {
-                name: s["name"].as_str()?.to_owned(),
+    let sandboxes = match &value {
+        Value::Array(list) => list,
+        Value::Object(o) if o.is_empty() => return Ok(Vec::new()),
+        _ => value["sandboxes"].as_array().ok_or_else(|| {
+            anyhow::anyhow!("`sbx ls --json` prints a format this version of worki doesn't know")
+        })?,
+    };
+    sandboxes
+        .iter()
+        .map(|s| {
+            Ok(Listed {
+                name: s["name"]
+                    .as_str()
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("`sbx ls --json` lists sandboxes without a name field")
+                    })?
+                    .to_owned(),
                 running: s["status"].as_str() == Some("running"),
                 workdir: s["workspaces"][0]
                     .as_str()
                     .map(|w| PathBuf::from(w.split(':').next().unwrap_or(w))),
             })
         })
-        .collect())
+        .collect()
+}
+
+/// The engine refused to create an environment because one with that name exists: sbx says
+/// "already exists", Docker and Podman "is already in use".
+fn already_exists(error: &anyhow::Error) -> bool {
+    let text = format!("{error:#}");
+    text.contains("already exists") || text.contains("is already in use")
+}
+
+/// What worki runs sbx with, as `(subcommand, flags it passes)`. The doctor checks the
+/// installed sbx still offers each, since sbx changes its command line between releases.
+const SBX_USES: &[(&[&str], &[&str])] = &[
+    (&["create"], &["--name", "--pull", "--template"]),
+    (&["exec"], &["--interactive", "--tty", "--workdir", "--env"]),
+    (&["ls"], &["--json"]),
+    (&["rm"], &["--force"]),
+    (&["stop"], &[]),
+    (&["template", "ls"], &["--json"]),
+    (&["template", "rm"], &["--force"]),
+    (&["template", "save"], &[]),
+];
+
+/// The flags of `uses` that `help` (a subcommand's `--help` output) doesn't mention.
+fn missing_flags<'a>(help: &str, uses: &[&'a str]) -> Vec<&'a str> {
+    uses.iter()
+        .copied()
+        .filter(|flag| {
+            !help
+                .split(|c: char| c.is_whitespace() || c == ',' || c == '=')
+                .any(|word| word == *flag)
+        })
+        .collect()
 }
 
 /// `docker ps --format json` prints one object per line with `Names` as a string and `Labels` as
@@ -1028,6 +1132,9 @@ impl Backend for Container {
         if !running {
             return checks;
         }
+        if self.engine == Engine::Sbx {
+            checks.push(self.sbx_compatibility());
+        }
         if self.engine != Engine::Sbx {
             let present = self.image_present();
             let mut check = Check::new(
@@ -1398,6 +1505,46 @@ mod tests {
         );
         assert!(!l[1].running);
         assert!(parse_sbx_listing("{}").unwrap().is_empty());
+        let list = r#"[{"name":"worki-sam-ec91ee","status":"stopped","workspaces":["/w"]}]"#;
+        assert_eq!(
+            parse_sbx_listing(list).unwrap(),
+            [Listed {
+                name: "worki-sam-ec91ee".into(),
+                running: false,
+                workdir: Some("/w".into()),
+            }]
+        );
+        assert!(parse_sbx_listing("[]").unwrap().is_empty());
+        assert!(parse_sbx_listing(r#"{"items":[]}"#).is_err());
+        assert!(parse_sbx_listing(r#"[{"id":"x"}]"#).is_err());
+    }
+
+    /// Against the installed sbx: `cargo test -p worki-isolation sbx_is_compatible -- --ignored`.
+    #[test]
+    #[ignore]
+    fn sbx_is_compatible() {
+        let check = Container::new(Engine::Sbx, DEFAULT_SANDBOX_IMAGE.into()).sbx_compatibility();
+        assert!(check.ok, "{:?}: {:?}", check.label, check.detail);
+    }
+
+    #[test]
+    fn finds_flags_missing_from_help() {
+        let help = "Flags:\n      --name string   Name\n  -t, --template string   Image\n      --pull=missing";
+        assert_eq!(
+            missing_flags(help, &["--name", "--template", "--pull", "-q"]),
+            ["-q"]
+        );
+        assert_eq!(missing_flags(help, &["--nam"]), ["--nam"]);
+    }
+
+    #[test]
+    fn recognizes_an_existing_environment() {
+        let sbx = anyhow::anyhow!("creating the sandbox failed: error: sandbox 'worki-sam-ec91ee' already exists; connect to the existing sandbox");
+        let docker = anyhow::anyhow!("creating the container failed: Conflict. The container name \"/worki-a\" is already in use by container \"abc\"");
+        assert!(already_exists(&sbx) && already_exists(&docker));
+        assert!(!already_exists(&anyhow::anyhow!(
+            "creating the sandbox failed: unknown flag: -q"
+        )));
     }
 
     #[test]
