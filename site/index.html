@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>worki — coding agents, each locked in its own sandbox</title>
+  <meta name="description" content="A native macOS app that runs every coding agent in its own sandbox and its own git worktree, away from your keys, your browser and your other repositories.">
+  <meta property="og:title" content="worki">
+  <meta property="og:description" content="Run coding agents in parallel, each locked in its own sandbox and its own git worktree.">
+  <meta property="og:image" content="screenshots/main.png">
+  <meta name="color-scheme" content="light dark">
+  <link rel="icon" type="image/png" href="favicon.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="nav">
+    <a class="brand" href="#top"><img src="icon.png" alt="" width="28" height="28">worki</a>
+    <nav>
+      <a href="#isolation">Isolation</a>
+      <a href="#chat">Chat</a>
+      <a href="#review">Pull requests</a>
+      <a href="#start">Get started</a>
+      <a class="nav-github" href="https://github.com/silvanfischer/worki">GitHub</a>
+    </nav>
+  </header>
+
+  <main id="top">
+    <section class="hero">
+      <img class="hero-icon" src="icon.png" alt="worki icon" width="112" height="112">
+      <h1>Let coding agents run free.<br><span>Locked in their own sandbox.</span></h1>
+      <p class="lead">
+        worki runs every coding agent in its own sandbox and its own git worktree. It reaches the
+        code you gave it, and nothing else: not your SSH keys, not your browser, not your other
+        repositories.
+      </p>
+      <ul class="backends" aria-label="Isolation backends">
+        <li>User Isolation</li>
+        <li>Docker Sandboxes</li>
+        <li>Docker</li>
+        <li>Podman</li>
+      </ul>
+      <div class="actions">
+        <a class="button primary download" href="https://github.com/silvanfischer/worki/releases/latest">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0-5-5m5 5 5-5M5 21h14"/></svg>
+          Download for macOS
+        </a>
+        <a class="button" href="https://github.com/silvanfischer/worki">View on GitHub</a>
+      </div>
+      <p class="fine"><span class="version"></span>macOS 13 or later · Apple Silicon and Intel · Signed and notarized · MIT licensed</p>
+      <figure class="shot hero-shot">
+        <img src="screenshots/main.png" width="3200" height="2000"
+             alt="worki with Claude Code running in a Docker Sandbox, and two agents waiting under Needs you">
+      </figure>
+    </section>
+
+    <section class="why">
+      <p>
+        Coding agents are at their best when you let them run on their own: accept edits, run the
+        tests, try again. That's exactly when you don't want them near anything else. In worki,
+        isolation isn't a plugin or a wrapper script. It's how every agent starts.
+      </p>
+      <div class="reach">
+        <div class="can">
+          <h3>What an agent can reach</h3>
+          <ul>
+            <li>Its own worktree, at the same path as on your Mac</li>
+            <li>The parts of <code>.git</code> that committing needs</li>
+            <li>Tools you install into its environment</li>
+            <li>Tokens you hand it, kept in your Keychain</li>
+          </ul>
+        </div>
+        <div class="cannot">
+          <h3>What it can't</h3>
+          <ul>
+            <li>Your home folder, with your SSH keys</li>
+            <li>Your browser profiles</li>
+            <li>Your other repositories and worktrees</li>
+            <li>Git hooks and config that later run as you</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section id="isolation" class="feature">
+      <div class="heading">
+        <p class="eyebrow">Isolation, built in</p>
+        <h2>Pick where agents run. worki sets it up, checks it and cleans up after.</h2>
+        <p>Choose globally, per project or per worktree.</p>
+      </div>
+      <div class="cards">
+        <article><h3>User Isolation</h3><p>A hidden macOS user that can only reach the worktrees it was given. Your home folder stays unreadable.</p><span>Built in</span></article>
+        <article><h3>Docker Sandboxes</h3><p>Its own Linux microVM for every worktree.</p><span>Docker Sandboxes</span></article>
+        <article><h3>Docker</h3><p>Its own container per worktree, from a small image worki builds for you.</p><span>Docker Desktop</span></article>
+        <article><h3>Podman</h3><p>The same containers, on a Podman machine.</p><span>Podman</span></article>
+        <article><h3>None</h3><p>Runs as you, for work you trust.</p><span>Nothing</span></article>
+      </div>
+      <figure class="shot">
+        <img src="screenshots/isolation.png" width="3200" height="2000" loading="lazy"
+             alt="A worktree's isolation settings with passing checks and Save snapshot">
+      </figure>
+      <ul class="points">
+        <li><b>Only the worktree.</b> It appears at the same path as on your Mac. Git hooks and config stay read-only, so an agent can't plant anything that later runs as you.</li>
+        <li><b>A doctor for every backend.</b> Plain-language checks with one-click fixes: create the agent user, start the daemon, build the image.</li>
+        <li><b>Agents ready inside.</b> Install Claude Code or Codex in the environment, bring your settings and skills, and sign in with your subscription.</li>
+        <li><b>Secrets stay in your Keychain</b> and reach sessions as environment variables.</li>
+        <li><b>Snapshots.</b> Install a JDK or system packages once; new worktrees start with them.</li>
+        <li><b>No leftovers.</b> Environments go away with their worktree or project.</li>
+      </ul>
+    </section>
+
+    <section id="chat" class="feature">
+      <div class="heading">
+        <p class="eyebrow">Chat or terminal</p>
+        <h2>Run Claude Code in its terminal, or as a chat worki draws itself.</h2>
+      </div>
+      <div class="pair">
+        <figure class="shot">
+          <img src="screenshots/chat.png" width="3200" height="2000" loading="lazy"
+               alt="Claude Code as a chat with a diagram, a chart and a permission request">
+          <figcaption>Answers in Markdown, tool calls folded to one line, questions as buttons, and diagrams and charts in place.</figcaption>
+        </figure>
+        <figure class="shot">
+          <img src="screenshots/terminal.png" width="3200" height="2000" loading="lazy"
+               alt="Claude Code in its terminal, running the tests in a Docker Sandbox">
+          <figcaption>Real, GPU-rendered terminals that keep running while you switch worktrees.</figcaption>
+        </figure>
+      </div>
+      <ul class="points">
+        <li><b>See what it's doing.</b> The running command, background jobs, and how long the turn has run.</li>
+        <li><b>Switch while you talk.</b> Model, effort and permission mode sit under the message box.</li>
+        <li><b>Attach files and paste screenshots.</b> They reach agents in any isolation.</li>
+        <li><b>Picks up where you left off.</b> Conversations reopen with their history.</li>
+      </ul>
+    </section>
+
+    <section id="review" class="feature">
+      <div class="heading">
+        <p class="eyebrow">From task to pull request</p>
+        <h2>Commit, rebase, review and open the pull request without leaving the app.</h2>
+      </div>
+      <figure class="shot">
+        <img src="screenshots/branch.png" width="3200" height="2000" loading="lazy"
+             alt="The Branch tab with the branch's status, its commits and the open pull request">
+      </figure>
+      <ul class="points">
+        <li><b>Commit</b> the files you pick, or ask the agent to.</li>
+        <li><b>Branch tab.</b> How the branch stands against the branch it started from, with a safe Rebase and every file it touched.</li>
+        <li><b>Pull requests</b> through the GitHub CLI: open one, follow its checks, and bring review comments back to the agent.</li>
+        <li><b>Review in place.</b> Comment on any diff line and send the comments to the agent as one review.</li>
+      </ul>
+    </section>
+
+    <section class="feature">
+      <div class="heading">
+        <p class="eyebrow">Everything around it</p>
+        <h2>Built for running many agents at once.</h2>
+      </div>
+      <div class="grid">
+        <article><h3>Parallel worktrees</h3><p>Branch off any branch in one step, with a setup script that runs in the agent's isolation.</p></article>
+        <article><h3>See who needs you</h3><p>Agents waiting for an answer show under Needs you, with a notification and a Dock badge.</p></article>
+        <article><h3>Remote projects</h3><p>Work on repositories on an SSH host. Sessions run in tmux and survive a dropped connection.</p></article>
+        <article><h3>Keyboard first</h3><p><kbd>⌘K</kbd> jumps anywhere, <kbd>⌘T</kbd> starts an agent, <kbd>⌘J</kbd> shows the changes.</p></article>
+        <article><h3>Agents stay put</h3><p>Environments keep running when worki quits, and Claude Code continues its conversations.</p></article>
+        <article><h3>Open in anything</h3><p>Jump to the worktree in your editor or terminal from the toolbar.</p></article>
+      </div>
+      <figure class="shot">
+        <img src="screenshots/settings.png" width="3200" height="2000" loading="lazy"
+             alt="Isolation settings with checks and the agents installed in the sandbox">
+      </figure>
+    </section>
+
+    <section id="start" class="start">
+      <h2>Get started</h2>
+      <ol>
+        <li><b>Download</b> the latest release. It's a universal app, signed and notarized by Apple.</li>
+        <li><b>Drag worki into Applications</b> and open it.</li>
+        <li><b>Add a repository</b>, create a worktree, pick its isolation and start an agent. The doctor walks you through anything missing.</li>
+      </ol>
+      <a class="button primary download" href="https://github.com/silvanfischer/worki/releases/latest">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0-5-5m5 5 5-5M5 21h14"/></svg>
+        Download for macOS
+      </a>
+      <p class="fine">For container isolation, install Docker Sandboxes, Docker Desktop or Podman. User Isolation needs nothing extra.</p>
+      <details>
+        <summary>Build from source</summary>
+        <p>You need Rust, Node 20 or later, pnpm and the Xcode command line tools.</p>
+        <pre><code>git clone https://github.com/silvanfischer/worki.git
+cd worki
+./start_dev.sh</code></pre>
+      </details>
+    </section>
+  </main>
+
+  <footer>
+    <span>worki is free and open source under the MIT license.</span>
+    <nav>
+      <a href="https://github.com/silvanfischer/worki">GitHub</a>
+      <a href="https://github.com/silvanfischer/worki/releases">Releases</a>
+      <a href="https://github.com/silvanfischer/worki/issues">Issues</a>
+    </nav>
+  </footer>
+
+  <script>
+    fetch("https://api.github.com/repos/silvanfischer/worki/releases/latest")
+      .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
+      .then((release) => {
+        const dmg = release.assets.find((a) => a.name.endsWith(".dmg"));
+        if (dmg) document.querySelectorAll(".download").forEach((a) => (a.href = dmg.browser_download_url));
+        document.querySelector(".version").textContent = `Version ${release.tag_name.replace(/^v/, "")} · `;
+      })
+      .catch(() => {});
+  </script>
+</body>
+</html>
