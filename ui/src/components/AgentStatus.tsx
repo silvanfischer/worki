@@ -1,8 +1,10 @@
 import clsx from "clsx";
-import { Gauge } from "lucide-react";
+import { Check, Copy, Gauge } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 
-import type { SessionInfo } from "../lib/api";
+import { api, errorMessage, type SessionInfo } from "../lib/api";
+import { toast } from "../lib/toast";
 import { formatTokens, totalUsage } from "../lib/usage";
 
 export const PERMISSION_MODES: Record<string, string> = {
@@ -38,12 +40,12 @@ export function AgentStatus({ session }: { session: SessionInfo }) {
   const context = a.contextUsed !== null ? Math.round(a.contextUsed) : null;
 
   return (
-    <div ref={ref} className="@container relative shrink-0 border-t border-line">
+    <div ref={ref} className="@container relative flex shrink-0 border-t border-line">
       <button
         onClick={() => setOpen((o) => !o)}
         title="Agent status"
         className={clsx(
-          "flex h-6 w-full items-center gap-3 overflow-hidden px-3 text-[11px] whitespace-nowrap text-muted hover:bg-hover hover:text-fg",
+          "flex h-6 min-w-0 flex-1 items-center gap-3 overflow-hidden px-3 text-[11px] whitespace-nowrap text-muted hover:bg-hover hover:text-fg",
           open && "bg-hover text-fg",
         )}
       >
@@ -60,6 +62,7 @@ export function AgentStatus({ session }: { session: SessionInfo }) {
         {a.costUsd !== null && <span className="hidden @md:inline">${a.costUsd.toFixed(2)}</span>}
         {context !== null && <ContextMeter percent={context} />}
       </button>
+      <CopyContinue session={session} />
       {open && (
         <div className="absolute right-2 bottom-full z-40 mb-1 w-64 rounded-lg border border-line bg-elevated p-3 text-xs shadow-xl">
           <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5">
@@ -88,6 +91,45 @@ export function AgentStatus({ session }: { session: SessionInfo }) {
         </div>
       )}
     </div>
+  );
+}
+
+/** Copies the command that continues this conversation in the user's own terminal. */
+function CopyContinue({ session }: { session: SessionInfo }) {
+  const [copied, setCopied] = useState(false);
+  // Fetched ahead, so the click can write the clipboard while it still counts as one.
+  const { data: command, error } = useQuery({
+    queryKey: ["continueCommand", session.id],
+    queryFn: () => api.sessionContinueCommand(session.id),
+    staleTime: Infinity,
+    retry: false,
+  });
+  function copy() {
+    if (!command) {
+      toast(error ? errorMessage(error) : "Not ready yet, try again in a moment");
+      return;
+    }
+    navigator.clipboard.writeText(command).then(
+      () => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      },
+      (e) => toast(errorMessage(e)),
+    );
+  }
+  return (
+    <button
+      onClick={copy}
+      aria-label="Copy command to continue elsewhere"
+      title={
+        copied
+          ? "Copied"
+          : "Copy the command that continues this conversation in your own terminal, where it ran. Close it in worki first, so only one Claude Code writes to it."
+      }
+      className="flex h-6 w-7 shrink-0 items-center justify-center border-l border-line text-muted hover:bg-hover hover:text-fg"
+    >
+      {copied ? <Check size={11} className="text-added" /> : <Copy size={11} />}
+    </button>
   );
 }
 

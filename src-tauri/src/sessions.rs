@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::{Manager, State};
 use worki_core::launch::{
-    chat_history_command, chat_request, session_env, session_request, ChatAgent,
+    chat_history_command, chat_request, continue_command, session_env, session_request, ChatAgent,
 };
 use worki_core::{AgentProfile, Host, Isolation, Project, SavedSession};
 use worki_isolation::ssh::{Ssh, SshTarget};
@@ -561,6 +561,47 @@ async fn start_chat(
         tracing::warn!("saving session {}: {e:#}", info.id);
     }
     Ok(info)
+}
+
+/// The command that continues the agent session `id` in the user's own terminal, in the
+/// isolation it ran in (see `continue_command`).
+#[tauri::command]
+pub fn session_continue_command(state: State<'_, AppState>, id: String) -> CmdResult<String> {
+    let (worktree, profile_id) = match state.sessions.list().into_iter().find(|s| s.id == id) {
+        Some(info) => (info.worktree_path, info.profile_id),
+        None => {
+            let saved = state.projects.saved_sessions().map_err(err)?;
+            let s = saved
+                .into_iter()
+                .find(|s| s.id == id)
+                .ok_or_else(|| format!("no session {id}"))?;
+            (s.worktree_path, Some(s.profile_id))
+        }
+    };
+    let projects = &state.projects;
+    let profile_id = profile_id.ok_or("a shell has no conversation")?;
+    let profile = projects
+        .agent_settings()
+        .map_err(err)?
+        .profile(&profile_id)
+        .cloned()
+        .ok_or_else(|| format!("unknown agent profile {profile_id}"))?;
+    if ChatAgent::of(&profile).is_none() {
+        return Err(format!(
+            "{} conversations can't be continued outside worki",
+            profile.name
+        ));
+    }
+    let project = projects
+        .list_projects()
+        .map_err(err)?
+        .into_iter()
+        .find(|p| p.contains(&worktree))
+        .ok_or("the session's project is gone")?;
+    let isolation = projects
+        .isolation_for_worktree(&project, &worktree)
+        .map_err(err)?;
+    Ok(continue_command(&isolation, &worktree, &id))
 }
 
 /// The transcript the agent saved for a conversation, read where the agent runs. Empty when

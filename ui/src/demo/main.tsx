@@ -384,6 +384,8 @@ function handle(cmd: string, args: Record<string, any>): unknown {
       sendChat({ type: "session", ...chatSettings });
       return null;
     }
+    case "session_continue_command":
+      return `sbx exec -it -w ${checkout} -e IS_SANDBOX=1 worki-feat-checkout-redesign-3f2a bash -lc 'claude --resume ${args.id}'`;
     case "interrupt_chat":
       sendChat({ type: "notice", text: "Request interrupted by user" }, { type: "turnEnded", ok: false, interrupted: true, error: null });
       return null;

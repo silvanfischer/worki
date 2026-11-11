@@ -426,6 +426,8 @@ export const api = {
   answerChatPermission: (id: string, requestId: string, answer: PermissionAnswer) =>
     invoke<void>("answer_chat_permission", { id, requestId, answer }),
   interruptChat: (id: string) => invoke<void>("interrupt_chat", { id }),
+  /** The command that continues the session in the user's own terminal, where it ran. */
+  sessionContinueCommand: (id: string) => invoke<string>("session_continue_command", { id }),
   changeChatSetting: (id: string, setting: ChatSetting) => invoke<void>("change_chat_setting", { id, setting }),
   spawnSession: (
     projectId: string,

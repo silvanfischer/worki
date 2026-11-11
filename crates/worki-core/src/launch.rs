@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use worki_isolation::ssh::shell_quote;
-use worki_isolation::{LaunchRequest, SessionMeta};
+use worki_isolation::{Isolation, LaunchRequest, SessionMeta};
 
 use crate::model::AgentProfile;
 
@@ -100,6 +100,49 @@ pub fn chat_request(
             session: None,
         },
     ))
+}
+
+/// A command for the user's own terminal that continues Claude Code's conversation `session_id`
+/// where it ran: in the worktree, as the agent user, inside the sandbox or container, or on the
+/// SSH host, since that's where Claude Code saved it.
+pub fn continue_command(isolation: &Isolation, worktree: &Path, session_id: &str) -> String {
+    let claude = format!("claude --resume {}", shell_quote(session_id));
+    let dir = shell_quote(&worktree.to_string_lossy());
+    let in_dir = format!("cd {dir} && {claude}");
+    match isolation {
+        Isolation::None => in_dir,
+        Isolation::MacUser { user } => format!(
+            "sudo -u {} -H /bin/zsh -lc {}",
+            shell_quote(user),
+            shell_quote(&in_dir)
+        ),
+        Isolation::DockerSandbox { .. } | Isolation::Docker { .. } | Isolation::Podman { .. } => {
+            let engine = match isolation {
+                Isolation::DockerSandbox { .. } => "sbx",
+                Isolation::Docker { .. } => "docker",
+                _ => "podman",
+            };
+            format!(
+                "{engine} exec -it -w {dir} -e IS_SANDBOX=1 {} bash -lc {}",
+                worki_isolation::sandbox_name(worktree),
+                shell_quote(&claude)
+            )
+        }
+        Isolation::Ssh {
+            host, user, port, ..
+        } => {
+            let port = port.map(|p| format!(" -p {p}")).unwrap_or_default();
+            let target = match user {
+                Some(user) => format!("{user}@{host}"),
+                None => host.clone(),
+            };
+            format!(
+                "ssh -t{port} {} {}",
+                shell_quote(&target),
+                shell_quote(&in_dir)
+            )
+        }
+    }
 }
 
 /// Prints the transcript the agent saved for the conversation `session_id` (nothing when it has
@@ -448,6 +491,49 @@ mod tests {
         assert_eq!(
             session_request(None, Path::new("/w"), vec![], None, false, None).command,
             None
+        );
+    }
+
+    #[test]
+    fn continues_the_conversation_where_it_ran() {
+        let wt = Path::new("/w/fix login");
+        let in_dir = "cd '/w/fix login' && claude --resume 'abc'";
+        assert_eq!(continue_command(&Isolation::None, wt, "abc"), in_dir);
+        assert_eq!(
+            continue_command(
+                &Isolation::MacUser {
+                    user: "_worki".into()
+                },
+                wt,
+                "abc"
+            ),
+            format!("sudo -u '_worki' -H /bin/zsh -lc {}", shell_quote(in_dir))
+        );
+        let sbx = continue_command(
+            &Isolation::DockerSandbox {
+                image: "claude".into(),
+                template: None,
+            },
+            wt,
+            "abc",
+        );
+        assert!(sbx.starts_with("sbx exec -it -w '/w/fix login' -e IS_SANDBOX=1 worki-fix-login-"));
+        assert!(sbx.ends_with(&format!(
+            " bash -lc {}",
+            shell_quote("claude --resume 'abc'")
+        )));
+        assert_eq!(
+            continue_command(
+                &Isolation::Ssh {
+                    host: "dev".into(),
+                    user: Some("me".into()),
+                    port: Some(2222),
+                    keep_alive: true,
+                },
+                wt,
+                "abc"
+            ),
+            format!("ssh -t -p 2222 'me@dev' {}", shell_quote(in_dir))
         );
     }
 

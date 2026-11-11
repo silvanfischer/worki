@@ -124,6 +124,7 @@ pub fn run() {
             sessions::send_chat_message,
             sessions::answer_chat_permission,
             sessions::interrupt_chat,
+            sessions::session_continue_command,
             sessions::change_chat_setting,
             sessions::attach_session,
             sessions::detach_session,
