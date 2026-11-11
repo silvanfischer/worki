@@ -16,7 +16,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/main.png" alt="worki with Claude Code running in a Docker Sandbox, two agents waiting under Needs you" width="900">
+  <img src="docs/screenshots/hero.png" alt="A Claude Code chat in worki profiling slow tests, with a timing chart and three background jobs running" width="900">
 </p>
 
 Coding agents are at their best when you let them run on their own: accept edits, run the tests,

@@ -98,12 +98,86 @@ const sessions = [
   session("s2", login, "waiting", { attention: "Claude needs your permission to use Bash" }),
   session("s3", refunds, "working"),
   session("s4", staging, "waiting", { attention: "Which region should the staging cluster use?" }),
-  session("s5", checkout, "waiting", {
+  session("s5", checkout, scene === "hero" ? "working" : "waiting", {
     kind: "chat",
-    attention: "Allow Bash?",
+    attention: scene === "hero" ? null : "Allow Bash?",
     createdAt: now + 1,
     agent: { model: "Opus 5.5", effort: "high", permissionMode: "default", contextUsed: 34, contextSize: 200_000, costUsd: 1.84, version: "2.1.319" },
   }),
+];
+
+const bash = (id: string, description: string, command: string, output: string | null, background = false) => [
+  { type: "toolCall", id, name: "Bash", parent: null, input: { command, description, ...(background && { run_in_background: true }) } },
+  ...(output === null ? [] : [{ type: "toolResult", id, parent: null, isError: false, output }]),
+];
+
+const timingChart = `<div class="c"><div class="h"><b>Where the checkout tests spend their time</b><span>2.41 s in total</span></div>${[
+  ["Summary", 52, "1.26 s"],
+  ["Cart", 24, "0.58 s"],
+  ["LineItem", 14, "0.33 s"],
+  ["Shipping", 10, "0.24 s"],
+]
+  .map(([name, share, time]) => `<div class="r"><span>${name}</span><div class="t"><i style="--w:${share}%"></i></div><b>${time}</b></div>`)
+  .join("")}</div><style>.c{padding:18px 20px;border:1px solid var(--line);border-radius:14px;background:var(--elevated);font:13px/1.4 -apple-system,system-ui,sans-serif}.h{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:14px;color:var(--muted)}.h b{font-size:14px;font-weight:600;color:var(--fg)}.r{display:grid;grid-template-columns:72px 1fr 52px;gap:14px;align-items:center;margin:10px 0;color:var(--muted)}.t{height:8px;border-radius:4px;background:var(--hover)}.t i{display:block;height:100%;width:var(--w);border-radius:4px;background:linear-gradient(90deg,color-mix(in srgb,var(--accent) 55%,transparent),var(--accent))}.r b{font-weight:500;color:var(--fg);text-align:right;font-variant-numeric:tabular-nums}</style>`;
+
+/** The website's first screenshot: a chat at work, with jobs running in the background. Each
+ * step is sent as if it happened `ago` seconds earlier, so the timers show real-looking times. */
+const heroSteps: [number, object[]][] = [
+  [
+    150,
+    [
+      { type: "session", model: "claude-opus-5-5", permissionMode: "acceptEdits", effort: "high" },
+      {
+        type: "user",
+        text: "The checkout tests got slow. Find out where the time goes and fix it. Keep the dev server and a test watcher running while you work.",
+        attachments: [],
+      },
+      { type: "text", id: "h1:0", parent: null, text: "I'll start the dev server and a test watcher in the background, then profile the suite." },
+    ],
+  ],
+  [140, [...bash("h2", "Start the dev server", "pnpm dev", "Command running in background with ID: b1", true), { type: "backgroundTasks", tasks: [{ id: "b1", kind: "local_bash", description: "Start the dev server" }] }]],
+  [
+    132,
+    [
+      ...bash("h3", "Watch the checkout tests", "pnpm vitest src/checkout", "Command running in background with ID: b2", true),
+      {
+        type: "backgroundTasks",
+        tasks: [
+          { id: "b1", kind: "local_bash", description: "Start the dev server" },
+          { id: "b2", kind: "local_bash", description: "Watch the checkout tests" },
+        ],
+      },
+      ...bash("h4", "Profile the checkout tests", "pnpm vitest run src/checkout --reporter=json", "4 test files, 31 tests, 2.41 s"),
+      {
+        type: "text",
+        id: "h5:0",
+        parent: null,
+        text: `Half the time goes to \`Summary\`:\n\n\`\`\`html\n${timingChart}\n\`\`\`\n\nIt renders the whole cart again for every case. I'll share one fixture and mock the price API, and have an agent check the other suites for the same pattern.`,
+      },
+    ],
+  ],
+  [
+    70,
+    [
+      {
+        type: "backgroundTasks",
+        tasks: [
+          { id: "b1", kind: "local_bash", description: "Start the dev server" },
+          { id: "b2", kind: "local_bash", description: "Watch the checkout tests" },
+          { id: "b3", kind: "local_agent", description: "Look for slow fixtures in the other suites" },
+        ],
+      },
+      {
+        type: "toolCall",
+        id: "h6",
+        name: "Edit",
+        parent: null,
+        input: { file_path: `${checkout}/src/checkout/Summary.test.tsx`, old_string: "render(<Summary cart={makeCart()} />)", new_string: "render(<Summary cart={cart} />)" },
+      },
+      { type: "toolResult", id: "h6", parent: null, isError: false, output: "The file was updated." },
+    ],
+  ],
+  [24, bash("h7", "Run the checkout tests with timings", "pnpm vitest run src/checkout --reporter=verbose", null)],
 ];
 
 const chatEvents: object[] = [
@@ -347,7 +421,16 @@ function handle(cmd: string, args: Record<string, any>): unknown {
       if (args.id === "s1") setTimeout(() => channel.onmessage?.(Array.from(new TextEncoder().encode(terminal))), 50);
       if (args.id === "s5") {
         chatChannel = channel;
-        setTimeout(() => sendTo(channel, chatEvents), 50);
+        setTimeout(() => {
+          if (scene !== "hero") return sendTo(channel, chatEvents);
+          const realNow = Date.now;
+          sendTo(channel, chatEvents.slice(0, 1));
+          for (const [ago, events] of heroSteps) {
+            Date.now = () => realNow() - ago * 1000;
+            sendTo(channel, events);
+          }
+          Date.now = realNow;
+        }, 50);
       }
       return 1;
     }
@@ -439,7 +522,7 @@ const ui = {
   theme: "dark",
   terminalFontSize: 13,
   reopenSessions: true,
-  activeSession: { [checkout]: scene === "chat" ? "s5" : "s1" },
+  activeSession: { [checkout]: scene === "chat" || scene === "hero" ? "s5" : "s1" },
   showCommits: true,
   showPullRequests: true,
 };
