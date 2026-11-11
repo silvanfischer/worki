@@ -643,16 +643,6 @@ impl Mount {
 fn mounts(repo: &Path, worktree: &Path, admin_dir: Option<&Path>) -> Vec<Mount> {
     let git = repo.join(".git");
     let mount = |path: PathBuf, read_only| Mount { path, read_only };
-    if worktree == repo {
-        return [
-            mount(worktree.to_path_buf(), false),
-            mount(git.join("hooks"), true),
-            mount(git.join("config"), true),
-        ]
-        .into_iter()
-        .filter(|m| m.path.exists())
-        .collect();
-    }
     let mut writable = vec![git.join("objects"), git.join("refs"), git.join("logs")];
     writable.extend(admin_dir.map(Path::to_path_buf));
     for dir in &writable {
@@ -891,6 +881,7 @@ impl Backend for Container {
         let Some(worktree) = &ws.worktree else {
             return Ok(());
         };
+        crate::require_linked_worktree(&ws.repo, worktree)?;
         let name = sandbox_name(worktree);
         if let Some(listed) = self.list()?.into_iter().find(|s| s.name == name) {
             return self.ensure_running(&listed);
@@ -1404,22 +1395,6 @@ mod tests {
         assert_eq!(
             hooks.volume_arg(),
             format!("{0}:{0}:ro", repo.join(".git/hooks").display())
-        );
-
-        let main = mounts(&repo, &repo, None);
-        assert_eq!(
-            main[0],
-            Mount {
-                path: repo.clone(),
-                read_only: false
-            }
-        );
-        assert!(
-            !main.contains(&Mount {
-                path: repo.join(".git"),
-                read_only: false
-            }),
-            "main checkout already contains .git"
         );
     }
 

@@ -164,8 +164,11 @@ fn current_uid() -> u32 {
 /// From the first ancestor that others couldn't enter, every folder on the way gets a
 /// traverse-only entry and an inherit-only deny for future entries; every entry next to the
 /// route is denied unless it is itself on a route `user` was given earlier (it then carries an
-/// allow entry for `user`). Ancestors others could already enter are left alone: nothing below
-/// them was private to begin with.
+/// allow entry for `user`).
+///
+/// When every ancestor is open to others (a 755 home, `/Users/Shared`, most external drives),
+/// the same starts at the first ancestor you own, else at the target's parent, but only your
+/// own folders and entries get entries: other people's can't be changed by you.
 pub fn confine(targets: &[PathBuf], user: &str) -> Result<()> {
     confine_below(targets, user, Path::new("/"))
 }
@@ -181,33 +184,45 @@ fn confine_below(targets: &[PathBuf], user: &str, floor: &Path) -> Result<()> {
             .filter(|a| a.starts_with(floor))
             .collect();
         chain.reverse();
-        let mut start = None;
+        if chain.is_empty() {
+            continue;
+        }
+        let owned = |p: &Path| std::fs::symlink_metadata(p).is_ok_and(|m| m.uid() == uid);
+        let mut private = None;
         for (i, dir) in chain.iter().enumerate() {
             if !others_can_enter(dir)? {
-                start = Some(i);
+                private = Some(i);
                 break;
             }
         }
-        let Some(start) = start else { continue };
+        let open = private.is_none();
+        let start = private
+            .or_else(|| chain.iter().position(|d| owned(d)))
+            .unwrap_or(chain.len() - 1);
 
-        if let Some(dir) = chain[start..]
-            .iter()
-            .find(|d| std::fs::metadata(d).map_or(true, |m| m.uid() != uid))
-        {
-            bail!(
-                "{} is private and not owned by you, so it can't be opened for {user}",
-                dir.display()
-            );
+        if !open {
+            if let Some(dir) = chain[start..].iter().find(|d| !owned(d)) {
+                bail!(
+                    "{} is private and not owned by you, so it can't be opened for {user}",
+                    dir.display()
+                );
+            }
         }
+        let ours: Vec<&Path> = chain[start..]
+            .iter()
+            .copied()
+            .filter(|d| !open || owned(d))
+            .collect();
         // `chmod -a` strips these permissions from every deny entry, so it has to run before
         // the route's own deny entries are added.
         let route: Vec<&Path> = chain[start + 1..]
             .iter()
             .copied()
             .chain([target.as_path()])
+            .filter(|p| !open || owned(p))
             .collect();
         chmod(&["-h", "-a", &entry(user, DENY)], &route)?;
-        for dir in &chain[start..] {
+        for dir in &ours {
             add(dir, user, ROUTE)?;
             add(dir, user, NO_LIST)?;
             add(dir, user, &format!("{DENY},{DENY_NEW_ENTRIES}"))?;
@@ -215,7 +230,9 @@ fn confine_below(targets: &[PathBuf], user: &str, floor: &Path) -> Result<()> {
         // The allow entry also marks the target as routed, so later calls for other targets
         // don't deny it as a sibling.
         let marker = if target.is_dir() { ROUTE } else { FILE_ROUTE };
-        add(target, user, marker)?;
+        if !open || owned(target) {
+            add(target, user, marker)?;
+        }
 
         for dir in &chain[start..] {
             let mut deny = Vec::new();
@@ -223,13 +240,18 @@ fn confine_below(targets: &[PathBuf], user: &str, floor: &Path) -> Result<()> {
                 std::fs::read_dir(dir).with_context(|| format!("list {}", dir.display()))?
             {
                 let path = entry?.path();
-                if !on_route(&path) && !has_allow(&path, user)? {
+                if !on_route(&path) && (!open || owned(&path)) && !has_allow(&path, user)? {
                     deny.push(path);
                 }
             }
             let deny: Vec<&Path> = deny.iter().map(PathBuf::as_path).collect();
             for chunk in deny.chunks(200) {
-                chmod(&["-h", "+a", &entry(user, DENY)], chunk)?;
+                if !chmod(&["-h", "+a", &entry(user, DENY)], chunk)? && open {
+                    bail!(
+                        "couldn't keep {user} out of the folders next to {} (does this drive support access control lists?)",
+                        target.display()
+                    );
+                }
             }
         }
     }
@@ -335,6 +357,45 @@ mod tests {
         assert!(!lines(&dir.path().join("sub/new"))
             .iter()
             .any(|l| l.contains("add_subdirectory")));
+    }
+
+    /// A repository in folders everyone can enter (a 755 home, `/Users/Shared`): the folders
+    /// next to it are still denied.
+    #[test]
+    fn confines_targets_in_open_folders() {
+        let root = tempfile::tempdir().unwrap();
+        for dir in [root.path().to_path_buf(), root.path().join("shared")] {
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let shared = root.path().join("shared");
+        for d in [
+            "app/.git",
+            "other-repo",
+            "worktrees/app/a",
+            "worktrees/app/b",
+        ] {
+            std::fs::create_dir_all(shared.join(d)).unwrap();
+        }
+        std::fs::write(shared.join("notes.txt"), "secret").unwrap();
+
+        let targets = [shared.join("app/.git"), shared.join("worktrees/app/a")];
+        confine_below(&targets, "nobody", root.path()).unwrap();
+
+        let denied = |p: &str| {
+            lines(&shared.join(p)).iter().any(|l| {
+                l.contains("user:nobody deny")
+                    && !l.contains("deny list,add_file,add_subdirectory,delete_child")
+                    && !l.contains("only_inherit")
+            })
+        };
+        for p in ["notes.txt", "other-repo", "worktrees/app/b"] {
+            assert!(denied(p), "{p} should be denied");
+        }
+        for p in ["app", "app/.git", "worktrees", "worktrees/app/a"] {
+            assert!(!denied(p), "{p} should not be denied");
+        }
+        purge_routes(root.path(), "nobody").unwrap();
     }
 
     /// Uses `nobody` as the subject so the test user keeps its own access.

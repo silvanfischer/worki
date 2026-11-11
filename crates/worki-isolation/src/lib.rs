@@ -224,6 +224,21 @@ pub struct Launch {
     pub cwd: PathBuf,
 }
 
+/// Isolated agents run in linked worktrees only: in the main checkout, `.git` itself holds the
+/// index and HEAD, so all of it would have to be writable, config and hooks included.
+pub(crate) fn require_linked_worktree(repo: &Path, worktree: &Path) -> anyhow::Result<()> {
+    let same = match (repo.canonicalize(), worktree.canonicalize()) {
+        (Ok(repo), Ok(worktree)) => repo == worktree,
+        _ => repo == worktree,
+    };
+    if same {
+        bail!(
+            "Isolated agents only work in worktrees, not in the main checkout. Create a worktree for this task."
+        );
+    }
+    Ok(())
+}
+
 /// What an isolated agent may reach for one project: the repository's git data and, when given,
 /// one assigned worktree. `worktree_root` is only used to clean up grants from older versions.
 #[derive(Debug, Clone)]
@@ -533,6 +548,18 @@ pub fn current_user() -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn isolated_agents_need_a_linked_worktree() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("repo");
+        let wt = dir.path().join("wt");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&wt).unwrap();
+        let err = require_linked_worktree(&repo, &repo.join(".")).unwrap_err();
+        assert!(err.to_string().contains("only work in worktrees"));
+        require_linked_worktree(&repo, &wt).unwrap();
+    }
+
     use super::*;
 
     #[test]

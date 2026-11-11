@@ -293,12 +293,8 @@ impl Backend for MacUser {
         let mut targets = vec![git_dir.clone()];
         let mut admin = None;
         if let Some(worktree) = &ws.worktree {
+            crate::require_linked_worktree(&ws.repo, worktree)?;
             let worktree = canonical(worktree)?;
-            if worktree == canonical(&ws.repo)? {
-                bail!(
-                    "Isolated agents only work in worktrees, not in the main checkout. Create a worktree for this task."
-                );
-            }
             admin = Some(worktree_admin_dir(&worktree)?);
             targets.push(worktree);
         }
