@@ -1,6 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
 import {
+  ArrowDownToLine,
   BellRing,
   ChevronRight,
   X,
@@ -8,6 +9,7 @@ import {
   FolderGit2,
   GitBranch,
   House,
+  LoaderCircle,
   MoreHorizontal,
   Plus,
   Server,
@@ -19,6 +21,7 @@ import { api, type Project, type Worktree, worktreeLabel } from "../lib/api";
 import { useWorktreeComments } from "../lib/review";
 import { keys, useAddProject, useProjects, useSessions, useWorktrees, useWorktreeStatus } from "../lib/queries";
 import { useUi } from "../lib/store";
+import { installUpdate, useUpdates } from "../lib/updates";
 import { ActivityDot, summarize } from "./ActivityDot";
 import { ResizeHandle } from "./ResizeHandle";
 import { DiffStat, ErrorText, IconButton, Menu } from "./ui";
@@ -77,6 +80,7 @@ export function Sidebar() {
           <Settings size={14} />
           Settings
         </button>
+        <UpdateButton />
       </div>
     </aside>
   );
@@ -238,5 +242,33 @@ function NeedsYou({ projects }: { projects: Project[] }) {
         );
       })}
     </div>
+  );
+}
+
+/** Offers the newer release once one was found, and installs it on click. */
+function UpdateButton() {
+  const { available, status, progress, error } = useUpdates();
+  if (!available) return null;
+  const installing = status === "installing";
+  return (
+    <button
+      onClick={installUpdate}
+      disabled={installing}
+      title={
+        error
+          ? `The update failed: ${error}`
+          : `worki ${available.version} is available. Installs it and restarts worki; agents in sandboxes and containers keep running.`
+      }
+      className="ml-auto flex h-7 items-center gap-1.5 rounded-md bg-accent px-2 text-[12px] font-medium text-accent-fg hover:brightness-110 disabled:opacity-80"
+    >
+      {installing ? <LoaderCircle size={12} className="animate-spin" /> : <ArrowDownToLine size={12} />}
+      {installing
+        ? progress !== null
+          ? `Updating ${Math.round(progress * 100)}%`
+          : "Updating…"
+        : error
+          ? "Retry update"
+          : `Update to ${available.version}`}
+    </button>
   );
 }

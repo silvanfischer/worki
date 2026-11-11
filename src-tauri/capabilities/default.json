@@ -19,6 +19,8 @@
     "core:window:allow-set-theme",
     "core:window:allow-set-focus",
     "core:window:allow-unminimize",
-    "dialog:allow-message"
+    "dialog:allow-message",
+    "updater:default",
+    "process:allow-restart"
   ]
 }

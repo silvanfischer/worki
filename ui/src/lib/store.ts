@@ -56,6 +56,8 @@ interface UiState {
   reopenSessions: boolean;
   /** How agents that can chat open by default: as a chat or in a terminal. */
   agentView: SessionKind;
+  /** Look for new worki releases on start and every few hours. */
+  autoUpdate: boolean;
   /** Commit box, commit list and rebasing in the changes panel. */
   showCommits: boolean;
   /** Pull request section and status, which ask GitHub through `gh`. */
@@ -74,6 +76,7 @@ interface UiState {
   setTerminalFontSize: (size: number) => void;
   setReopenSessions: (on: boolean) => void;
   setAgentView: (view: SessionKind) => void;
+  setAutoUpdate: (on: boolean) => void;
   setShowCommits: (on: boolean) => void;
   setShowPullRequests: (on: boolean) => void;
   openDialog: (dialog: DialogState) => void;
@@ -101,6 +104,7 @@ export const useUi = create<UiState>()(
       terminalFontSize: 13,
       reopenSessions: true,
       agentView: "terminal",
+      autoUpdate: true,
       showCommits: true,
       showPullRequests: true,
       dialog: null,
@@ -128,6 +132,7 @@ export const useUi = create<UiState>()(
       setTerminalFontSize: (terminalFontSize) => set({ terminalFontSize }),
       setReopenSessions: (reopenSessions) => set({ reopenSessions }),
       setAgentView: (agentView) => set({ agentView }),
+      setAutoUpdate: (autoUpdate) => set({ autoUpdate }),
       setShowCommits: (showCommits) => set({ showCommits }),
       setShowPullRequests: (showPullRequests) => set({ showPullRequests }),
       openDialog: (dialog) => set({ dialog }),
@@ -146,6 +151,7 @@ export const useUi = create<UiState>()(
         terminalFontSize,
         reopenSessions,
         agentView,
+        autoUpdate,
         showCommits,
         showPullRequests,
         prDrafts,
@@ -162,6 +168,7 @@ export const useUi = create<UiState>()(
         terminalFontSize,
         reopenSessions,
         agentView,
+        autoUpdate,
         showCommits,
         showPullRequests,
         prDrafts,

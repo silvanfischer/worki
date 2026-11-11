@@ -1,12 +1,13 @@
 import { useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { MessageSquare, Monitor, Moon, SquareTerminal, Sun } from "lucide-react";
+import { LoaderCircle, MessageSquare, Monitor, Moon, RefreshCw, SquareTerminal, Sun } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
 import { api, errorMessage } from "../lib/api";
 import { keys, useIsolationSettings } from "../lib/queries";
 import { TERMINAL_FONT_SIZES, type Theme, useUi } from "../lib/store";
-import { Checkbox, ErrorText, Field, Select } from "./ui";
+import { checkForUpdates, useUpdates } from "../lib/updates";
+import { Button, Checkbox, ErrorText, Field, Select } from "./ui";
 
 const themes: { id: Theme; label: string; icon: ReactNode }[] = [
   { id: "system", label: "System", icon: <Monitor size={13} /> },
@@ -22,6 +23,9 @@ export function GeneralSettings() {
   const setFontSize = useUi((s) => s.setTerminalFontSize);
   const agentView = useUi((s) => s.agentView);
   const setAgentView = useUi((s) => s.setAgentView);
+  const autoUpdate = useUi((s) => s.autoUpdate);
+  const setAutoUpdate = useUi((s) => s.setAutoUpdate);
+  const updates = useUpdates();
   const reopen = useUi((s) => s.reopenSessions);
   const setReopen = useUi((s) => s.setReopenSessions);
   const { data: isolation } = useIsolationSettings();
@@ -101,6 +105,31 @@ export function GeneralSettings() {
               ))}
             </div>
           </Field>
+        </Group>
+
+        <Group title="Updates">
+          <Checkbox checked={autoUpdate} onChange={setAutoUpdate}>
+            <span className="text-[13px]">Check for updates automatically</span>
+            <span className="block text-xs text-faint">
+              Looks for a new worki release on GitHub when worki starts and every few hours. A new release shows an
+              Update button next to Settings.
+            </span>
+          </Checkbox>
+          <div className="flex items-center gap-3">
+            <Button onClick={() => checkForUpdates()} disabled={updates.status !== "idle"}>
+              {updates.status === "checking" ? <LoaderCircle size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+              Check now
+            </Button>
+            <span className="text-xs text-faint">
+              {updates.error
+                ? <span className="text-removed">Couldn't check: {updates.error}</span>
+                : updates.available
+                  ? `worki ${updates.available.version} is available. Use Update next to Settings.`
+                  : updates.checkedAt
+                    ? "worki is up to date."
+                    : null}
+            </span>
+          </div>
         </Group>
 
         <Group title="Startup and quit">

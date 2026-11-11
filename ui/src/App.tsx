@@ -21,6 +21,7 @@ import { api, errorMessage, isolationLabel, type SessionInfo } from "./lib/api";
 import { keys, useAddProject, useIsolationSettings, useProjects, useWorktrees } from "./lib/queries";
 import { useUi } from "./lib/store";
 import { useApplyTheme } from "./lib/theme";
+import { useAutoUpdates } from "./lib/updates";
 import { toast } from "./lib/toast";
 
 export function App() {
@@ -31,6 +32,7 @@ export function App() {
   const worktree = worktrees.find((w) => w.path === selectedWorktreePath) ?? worktrees[0];
   const qc = useQueryClient();
   useApplyTheme();
+  useAutoUpdates();
   const [palette, setPalette] = useState(false);
 
   useEffect(() => {

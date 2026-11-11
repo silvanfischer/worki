@@ -386,6 +386,10 @@ function handle(cmd: string, args: Record<string, any>): unknown {
     }
     case "session_continue_command":
       return `sbx exec -it -w ${checkout} -e IS_SANDBOX=1 worki-feat-checkout-redesign-3f2a bash -lc 'claude --resume ${args.id}'`;
+    case "plugin:updater|check":
+      return scene === "update"
+        ? { rid: 1, currentVersion: "0.2.2", version: "0.2.3", date: null, body: null, rawJson: {} }
+        : null;
     case "fetch_remote":
       return new Promise((resolve) => setTimeout(() => resolve(null), 800));
     case "list_branches":

@@ -37,6 +37,13 @@
       "minimumSystemVersion": "13.0",
       "entitlements": "Entitlements.plist",
       "hardenedRuntime": true
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEUwQkZGQUE5MkNEOUMwOUMKUldTY3dOa3NxZnEvNEI1N3VaTHE0KzBhNFgxQUxESjBoTTcxQ3EzNlUwamxPNHZRN1Qvc3lELzcK",
+      "endpoints": ["https://github.com/silvanfischer/worki/releases/latest/download/latest.json"]
     }
   }
 }
