@@ -58,7 +58,7 @@ export function ChatView({ session }: { session: SessionInfo }) {
 
   const running = session.state.kind === "running";
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div data-chat className="flex h-full min-h-0 flex-col">
       <div
         ref={scroller}
         onScroll={(e) => {
@@ -678,6 +678,23 @@ function Composer({ session, chat, onSend }: { session: SessionInfo; chat: Chat;
     if (busy) stop();
     if (chat.background.length > 0) stopJobs(chat.background.map((t) => t.id));
   };
+  const stopAllRef = useRef(stopAll);
+  stopAllRef.current = stopAll;
+  const canStop = busy || chat.background.length > 0;
+  useEffect(() => {
+    if (!canStop) return;
+    const onKey = (e: KeyboardEvent) => {
+      // Dialogs, the command palette and full-window visuals sit in a fixed full-window layer
+      // and close on Esc themselves.
+      if (e.key !== "Escape" || e.defaultPrevented || document.querySelector(".fixed.inset-0")) return;
+      const focus = document.activeElement;
+      if (focus && focus !== document.body && !input.current?.closest("[data-chat]")?.contains(focus)) return;
+      e.preventDefault();
+      stopAllRef.current();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [canStop]);
 
   return (
     <div className="shrink-0 border-t border-line px-5 py-3">
@@ -720,9 +737,6 @@ function Composer({ session, chat, onSend }: { session: SessionInfo; chat: Chat;
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
                 send();
-              } else if (e.key === "Escape" && (busy || chat.background.length > 0)) {
-                e.preventDefault();
-                stopAll();
               }
             }}
             placeholder={busy ? "Add to what the agent is doing…" : `Message ${session.title}`}

@@ -94,15 +94,6 @@ export function TerminalView({ sessionId, active }: { sessionId: string; active:
       // Falls back to the DOM renderer.
     }
 
-    term.attachCustomKeyEventHandler((e) => {
-      if (e.type !== "keydown" || !e.metaKey) return true;
-      if (e.key === "k") {
-        term.clear();
-        return false;
-      }
-      return true;
-    });
-
     let disposed = false;
     let lastSize = "";
     const fitNow = () => {
