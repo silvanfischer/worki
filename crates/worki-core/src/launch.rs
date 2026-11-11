@@ -223,8 +223,71 @@ fn agent_command(
                 ),
             }
         }
+        Some(codex @ "codex") => {
+            // Codex only reads its own login, not the key in the environment: sign the isolated
+            // environment in with the stored key once.
+            let login = if confined {
+                format!(
+                    "if [ -n \"$OPENAI_API_KEY\" ] && ! {codex} login status >/dev/null 2>&1; then \
+printenv OPENAI_API_KEY | {codex} login --with-api-key >/dev/null; fi; "
+                )
+            } else {
+                String::new()
+            };
+            let resume = session_id
+                .map(|id| {
+                    format!(
+                        "f=\"{CODEX_SESSIONS}\"/{}; if [ -s \"$f\" ]; then set -- resume \"$(cat \"$f\")\"; else set --; fi; ",
+                        shell_quote(id)
+                    )
+                })
+                .unwrap_or_default();
+            let notify = shell_quote(&format!(
+                "notify=[\"sh\",\"-c\",{},\"worki\"]",
+                toml_string(CODEX_NOTIFY)
+            ));
+            format!(
+                "export WORKI_TTY=\"$(tty)\"; {resume}{login}exec {} \"$@\" -c {notify}{prompt}",
+                profile.command
+            )
+        }
         _ => format!("exec {}{prompt}", profile.command),
     }
+}
+
+/// Where Codex's conversation id is kept per worki session, so a restored session resumes it.
+const CODEX_SESSIONS: &str = "${CODEX_HOME:-$HOME/.codex}/worki-sessions";
+
+/// Codex's `notify` program, called with a JSON payload after each turn and when it waits for an
+/// approval: it records the conversation (`thread-id`) for resuming and tells worki the agent
+/// needs the user, as a notification since Codex reports no start of work.
+const CODEX_NOTIFY: &str = r#"p="$1"
+d="${CODEX_HOME:-$HOME/.codex}/worki-sessions"
+id=$(printf '%s' "$p" | sed -n 's/.*"thread-id" *: *"\([^"]*\)".*/\1/p')
+if [ -n "$id" ] && [ -n "$WORKI_SESSION_ID" ]; then mkdir -p "$d" && printf '%s' "$id" > "$d/$WORKI_SESSION_ID"; fi
+case "$p" in
+  *approval-requested*) m="Codex needs your approval" ;;
+  *plan-mode-prompt*) m="Codex has a plan for you" ;;
+  *agent-turn-complete*) m="Codex finished" ;;
+  *) exit 0 ;;
+esac
+[ -n "$WORKI_TTY" ] || exit 0
+if [ -n "$TMUX" ]; then printf '\033Ptmux;\033\033]777;notify;Codex;%s\007\033\\' "$m"; else printf '\033]777;notify;Codex;%s\007' "$m"; fi > "$WORKI_TTY" 2>/dev/null
+exit 0"#;
+
+/// A TOML basic string.
+fn toml_string(s: &str) -> String {
+    let mut out = String::from("\"");
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
 /// Names Claude's conversation after the worki session, so starting the session again (after
@@ -554,6 +617,90 @@ mod tests {
         std::fs::create_dir_all(&project).unwrap();
         std::fs::write(project.join("abc.jsonl"), "{\"type\":\"user\"}\n").unwrap();
         assert_eq!(run(), (true, "{\"type\":\"user\"}\n".into()));
+    }
+
+    #[test]
+    fn codex_notify_is_valid_toml() {
+        let parsed: toml::Table =
+            toml::from_str(&format!("v = {}", super::toml_string(super::CODEX_NOTIFY))).unwrap();
+        assert_eq!(parsed["v"].as_str(), Some(super::CODEX_NOTIFY));
+    }
+
+    #[test]
+    fn codex_notify_records_the_conversation_and_tells_worki() {
+        let home = tempfile::tempdir().unwrap();
+        let tty = home.path().join("tty");
+        std::fs::write(&tty, "").unwrap();
+        let payload = r#"{"type":"agent-turn-complete","thread-id":"01a1cc36-bd4a-79e2-b9ee-bae4986f7c77","turn-id":"1","cwd":"/w","input-messages":["hi"],"last-assistant-message":"ok"}"#;
+        let ok = std::process::Command::new("/bin/sh")
+            .args(["-c", super::CODEX_NOTIFY, "worki", payload])
+            .env("HOME", home.path())
+            .env_remove("CODEX_HOME")
+            .env_remove("TMUX")
+            .env("WORKI_SESSION_ID", "s1")
+            .env("WORKI_TTY", &tty)
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok);
+        assert_eq!(
+            std::fs::read_to_string(home.path().join(".codex/worki-sessions/s1")).unwrap(),
+            "01a1cc36-bd4a-79e2-b9ee-bae4986f7c77"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&tty).unwrap(),
+            "\x1b]777;notify;Codex;Codex finished\x07"
+        );
+    }
+
+    #[test]
+    fn codex_resumes_its_conversation_and_signs_in_when_isolated() {
+        let profile = AgentProfile {
+            id: "codex".into(),
+            name: "Codex".into(),
+            command: "codex".into(),
+            install: None,
+        };
+        let home = tempfile::tempdir().unwrap();
+        let log = home.path().join("log");
+        let fake = format!(
+            "#!/bin/sh\nif [ \"$1 $2\" = \"login status\" ]; then [ -f {0}.login ]; exit $?; fi\n\
+if [ \"$1\" = login ]; then cat > {0}.login; echo login >> {0}; exit 0; fi\n\
+case \"$1\" in resume) echo \"resume $2\" ;; -c) echo new ;; esac >> {0}\n",
+            log.display()
+        );
+        std::fs::write(home.path().join("codex"), fake).unwrap();
+        std::fs::set_permissions(
+            home.path().join("codex"),
+            std::os::unix::fs::PermissionsExt::from_mode(0o755),
+        )
+        .unwrap();
+        let run = |confined: bool| {
+            let command = super::agent_command(&profile, Some("s1"), confined, None);
+            std::process::Command::new("/bin/sh")
+                .args(["-c", &command])
+                .env("PATH", format!("{}:/usr/bin:/bin", home.path().display()))
+                .env("HOME", home.path())
+                .env_remove("CODEX_HOME")
+                .env("OPENAI_API_KEY", "sk-test")
+                .status()
+                .unwrap()
+                .success()
+        };
+        assert!(run(false));
+        assert!(run(true));
+        let sessions = home.path().join(".codex/worki-sessions");
+        std::fs::create_dir_all(&sessions).unwrap();
+        std::fs::write(sessions.join("s1"), "01a1cc36").unwrap();
+        assert!(run(true));
+        assert_eq!(
+            std::fs::read_to_string(&log).unwrap(),
+            "new\nlogin\nnew\nresume 01a1cc36\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(log.with_extension("login")).unwrap(),
+            "sk-test\n"
+        );
     }
 
     #[test]

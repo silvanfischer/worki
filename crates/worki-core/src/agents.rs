@@ -41,7 +41,7 @@ const KITS: &[Kit] = &[
         config: &[".codex/config.toml", ".codex/AGENTS.md", ".codex/prompts"],
         rewrite_paths: &[".codex/config.toml"],
         strip_keys: None,
-        token_secret: None,
+        token_secret: Some("OPENAI_API_KEY"),
     },
 ];
 
@@ -258,7 +258,7 @@ mod tests {
             kit("claude").unwrap().token_secret,
             Some("CLAUDE_CODE_OAUTH_TOKEN")
         );
-        assert_eq!(kit("codex").unwrap().token_secret, None);
+        assert_eq!(kit("codex").unwrap().token_secret, Some("OPENAI_API_KEY"));
         assert!(kit("aider").is_none());
         assert!(kit("claude")
             .unwrap()

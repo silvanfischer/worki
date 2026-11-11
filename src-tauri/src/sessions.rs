@@ -105,7 +105,9 @@ async fn start_session(
         }
     );
     let saved = match (&profile, &profile_id) {
-        (Some(p), Some(profile_id)) if p.executable() == Some("claude") && !resumable => {
+        (Some(p), Some(profile_id))
+            if matches!(p.executable(), Some("claude" | "codex")) && !resumable =>
+        {
             Some(SavedSession {
                 id: id.clone(),
                 project_id: project.id.clone(),

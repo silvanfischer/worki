@@ -5,7 +5,7 @@ import { useState } from "react";
 
 import { type AgentStatus, api, errorMessage, type Isolation, type LogLine, scopeKey } from "../lib/api";
 import { keys, useAgentStatuses } from "../lib/queries";
-import { Button, ErrorText, IconButton, LogView } from "./ui";
+import { Button, ErrorText, IconButton, Input, LogView } from "./ui";
 
 type Action = "share" | "install" | "config" | "token" | "removeToken";
 
@@ -15,6 +15,8 @@ export function AgentsPanel({ isolation }: { isolation: Isolation }) {
   const { data: agents, isFetching, error, refetch } = useAgentStatuses(isolation);
   const [running, setRunning] = useState<{ exe: string; action: Action } | null>(null);
   const [result, setResult] = useState<{ exe: string; lines: LogLine[]; error?: string } | null>(null);
+  const [keyFor, setKeyFor] = useState<string | null>(null);
+  const [key, setKey] = useState("");
   const sandbox = isolation.kind === "dockerSandbox" || isolation.kind === "docker" || isolation.kind === "podman";
   const envNoun = isolation.kind === "dockerSandbox" ? "sandbox" : "container";
   const user = isolation.kind === "macUser" ? isolation.user : isolation.kind === "ssh" ? isolation.host : "the sandbox";
@@ -38,9 +40,14 @@ export function AgentsPanel({ isolation }: { isolation: Isolation }) {
         if (skipped.length)
           push({ stream: "info", line: `Skipped ${skipped.join(", ")}: they run scripts from your home folder.` });
       }
-      if (action === "token") {
-        await api.signInAgent(isolation, exe, push);
-        push({ stream: "info", line: `Saved ${agent.auth?.secret} in your Keychain for agents running as ${user}.` });
+      if (action === "token" && agent.auth) {
+        if (exe === "claude") await api.signInAgent(isolation, exe, push);
+        else {
+          await api.setSecret(scopeKey(isolation), agent.auth.secret, key.trim());
+          setKeyFor(null);
+          setKey("");
+        }
+        push({ stream: "info", line: `Saved ${agent.auth.secret} in your Keychain for agents running as ${user}.` });
         qc.invalidateQueries({ queryKey: keys.agentSettings });
       }
       if (action === "removeToken" && agent.auth) {
@@ -72,6 +79,7 @@ export function AgentsPanel({ isolation }: { isolation: Isolation }) {
       {error && <ErrorText>{String(error)}</ErrorText>}
       {agents?.map((a) => {
         const busy = running?.exe === a.executable ? running.action : null;
+        const asksKey = a.executable !== "claude";
         const btn = (action: Action, label: string, show: boolean, primary = false) =>
           show && (
             <Button
@@ -114,9 +122,42 @@ export function AgentsPanel({ isolation }: { isolation: Isolation }) {
               {btn("share", "Use my installation", a.canShare && !a.envPath && !!a.hostPath, true)}
               {btn("install", a.envPath ? "Reinstall" : "Install", a.canInstall, !a.envPath && !(a.canShare && a.hostPath))}
               {btn("config", "Copy my config", a.hasConfig)}
-              {btn("token", a.auth?.set ? "Sign in again" : "Sign in", !!a.auth)}
+              {asksKey ? (
+                !!a.auth &&
+                keyFor !== a.executable && (
+                  <Button onClick={() => setKeyFor(a.executable)} disabled={running !== null}>
+                    {a.auth.set ? "Change API key" : "Add API key"}
+                  </Button>
+                )
+              ) : (
+                btn("token", a.auth?.set ? "Sign in again" : "Sign in", !!a.auth)
+              )}
               {btn("removeToken", "Remove token", !!a.auth?.set)}
             </div>
+            {asksKey && a.auth && keyFor === a.executable && (
+              <form
+                className="ml-6 flex items-center gap-1.5"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (key.trim()) run(a, "token");
+                }}
+              >
+                <Input
+                  type="password"
+                  autoFocus
+                  value={key}
+                  onChange={(e) => setKey(e.target.value)}
+                  placeholder={`${a.auth.secret}, e.g. sk-…`}
+                  className="min-w-0 flex-1 font-mono text-xs"
+                />
+                <Button type="submit" variant="primary" disabled={!key.trim() || running !== null}>
+                  Save
+                </Button>
+                <Button type="button" onClick={() => (setKeyFor(null), setKey(""))}>
+                  Cancel
+                </Button>
+              </form>
+            )}
             {result?.exe === a.executable && (result.lines.length > 0 || result.error) && (
               <ResultLog lines={result.lines} error={result.error} />
             )}
@@ -130,7 +171,8 @@ export function AgentsPanel({ isolation }: { isolation: Isolation }) {
       )}
       <p className="px-1 pt-1 text-xs leading-relaxed text-faint">
         Sign in runs <span className="font-mono">claude setup-token</span> as you and approves in your browser. The
-        token uses your subscription and is passed to {user}'s sessions; your own login stays untouched.
+        token uses your subscription and is passed to {user}'s sessions; your own login stays untouched. Codex
+        (experimental) signs in with an OpenAI API key, kept in your Keychain.
       </p>
     </div>
   );

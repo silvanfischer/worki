@@ -55,8 +55,8 @@ checks it and cleans it up again.
 - **A doctor for every backend.** Checks phrased the way you'd want to read them ("_worki can't
   read files in your home folder") with one-click fixes: create the agent user, start the
   sandbox daemon or Podman machine, build the image.
-- **Agents ready inside the sandbox.** Install Claude Code into the environment, or reuse your
-  own installation. Copy your agent configuration (settings, `CLAUDE.md`, agents,
+- **Agents ready inside the sandbox.** Install Claude Code, or Codex (experimental), into the
+  environment, or reuse your own installation. Copy your agent configuration (settings, `CLAUDE.md`, agents,
   commands, skills) and sign in with a token that uses your subscription, while your own login
   stays untouched. Setup is remembered and repeated for every new environment.
 - **Secrets stay in your Keychain.** Tokens are stored per isolation and passed to sessions as
@@ -96,8 +96,12 @@ Run Claude Code in its terminal, or as a chat that worki draws itself:
   <img src="docs/screenshots/terminal.png" alt="Claude Code in its terminal, running the tests in a Docker Sandbox" width="900">
 </p>
 
-Choose the default under Settings › General; the **+** menu offers both. Codex runs in a terminal
-for now.
+Choose the default under Settings › General; the **+** menu offers both.
+
+**Codex (experimental).** Codex runs in a terminal, in any isolation. worki installs its standalone
+build into the environment, signs it in with an OpenAI API key from your Keychain, lists it under
+**Needs you** when it asks for approval or finishes a turn, and resumes its conversation when
+worki starts again. The chat view and the status bar details are Claude Code only.
 
 ## From task to pull request
 

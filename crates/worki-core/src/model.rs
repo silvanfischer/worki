@@ -322,12 +322,33 @@ impl AgentProfile {
     }
 }
 
+const OLD_CODEX_INSTALLER: &str = r#"npm install -g --prefix "$HOME/.local" @openai/codex"#;
+
+/// Codex's standalone binary for this machine from its latest release: no Node needed, and the
+/// musl builds run on Alpine.
+const CODEX_INSTALLER: &str = r#"set -e
+case "$(uname -s)-$(uname -m)" in
+  Darwin-arm64) target=aarch64-apple-darwin ;;
+  Darwin-x86_64) target=x86_64-apple-darwin ;;
+  Linux-aarch64 | Linux-arm64) target=aarch64-unknown-linux-musl ;;
+  Linux-x86_64) target=x86_64-unknown-linux-musl ;;
+  *) echo "Codex has no build for $(uname -s) $(uname -m)" >&2; exit 1 ;;
+esac
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+echo "Downloading Codex for $target…"
+curl -fsSL "https://github.com/openai/codex/releases/latest/download/codex-$target.tar.gz" | tar -xz -C "$tmp"
+mkdir -p "$HOME/.local/bin"
+mv "$tmp/codex-$target" "$HOME/.local/bin/codex"
+chmod +x "$HOME/.local/bin/codex"
+"$HOME/.local/bin/codex" --version"#;
+
 /// Install commands for agents worki knows. They run as the isolated user, so they must not need
 /// root and should install into that user's home (`~/.local/bin` is on its PATH).
 fn known_installer(executable: &str) -> Option<&'static str> {
     match executable {
         "claude" => Some("curl -fsSL https://claude.ai/install.sh | bash"),
-        "codex" => Some(r#"npm install -g --prefix "$HOME/.local" @openai/codex"#),
+        "codex" => Some(CODEX_INSTALLER),
         _ => None,
     }
 }
@@ -429,10 +450,11 @@ impl AgentSettings {
         }
     }
 
-    /// Fills in install commands for known agents saved before installs existed.
+    /// Fills in install commands for known agents saved before installs existed, and replaces
+    /// worki's earlier Codex install through npm, which images without Node can't run.
     pub fn with_known_installers(mut self) -> Self {
         for p in &mut self.profiles {
-            if p.install.is_none() {
+            if p.install.is_none() || p.install.as_deref() == Some(OLD_CODEX_INSTALLER) {
                 p.install = p.executable().and_then(known_installer).map(Into::into);
             }
         }
@@ -464,6 +486,26 @@ pub struct IsolationSettings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn replaces_the_old_codex_installer_only() {
+        let saved = |install: &str| AgentSettings {
+            profiles: vec![AgentProfile {
+                id: "x".into(),
+                name: "Codex".into(),
+                command: "codex".into(),
+                install: Some(install.into()),
+            }],
+            ..AgentSettings::default()
+        };
+        let old = saved(OLD_CODEX_INSTALLER).with_known_installers();
+        assert_eq!(old.profiles[0].install.as_deref(), Some(CODEX_INSTALLER));
+        let own = saved("brew install codex").with_known_installers();
+        assert_eq!(
+            own.profiles[0].install.as_deref(),
+            Some("brew install codex")
+        );
+    }
 
     #[test]
     fn backfills_installers_for_known_agents() {
