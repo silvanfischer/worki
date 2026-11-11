@@ -175,6 +175,22 @@ impl Container {
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     }
 
+    /// Whether sbx has its global network policy, which it needs before creating a sandbox. Only
+    /// sbx saying so counts as missing, so an unexpected answer doesn't block anything.
+    fn sbx_policy_set(&self) -> bool {
+        let Ok(mut cmd) = self.command() else {
+            return true;
+        };
+        match cmd.args(["--no-input", "policy", "ls"]).output() {
+            Ok(out) if !out.status.success() => !policy_missing(&format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            )),
+            _ => true,
+        }
+    }
+
     /// Whether the installed sbx still offers the commands and flags worki uses, and prints a
     /// sandbox list worki can read.
     fn sbx_compatibility(&self) -> Check {
@@ -302,6 +318,10 @@ impl Container {
         }
         match self.checked(&args, &format!("creating the {}", self.engine.noun())) {
             Ok(_) => Ok(()),
+            Err(e) if policy_missing(&format!("{e:#}")) => bail!(
+                "Docker Sandboxes needs a network policy before the first sandbox: open Isolation and \
+                 use Set up on the network policy check, or run `sbx policy init balanced`"
+            ),
             // Created before but not found in the listing (e.g. the engine changed its output
             // format): use it rather than fail. sbx starts it on `exec`; containers need a start.
             Err(e) if already_exists(&e) => match self.engine {
@@ -484,6 +504,11 @@ fn parse_sbx_listing(json: &str) -> Result<Vec<Listed>> {
         .collect()
 }
 
+/// sbx's answer when its global network policy hasn't been set up yet.
+fn policy_missing(text: &str) -> bool {
+    text.contains("policy has not been initialized")
+}
+
 /// The engine refused to create an environment because one with that name exists: sbx says
 /// "already exists", Docker and Podman "is already in use".
 fn already_exists(error: &anyhow::Error) -> bool {
@@ -502,6 +527,8 @@ const SBX_USES: &[(&[&str], &[&str])] = &[
     (&["template", "ls"], &["--json"]),
     (&["template", "rm"], &["--force"]),
     (&["template", "save"], &[]),
+    (&["policy", "ls"], &[]),
+    (&["policy", "init"], &[]),
 ];
 
 /// The flags of `uses` that `help` (a subcommand's `--help` output) doesn't mention.
@@ -1043,9 +1070,18 @@ impl Backend for Container {
     /// Starts the engine (sbx daemon, Podman machine).
     fn provision(&self) -> Result<()> {
         match self.engine {
-            Engine::Sbx => self
-                .checked(["daemon", "start"], "starting the sandbox daemon")
-                .map(drop),
+            Engine::Sbx => {
+                if !self.engine_running() {
+                    self.checked(["daemon", "start"], "starting the sandbox daemon")?;
+                }
+                if !self.sbx_policy_set() {
+                    self.checked(
+                        ["--no-input", "policy", "init", "balanced"],
+                        "setting up the network policy",
+                    )?;
+                }
+                Ok(())
+            }
             Engine::Podman => self
                 .checked(["machine", "start"], "starting the Podman machine")
                 .map(drop),
@@ -1133,6 +1169,20 @@ impl Backend for Container {
             return checks;
         }
         if self.engine == Engine::Sbx {
+            checks.push(
+                Check::new(
+                    "policy",
+                    self.sbx_policy_set(),
+                    "A network policy is set up for sandboxes",
+                    "No network policy is set up for sandboxes",
+                )
+                .detail(
+                    "sbx needs one before the first sandbox. Set up applies sbx's recommended balanced policy \
+                     (AI services and package registries). For another, run `sbx policy init allow-all` or \
+                     `sbx policy init deny-all` in a terminal.",
+                )
+                .fix_if_failed(Fix::Provision),
+            );
             checks.push(self.sbx_compatibility());
         }
         if self.engine != Engine::Sbx {
@@ -1535,6 +1585,14 @@ mod tests {
             ["-q"]
         );
         assert_eq!(missing_flags(help, &["--nam"]), ["--nam"]);
+    }
+
+    #[test]
+    fn recognizes_a_missing_network_policy() {
+        assert!(policy_missing(
+            "creating the sandbox failed: error: global network policy has not been initialized\n  try: sbx policy init <allow-all|balanced|deny-all>"
+        ));
+        assert!(!policy_missing("creating the sandbox failed: unknown flag"));
     }
 
     #[test]
