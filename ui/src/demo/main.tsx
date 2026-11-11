@@ -411,7 +411,7 @@ const ui = {
   theme: "dark",
   terminalFontSize: 13,
   reopenSessions: true,
-  activeSession: scene === "chat" ? { [checkout]: "s5" } : {},
+  activeSession: { [checkout]: scene === "chat" ? "s5" : "s1" },
   showCommits: true,
   showPullRequests: true,
 };
