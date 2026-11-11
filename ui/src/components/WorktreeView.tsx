@@ -373,7 +373,7 @@ function ChangeRow({
       )}
       <span
         className={clsx(
-          "w-[12px] text-center font-mono fs-panel-sm font-semibold",
+          "w-[12px] shrink-0 text-center font-mono fs-panel-sm font-semibold",
           kind === "A" || kind === "U" ? "text-added" : kind === "D" ? "text-removed" : "text-warn",
         )}
       >
