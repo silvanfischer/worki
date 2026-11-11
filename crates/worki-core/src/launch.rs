@@ -48,12 +48,14 @@ pub fn session_request(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChatAgent {
     Claude,
+    Codex,
 }
 
 impl ChatAgent {
     pub fn of(profile: &AgentProfile) -> Option<Self> {
         match profile.executable()? {
             "claude" => Some(Self::Claude),
+            "codex" => Some(Self::Codex),
             _ => None,
         }
     }
@@ -88,6 +90,13 @@ pub fn chat_request(
                 shell_quote(CHAT_PROMPT),
             )
         }
+        // Flags in the profile are for Codex's terminal UI; the app server takes its settings
+        // from worki over the protocol.
+        ChatAgent::Codex => format!(
+            "{}exec {} app-server",
+            codex_login(confined),
+            profile.executable().unwrap_or("codex")
+        ),
     };
     Some((
         agent,
@@ -105,8 +114,20 @@ pub fn chat_request(
 /// A command for the user's own terminal that continues Claude Code's conversation `session_id`
 /// where it ran: in the worktree, as the agent user, inside the sandbox or container, or on the
 /// SSH host, since that's where Claude Code saved it.
-pub fn continue_command(isolation: &Isolation, worktree: &Path, session_id: &str) -> String {
-    let claude = format!("claude --resume {}", shell_quote(session_id));
+pub fn continue_command(
+    isolation: &Isolation,
+    worktree: &Path,
+    agent: ChatAgent,
+    session_id: &str,
+) -> String {
+    let claude = match agent {
+        ChatAgent::Claude => format!("claude --resume {}", shell_quote(session_id)),
+        ChatAgent::Codex => format!(
+            "codex resume \"$(cat {}/{})\"",
+            CODEX_SESSIONS,
+            shell_quote(session_id)
+        ),
+    };
     let dir = shell_quote(&worktree.to_string_lossy());
     let in_dir = format!("cd {dir} && {claude}");
     match isolation {
@@ -153,11 +174,21 @@ pub fn chat_history_command(agent: ChatAgent, session_id: &str) -> String {
             "cat \"${{CLAUDE_CONFIG_DIR:-$HOME/.claude}}\"/projects/*/{}.jsonl 2>/dev/null; true",
             shell_quote(session_id)
         ),
+        ChatAgent::Codex => format!(
+            "cat {}/{} 2>/dev/null; true",
+            CODEX_SESSIONS,
+            shell_quote(session_id)
+        ),
     }
 }
 
+/// Where the Codex thread of each worki session is recorded (by worki's chat, or by the
+/// `notify` program in a terminal), named by the worki session id.
+const CODEX_SESSIONS: &str = "\"${CODEX_HOME:-$HOME/.codex}/worki-sessions\"";
+
 /// Tells a chat agent what worki's chat view can show, and how to make it fit in.
-const CHAT_PROMPT: &str = "You are running in worki's chat view. It renders Markdown and draws \
+pub const CHAT_PROMPT: &str =
+    "You are running in worki's chat view. It renders Markdown and draws \
 visuals from these code blocks; use one when it makes something clearer, not as decoration.
 - ```mermaid for flowcharts, sequence, state and class diagrams. Keep labels short; worki \
 styles the diagram to match its theme.
@@ -207,64 +238,87 @@ fn agent_command(
         .map(|p| format!(" {}", shell_quote(p)))
         .unwrap_or_default();
     match profile.executable() {
-        // Claude runs hooks without a controlling terminal, so the shell records the session's
-        // terminal device first and the hooks write there.
-        Some("claude") => {
-            let hooks = shell_quote(&claude_settings(confined));
-            match session_id {
-                Some(id) => format!(
-                    "export WORKI_TTY=\"$(tty)\"; {} exec {} --settings {hooks} \"$@\"{prompt}",
-                    claude_conversation(id),
-                    profile.command,
-                ),
-                None => format!(
-                    "export WORKI_TTY=\"$(tty)\"; exec {} --settings {hooks}{prompt}",
-                    profile.command
-                ),
-            }
-        }
-        Some(codex @ "codex") => {
-            // Codex only reads its own login, not the key in the environment: sign the isolated
-            // environment in with the stored key once.
-            let login = if confined {
-                format!(
-                    "if [ -n \"$OPENAI_API_KEY\" ] && ! {codex} login status >/dev/null 2>&1; then \
-printenv OPENAI_API_KEY | {codex} login --with-api-key >/dev/null; fi; "
-                )
-            } else {
-                String::new()
-            };
-            let resume = session_id
-                .map(|id| {
-                    format!(
-                        "f=\"{CODEX_SESSIONS}\"/{}; if [ -s \"$f\" ]; then set -- resume \"$(cat \"$f\")\"; else set --; fi; ",
-                        shell_quote(id)
-                    )
-                })
-                .unwrap_or_default();
-            let notify = shell_quote(&format!(
-                "notify=[\"sh\",\"-c\",{},\"worki\"]",
-                toml_string(CODEX_NOTIFY)
-            ));
-            format!(
-                "export WORKI_TTY=\"$(tty)\"; {resume}{login}exec {} \"$@\" -c {notify}{prompt}",
-                profile.command
-            )
-        }
+        Some("claude") => claude_command(profile, session_id, confined, &prompt),
+        Some("codex") => codex_command(profile, session_id, confined, &prompt),
         _ => format!("exec {}{prompt}", profile.command),
     }
 }
 
-/// Where Codex's conversation id is kept per worki session, so a restored session resumes it.
-const CODEX_SESSIONS: &str = "${CODEX_HOME:-$HOME/.codex}/worki-sessions";
+/// Agents whose conversation continues when a saved session starts again.
+pub fn resumes(profile: &AgentProfile) -> bool {
+    ChatAgent::of(profile).is_some()
+}
+
+/// Claude runs hooks without a controlling terminal, so the shell records the session's terminal
+/// device first and the hooks write there.
+fn claude_command(
+    profile: &AgentProfile,
+    session_id: Option<&str>,
+    confined: bool,
+    prompt: &str,
+) -> String {
+    let hooks = shell_quote(&claude_settings(confined));
+    let (conversation, args) = match session_id {
+        Some(id) => (format!("{} ", claude_conversation(id)), " \"$@\""),
+        None => (String::new(), ""),
+    };
+    format!(
+        "export WORKI_TTY=\"$(tty)\"; {conversation}exec {} --settings {hooks}{args}{prompt}",
+        profile.command
+    )
+}
+
+fn codex_command(
+    profile: &AgentProfile,
+    session_id: Option<&str>,
+    confined: bool,
+    prompt: &str,
+) -> String {
+    let login = codex_login(confined);
+    let resume = session_id
+        .map(|id| {
+            format!(
+                "f=\"$WORKI_CODEX_SESSIONS\"/{}; if [ -s \"$f\" ]; then set -- resume \"$(cat \"$f\")\"; else set --; fi; ",
+                shell_quote(id)
+            )
+        })
+        .unwrap_or_default();
+    format!(
+        "export WORKI_TTY=\"$(tty)\" WORKI_CODEX_SESSIONS={CODEX_SESSIONS}; \
+{resume}{login}exec {} \"$@\" -c {}{prompt}",
+        profile.command,
+        shell_quote(&codex_notify_setting())
+    )
+}
+
+/// Codex only reads its own login, not a key in the environment: in an isolated environment it is
+/// signed in with the stored key once.
+fn codex_login(confined: bool) -> String {
+    if !confined {
+        return String::new();
+    }
+    let key = crate::agents::CODEX_API_KEY;
+    format!(
+        "if [ -n \"${key}\" ] && ! codex login status >/dev/null 2>&1; then \
+printenv {key} | codex login --with-api-key >/dev/null; fi; "
+    )
+}
+
+fn codex_notify_setting() -> String {
+    format!(
+        "notify=[\"sh\",\"-c\",{},\"worki\"]",
+        toml::Value::String(CODEX_NOTIFY.into())
+    )
+}
 
 /// Codex's `notify` program, called with a JSON payload after each turn and when it waits for an
 /// approval: it records the conversation (`thread-id`) for resuming and tells worki the agent
 /// needs the user, as a notification since Codex reports no start of work.
 const CODEX_NOTIFY: &str = r#"p="$1"
-d="${CODEX_HOME:-$HOME/.codex}/worki-sessions"
 id=$(printf '%s' "$p" | sed -n 's/.*"thread-id" *: *"\([^"]*\)".*/\1/p')
-if [ -n "$id" ] && [ -n "$WORKI_SESSION_ID" ]; then mkdir -p "$d" && printf '%s' "$id" > "$d/$WORKI_SESSION_ID"; fi
+if [ -n "$id" ] && [ -n "$WORKI_SESSION_ID" ]; then
+  mkdir -p "$WORKI_CODEX_SESSIONS" && printf '%s' "$id" > "$WORKI_CODEX_SESSIONS/$WORKI_SESSION_ID"
+fi
 case "$p" in
   *approval-requested*) m="Codex needs your approval" ;;
   *plan-mode-prompt*) m="Codex has a plan for you" ;;
@@ -274,21 +328,6 @@ esac
 [ -n "$WORKI_TTY" ] || exit 0
 if [ -n "$TMUX" ]; then printf '\033Ptmux;\033\033]777;notify;Codex;%s\007\033\\' "$m"; else printf '\033]777;notify;Codex;%s\007' "$m"; fi > "$WORKI_TTY" 2>/dev/null
 exit 0"#;
-
-/// A TOML basic string.
-fn toml_string(s: &str) -> String {
-    let mut out = String::from("\"");
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
-}
 
 /// Names Claude's conversation after the worki session, so starting the session again (after
 /// worki restarted) resumes it once Claude has saved a transcript for it.
@@ -561,13 +600,17 @@ mod tests {
     fn continues_the_conversation_where_it_ran() {
         let wt = Path::new("/w/fix login");
         let in_dir = "cd '/w/fix login' && claude --resume 'abc'";
-        assert_eq!(continue_command(&Isolation::None, wt, "abc"), in_dir);
+        assert_eq!(
+            continue_command(&Isolation::None, wt, ChatAgent::Claude, "abc"),
+            in_dir
+        );
         assert_eq!(
             continue_command(
                 &Isolation::MacUser {
                     user: "_worki".into()
                 },
                 wt,
+                ChatAgent::Claude,
                 "abc"
             ),
             format!("sudo -u '_worki' -H /bin/zsh -lc {}", shell_quote(in_dir))
@@ -578,6 +621,7 @@ mod tests {
                 template: None,
             },
             wt,
+            ChatAgent::Claude,
             "abc",
         );
         assert!(sbx.starts_with("sbx exec -it -w '/w/fix login' -e IS_SANDBOX=1 worki-fix-login-"));
@@ -594,6 +638,7 @@ mod tests {
                     keep_alive: true,
                 },
                 wt,
+                ChatAgent::Claude,
                 "abc"
             ),
             format!("ssh -t -p 2222 'me@dev' {}", shell_quote(in_dir))
@@ -620,32 +665,31 @@ mod tests {
     }
 
     #[test]
-    fn codex_notify_is_valid_toml() {
-        let parsed: toml::Table =
-            toml::from_str(&format!("v = {}", super::toml_string(super::CODEX_NOTIFY))).unwrap();
-        assert_eq!(parsed["v"].as_str(), Some(super::CODEX_NOTIFY));
+    fn codex_gets_its_notify_script_as_valid_toml() {
+        let setting: toml::Table = toml::from_str(&super::codex_notify_setting()).unwrap();
+        let notify = setting["notify"].as_array().unwrap();
+        assert_eq!(notify[2].as_str(), Some(super::CODEX_NOTIFY));
     }
 
     #[test]
     fn codex_notify_records_the_conversation_and_tells_worki() {
-        let home = tempfile::tempdir().unwrap();
-        let tty = home.path().join("tty");
+        let dir = tempfile::tempdir().unwrap();
+        let tty = dir.path().join("tty");
         std::fs::write(&tty, "").unwrap();
-        let payload = r#"{"type":"agent-turn-complete","thread-id":"01a1cc36-bd4a-79e2-b9ee-bae4986f7c77","turn-id":"1","cwd":"/w","input-messages":["hi"],"last-assistant-message":"ok"}"#;
+        let payload = r#"{"type":"agent-turn-complete","thread-id":"01a1cc36-bd4a","turn-id":"1"}"#;
         let ok = std::process::Command::new("/bin/sh")
             .args(["-c", super::CODEX_NOTIFY, "worki", payload])
-            .env("HOME", home.path())
-            .env_remove("CODEX_HOME")
             .env_remove("TMUX")
             .env("WORKI_SESSION_ID", "s1")
+            .env("WORKI_CODEX_SESSIONS", dir.path().join("sessions"))
             .env("WORKI_TTY", &tty)
             .status()
             .unwrap()
             .success();
         assert!(ok);
         assert_eq!(
-            std::fs::read_to_string(home.path().join(".codex/worki-sessions/s1")).unwrap(),
-            "01a1cc36-bd4a-79e2-b9ee-bae4986f7c77"
+            std::fs::read_to_string(dir.path().join("sessions/s1")).unwrap(),
+            "01a1cc36-bd4a"
         );
         assert_eq!(
             std::fs::read_to_string(&tty).unwrap(),
@@ -653,53 +697,111 @@ mod tests {
         );
     }
 
-    #[test]
-    fn codex_resumes_its_conversation_and_signs_in_when_isolated() {
+    /// Stands in for Codex: logs how it was started to `$LOG`, and keeps its login in
+    /// `$LOG.login`.
+    const FAKE_CODEX: &str = r#"#!/bin/sh
+case "$1 $2" in
+  "login status") [ -f "$LOG.login" ]; exit ;;
+  "login --with-api-key") cat > "$LOG.login"; echo login >> "$LOG"; exit ;;
+esac
+case "$1" in resume) echo "resume $2" ;; *) echo new ;; esac >> "$LOG"
+"#;
+
+    /// Runs worki's Codex command for session `s1` against [`FAKE_CODEX`] in `home`.
+    fn run_codex(home: &Path, confined: bool) {
+        use std::os::unix::fs::PermissionsExt;
+        let fake = home.join("codex");
+        if !fake.exists() {
+            std::fs::write(&fake, FAKE_CODEX).unwrap();
+            std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
         let profile = AgentProfile {
             id: "codex".into(),
             name: "Codex".into(),
             command: "codex".into(),
             install: None,
         };
+        let command = super::agent_command(&profile, Some("s1"), confined, None);
+        let ok = std::process::Command::new("/bin/sh")
+            .args(["-c", &command])
+            .env("PATH", format!("{}:/usr/bin:/bin", home.display()))
+            .env("HOME", home)
+            .env_remove("CODEX_HOME")
+            .env("LOG", home.join("log"))
+            .env("OPENAI_API_KEY", "sk-test")
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok);
+    }
+
+    #[test]
+    fn codex_signs_in_with_the_stored_key_only_when_isolated() {
         let home = tempfile::tempdir().unwrap();
-        let log = home.path().join("log");
-        let fake = format!(
-            "#!/bin/sh\nif [ \"$1 $2\" = \"login status\" ]; then [ -f {0}.login ]; exit $?; fi\n\
-if [ \"$1\" = login ]; then cat > {0}.login; echo login >> {0}; exit 0; fi\n\
-case \"$1\" in resume) echo \"resume $2\" ;; -c) echo new ;; esac >> {0}\n",
-            log.display()
-        );
-        std::fs::write(home.path().join("codex"), fake).unwrap();
-        std::fs::set_permissions(
-            home.path().join("codex"),
-            std::os::unix::fs::PermissionsExt::from_mode(0o755),
-        )
-        .unwrap();
-        let run = |confined: bool| {
-            let command = super::agent_command(&profile, Some("s1"), confined, None);
-            std::process::Command::new("/bin/sh")
-                .args(["-c", &command])
-                .env("PATH", format!("{}:/usr/bin:/bin", home.path().display()))
-                .env("HOME", home.path())
-                .env_remove("CODEX_HOME")
-                .env("OPENAI_API_KEY", "sk-test")
-                .status()
-                .unwrap()
-                .success()
-        };
-        assert!(run(false));
-        assert!(run(true));
+        run_codex(home.path(), false);
+        run_codex(home.path(), true);
+        run_codex(home.path(), true);
+        let log = std::fs::read_to_string(home.path().join("log")).unwrap();
+        assert_eq!(log, "new\nlogin\nnew\nnew\n");
+        let key = std::fs::read_to_string(home.path().join("log.login")).unwrap();
+        assert_eq!(key, "sk-test\n");
+    }
+
+    #[test]
+    fn codex_resumes_the_conversation_its_notify_recorded() {
+        let home = tempfile::tempdir().unwrap();
         let sessions = home.path().join(".codex/worki-sessions");
         std::fs::create_dir_all(&sessions).unwrap();
         std::fs::write(sessions.join("s1"), "01a1cc36").unwrap();
-        assert!(run(true));
+        run_codex(home.path(), false);
+        let log = std::fs::read_to_string(home.path().join("log")).unwrap();
+        assert_eq!(log, "resume 01a1cc36\n");
+    }
+
+    #[test]
+    fn chat_runs_codex_as_an_app_server() {
+        let profile = AgentProfile {
+            id: "x".into(),
+            name: "Codex".into(),
+            command: "codex --yolo".into(),
+            install: None,
+        };
+        let (agent, req) = chat_request(&profile, Path::new("/w"), vec![], "s1", false).unwrap();
+        assert_eq!(agent, ChatAgent::Codex);
+        assert_eq!(req.command.as_deref(), Some("exec codex app-server"));
+        let (_, confined) = chat_request(&profile, Path::new("/w"), vec![], "s1", true).unwrap();
+        assert!(confined
+            .command
+            .unwrap()
+            .contains("codex login --with-api-key"));
+    }
+
+    #[test]
+    fn codex_chats_find_the_thread_recorded_for_the_session() {
+        let home = tempfile::tempdir().unwrap();
+        let sessions = home.path().join(".codex/worki-sessions");
+        std::fs::create_dir_all(&sessions).unwrap();
+        std::fs::write(sessions.join("s1"), "01a1cc36").unwrap();
+        let run = |command: &str| {
+            let out = std::process::Command::new("/bin/sh")
+                .args(["-c", command])
+                .env("HOME", home.path())
+                .env_remove("CODEX_HOME")
+                .output()
+                .unwrap();
+            String::from_utf8(out.stdout).unwrap()
+        };
         assert_eq!(
-            std::fs::read_to_string(&log).unwrap(),
-            "new\nlogin\nnew\nresume 01a1cc36\n"
+            run(&chat_history_command(ChatAgent::Codex, "s1")),
+            "01a1cc36"
         );
+        assert_eq!(run(&chat_history_command(ChatAgent::Codex, "s2")), "");
+        let resume = continue_command(&Isolation::None, Path::new("/w"), ChatAgent::Codex, "s1");
         assert_eq!(
-            std::fs::read_to_string(log.with_extension("login")).unwrap(),
-            "sk-test\n"
+            run(&resume
+                .replace("&& codex", "&& printf '%s|'")
+                .replace("cd '/w'", "true")),
+            "resume|01a1cc36|"
         );
     }
 
@@ -711,7 +813,7 @@ case \"$1\" in resume) echo \"resume $2\" ;; -c) echo new ;; esac >> {0}\n",
             command: command.into(),
             install: None,
         };
-        assert!(chat_request(&profile("codex"), Path::new("/w"), vec![], "abc", false).is_none());
+        assert!(chat_request(&profile("aider"), Path::new("/w"), vec![], "abc", false).is_none());
         let (agent, req) = chat_request(
             &profile("claude --model opus"),
             Path::new("/w"),

@@ -3,11 +3,13 @@
 //! [`ChatProtocol`] that translates both ways.
 
 mod claude;
+mod codex;
 mod host;
 
 use std::collections::BTreeMap;
 
 pub use claude::ClaudeProtocol;
+pub use codex::{CodexOptions, CodexProtocol};
 pub(crate) use host::Chat;
 pub use host::ChatSpec;
 use serde::{Deserialize, Serialize};
@@ -296,6 +298,12 @@ pub trait ChatProtocol: Send {
     /// Lines to send in reply to what the agent printed, such as answers to requests worki
     /// doesn't handle.
     fn take_replies(&mut self) -> Vec<String> {
+        Vec::new()
+    }
+
+    /// Events the protocol produced on its own, such as a setting it applied without asking
+    /// the agent.
+    fn take_events(&mut self) -> Vec<ChatEvent> {
         Vec::new()
     }
 

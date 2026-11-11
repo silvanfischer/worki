@@ -103,7 +103,9 @@ function SaveEnvironmentForm({ project, worktree, onClose }: { project: Project;
         Saves <span className="font-semibold">{label}</span>'s {noun} as an image, with everything installed in it.
         New worktrees start from this image instead of the default one.
       </p>
-      <p className="text-xs text-muted">Your code isn't included. Sign-ins are, so keep it to yourself.</p>
+      <p className="text-xs text-muted">
+        Your code isn't included. Sign-ins are (Codex's login with your API key, for example), so keep it to yourself.
+      </p>
       <Field label="Snapshot name">
         <Input className="font-mono text-xs" value={name} onChange={(e) => setName(e.target.value)} />
       </Field>

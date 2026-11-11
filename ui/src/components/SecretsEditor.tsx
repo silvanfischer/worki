@@ -1,14 +1,12 @@
-import { useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 
 import { api, errorMessage, type Isolation, isolationLabel, scopeKey } from "../lib/api";
-import { keys, useAgentSettings, useIsolationSettings, useProjects, useSecretStatus } from "../lib/queries";
+import { useAgentSettings, useIsolationSettings, useProjects, useRefreshSecrets, useSecretStatus } from "../lib/queries";
 import { Button, ErrorText, IconButton, Input, Select } from "./ui";
 
 /** Secrets per isolation: agents only get the ones stored for where they run. Saved immediately. */
 export function SecretsEditor() {
-  const qc = useQueryClient();
   const { data: settings } = useAgentSettings();
   const { data: isolationSettings } = useIsolationSettings();
   const { data: projects = [] } = useProjects();
@@ -33,11 +31,7 @@ export function SecretsEditor() {
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  async function refresh() {
-    await qc.invalidateQueries({ queryKey: keys.agentSettings });
-    qc.invalidateQueries({ queryKey: keys.allSecretStatus });
-    qc.invalidateQueries({ queryKey: keys.allAgentStatuses });
-  }
+  const refresh = useRefreshSecrets();
 
   async function save() {
     setError(null);

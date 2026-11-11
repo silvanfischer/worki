@@ -75,10 +75,10 @@ export interface AgentStatus {
   executable: string;
   envPath: string | null;
   hostPath: string | null;
-  canInstall: boolean;
   canShare: boolean;
   hasConfig: boolean;
-  auth: { secret: string; set: boolean } | null;
+  inBaseImage: boolean;
+  auth: { secret: string; set: boolean; kind: "setupToken" | "apiKey" } | null;
 }
 
 export function isolationLabel(i: Isolation): string {
@@ -202,7 +202,7 @@ export interface AgentProfile {
 
 /** Agents worki can run as a chat instead of in a terminal. */
 export function canChat(profile: AgentProfile): boolean {
-  return profile.command.trim().split(/\s+/)[0] === "claude";
+  return ["claude", "codex"].includes(profile.command.trim().split(/\s+/)[0]);
 }
 
 /** The flag an agent takes to run without permission prompts, for agents that have one. */
@@ -253,6 +253,7 @@ export interface AgentSettings {
   defaultProfile: string | null;
   /** Secret names per isolation scope (see `scopeKey`). */
   secrets: Record<string, string[]>;
+  /** Agent configs copied into every new environment, per isolation scope. */
 }
 
 export function scopeKey(i: Isolation): string {
@@ -284,8 +285,6 @@ export interface ChatQuestion {
   multiSelect: boolean;
 }
 
-/** What happened in a chat session, the same for every agent. `parent` names the tool call a
- * subagent works for. */
 export interface BackgroundTask {
   id: string;
   /** Such as `local_bash` or `local_agent`. */
@@ -293,7 +292,12 @@ export interface BackgroundTask {
   description: string;
 }
 
-export type ChatEvent =
+/** Status words the agent reports between tool calls; others are shown as they come. */
+export type AgentStatusKind = "requesting" | "thinking" | "writing" | "tool" | "compacting" | (string & {});
+
+/** What happened in a chat session, the same for every agent. `parent` names the tool call a
+ * subagent works for. */
+export type ChatEvent = (
   | { type: "session"; model: string | null; permissionMode: string | null; effort: string | null }
   | { type: "options"; models: ModelChoice[]; permissionModes: string[] }
   | { type: "user"; id: string | null; text: string; attachments: string[] }
@@ -305,10 +309,14 @@ export type ChatEvent =
   | { type: "permission"; requestId: string; tool: string; input: unknown; questions: ChatQuestion[] }
   | { type: "permissionResolved"; requestId: string; allowed: boolean }
   | { type: "notice"; text: string }
-  | { type: "status"; status: string; tool: string | null }
+  | { type: "status"; status: AgentStatusKind; tool: string | null }
   | { type: "backgroundTasks"; tasks: BackgroundTask[] }
   | { type: "turnEnded"; ok: boolean; interrupted: boolean; error: string | null }
-  | { type: "exited"; code: number; error: string | null };
+  | { type: "exited"; code: number; error: string | null }
+) & {
+  /** When worki recorded the event, in Unix milliseconds. */
+  at?: number;
+};
 
 export interface ModelChoice {
   /** What to switch to, such as an alias like `opus`. */
@@ -428,7 +436,8 @@ export const api = {
   removeWorktree: (projectId: string, req: { path: string; force: boolean; deleteBranch: boolean }) =>
     invoke<void>("remove_worktree", { projectId, req }),
   agentSettings: () => invoke<AgentSettings>("agent_settings"),
-  saveAgentSettings: (settings: AgentSettings) => invoke<void>("save_agent_settings", { settings }),
+  saveAgentProfiles: (profiles: AgentProfile[], defaultProfile: string | null) =>
+    invoke<void>("save_agent_profiles", { profiles, defaultProfile }),
 
   listSessions: () => invoke<SessionInfo[]>("list_sessions"),
   /** Starts an agent as a chat; `attachSession` then streams one `ChatEvent` as JSON per line. */
@@ -498,11 +507,6 @@ export const api = {
     const channel = new Channel<LogLine>();
     channel.onmessage = onLog;
     return invoke<void>("isolation_build_image", { isolation, onLog: channel });
-  },
-  installAgent: (isolation: Isolation, command: string, onLog: (line: LogLine) => void) => {
-    const channel = new Channel<LogLine>();
-    channel.onmessage = onLog;
-    return invoke<void>("install_agent", { isolation, command, onLog: channel });
   },
   secretStatus: (scope: string, names: string[]) => invoke<[string, boolean][]>("secret_status", { scope, names }),
   setSecret: (scope: string, name: string, value: string) => invoke<void>("set_secret", { scope, name, value }),

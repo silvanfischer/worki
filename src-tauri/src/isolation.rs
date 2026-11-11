@@ -49,24 +49,6 @@ pub async fn isolation_doctor(
         .map_err(err)
 }
 
-/// Installs the agent whose executable is `command` inside `isolation`.
-#[tauri::command]
-pub async fn install_agent(
-    state: State<'_, AppState>,
-    isolation: Isolation,
-    command: String,
-    on_log: Channel<LogLine>,
-) -> CmdResult<()> {
-    isolation.validate().map_err(err)?;
-    state
-        .projects
-        .install_agent(&isolation, &command, move |line| {
-            on_log.send(line).ok();
-        })
-        .await
-        .map_err(err)
-}
-
 #[tauri::command]
 pub async fn isolation_fix(
     state: State<'_, AppState>,

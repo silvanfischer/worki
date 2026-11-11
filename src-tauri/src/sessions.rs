@@ -2,14 +2,18 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use tauri::ipc::{Channel, InvokeResponseBody};
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 use worki_core::launch::{
-    chat_history_command, chat_request, continue_command, session_env, session_request, ChatAgent,
+    chat_history_command, chat_request, continue_command, resumes, session_env, session_request,
+    ChatAgent, CHAT_PROMPT,
 };
 use worki_core::{AgentProfile, Host, Isolation, Project, SavedSession};
 use worki_isolation::ssh::{Ssh, SshTarget};
 use worki_isolation::SessionMeta;
-use worki_pty::chat::{Attachment, ChatProtocol, ChatSetting, ClaudeProtocol, PermissionAnswer};
+use worki_pty::chat::{
+    Attachment, ChatProtocol, ChatSetting, ClaudeProtocol, CodexOptions, CodexProtocol,
+    PermissionAnswer,
+};
 use worki_pty::{ChatSpec, SessionInfo, SessionState, SpawnSpec};
 
 use crate::{blocking, err, AppState, CmdResult};
@@ -105,17 +109,13 @@ async fn start_session(
         }
     );
     let saved = match (&profile, &profile_id) {
-        (Some(p), Some(profile_id))
-            if matches!(p.executable(), Some("claude" | "codex")) && !resumable =>
-        {
-            Some(SavedSession {
-                id: id.clone(),
-                project_id: project.id.clone(),
-                worktree_path: worktree_path.clone(),
-                profile_id: profile_id.clone(),
-                chat: false,
-            })
-        }
+        (Some(p), Some(profile_id)) if resumes(p) && !resumable => Some(SavedSession {
+            id: id.clone(),
+            project_id: project.id.clone(),
+            worktree_path: worktree_path.clone(),
+            profile_id: profile_id.clone(),
+            chat: false,
+        }),
         _ => None,
     };
     let info = state
@@ -156,6 +156,83 @@ struct Prepared {
     confined: bool,
 }
 
+/// Names of the events the session start sends; `ui/src/lib/events.ts` has the same.
+pub mod events {
+    pub const AGENT_INSTALLING: &str = "agent-installing";
+    pub const AGENT_INSTALLED: &str = "agent-installed";
+    pub const AGENT_SIGN_IN: &str = "agent-sign-in";
+    pub const AGENT_SIGNED_IN: &str = "agent-signed-in";
+}
+
+/// The worktree's agent isn't installed where it runs and is being installed before it starts.
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentInstalling {
+    worktree_path: PathBuf,
+    agent: String,
+}
+
+/// Lets the worktree offer a snapshot after its agent was installed into its environment.
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentInstalled {
+    project_id: String,
+    worktree_path: PathBuf,
+    agent: String,
+}
+
+/// Gets the profile's agent ready where the worktree's agents run: installed (offering a
+/// snapshot when that was into a container or sandbox), its trust question answered in an
+/// isolated environment, and Codex signed in there.
+async fn ready_agent(
+    state: &AppState,
+    project: &Project,
+    worktree: &Path,
+    isolation: &Isolation,
+    profile: &AgentProfile,
+) -> CmdResult<()> {
+    let Some(executable) = profile.executable() else {
+        return Ok(());
+    };
+    if *isolation == Isolation::None {
+        return Ok(());
+    }
+    let projects = &state.projects;
+    let instance = projects
+        .agent_instance(project, worktree, isolation)
+        .await
+        .map_err(err)?;
+    let (app, agent) = (state.app.clone(), profile.name.clone());
+    let installing = AgentInstalling {
+        worktree_path: worktree.to_owned(),
+        agent: agent.clone(),
+    };
+    let installed = projects
+        .ensure_agent(instance.clone(), isolation, executable, move || {
+            app.emit(events::AGENT_INSTALLING, installing).ok();
+        })
+        .await
+        .map_err(err)?;
+    if installed && isolation.is_container() {
+        let event = AgentInstalled {
+            project_id: project.id.clone(),
+            worktree_path: worktree.to_owned(),
+            agent: agent.clone(),
+        };
+        state.app.emit(events::AGENT_INSTALLED, event).ok();
+    }
+    if isolation.is_confined() {
+        projects
+            .trust_worktree(instance.clone(), executable, worktree)
+            .await
+            .map_err(err)?;
+        if ChatAgent::of(profile) == Some(ChatAgent::Codex) {
+            crate::agents::sign_in_codex(state, instance, worktree, isolation, &agent).await?;
+        }
+    }
+    Ok(())
+}
+
 async fn prepare(
     state: &AppState,
     project_id: &str,
@@ -182,38 +259,19 @@ async fn prepare(
 
     if isolation != Isolation::None {
         let check = isolation.clone();
-        let executable = profile
-            .as_ref()
-            .and_then(|p| p.executable())
-            .map(str::to_owned);
-        let exe = executable.clone();
-        let found = tauri::async_runtime::spawn_blocking(move || {
-            let backend = check.backend();
-            backend.ready()?;
-            Ok::<_, anyhow::Error>(exe.map(|e| backend.which(&e).is_some()).unwrap_or(true))
-        })
-        .await
-        .map_err(err)?
-        .map_err(err)?;
-        if !found {
-            let executable = executable.unwrap_or_default();
-            let label = isolation.label();
-            return Err(if project.remote.is_some() {
-                format!(
-                    "`{executable}` isn't installed on {label}. Open the project settings and use “Install” under Agents."
-                )
-            } else {
-                format!(
-                    "`{executable}` isn't installed for {label}. Open Isolation and use “Use my installation” or “Install” under Agents."
-                )
-            });
-        }
+        tauri::async_runtime::spawn_blocking(move || check.backend().ready())
+            .await
+            .map_err(err)?
+            .map_err(err)?;
     }
 
     projects
         .grant_access(&project, Some(worktree_path))
         .await
         .map_err(err)?;
+    if let Some(p) = &profile {
+        ready_agent(state, &project, worktree_path, &isolation, p).await?;
+    }
 
     let id = id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let title = profile
@@ -222,7 +280,7 @@ async fn prepare(
         .unwrap_or_else(|| "Shell".into());
     let mut env = session_env(&id, worktree_path);
     env.extend(projects.secret_env(&isolation).map_err(err)?);
-    let confined = !matches!(isolation, Isolation::None | Isolation::Ssh { .. });
+    let confined = isolation.is_confined();
     Ok(Prepared {
         project,
         profile,
@@ -246,20 +304,47 @@ pub async fn restore_agent_sessions(
         return Ok(RestoreReport::default());
     }
     let saved = state.projects.saved_sessions().map_err(err)?;
+    let profiles = state.projects.agent_settings().map_err(err)?.profiles;
     let running = state.sessions.list();
+    let mut report = RestoreReport::default();
     let mut tasks = Vec::new();
     for s in saved {
         if running.iter().any(|r| r.id == s.id) {
             continue;
         }
-        let gone = match state.projects.project(&s.project_id) {
-            Ok(p) => p.remote.is_none() && !s.worktree_path.is_dir(),
-            Err(_) => true,
+        let project = match state.projects.project(&s.project_id) {
+            Ok(p) if p.remote.is_some() || s.worktree_path.is_dir() => p,
+            _ => {
+                state.projects.forget_session(&s.id).ok();
+                continue;
+            }
         };
-        if gone {
+        let main = worki_isolation::same_dir(&s.worktree_path, &project.repo_path);
+        let agent = profiles
+            .iter()
+            .find(|p| p.id == s.profile_id)
+            .map_or(s.profile_id.as_str(), |p| p.name.as_str());
+        let place = if main {
+            format!("{} (main checkout)", project.name)
+        } else {
+            let folder = s.worktree_path.file_name().unwrap_or_default();
+            format!("{}/{}", project.name, folder.to_string_lossy())
+        };
+        let user_isolation = matches!(
+            state
+                .projects
+                .isolation_for_worktree(&project, &s.worktree_path),
+            Ok(Isolation::MacUser { .. })
+        );
+        if main && user_isolation {
             state.projects.forget_session(&s.id).ok();
+            report.failed.push(format!(
+                "{agent} in {place}: {}",
+                worki_isolation::main_checkout_refused(&s.worktree_path)
+            ));
             continue;
         }
+        let label = format!("{agent} in {place}");
         let app = app.clone();
         tasks.push(tauri::async_runtime::spawn(async move {
             let state = app.state::<AppState>();
@@ -289,9 +374,9 @@ pub async fn restore_agent_sessions(
             started
                 .map(drop)
                 .inspect_err(|e| tracing::warn!("resuming session {id}: {e}"))
+                .map_err(|e| format!("{label}: {e}"))
         }));
     }
-    let mut report = RestoreReport::default();
     for task in tasks {
         match task.await.map_err(err).and_then(|r| r) {
             Ok(()) => report.started += 1,
@@ -528,6 +613,13 @@ async fn start_chat(
     let launch = blocking(move || backend_isolation.backend().launch(&req)).await?;
     let mut protocol: Box<dyn ChatProtocol> = match agent {
         ChatAgent::Claude => Box::new(ClaudeProtocol::new(id.clone())),
+        ChatAgent::Codex => Box::new(CodexProtocol::new(
+            id.clone(),
+            CodexOptions {
+                developer_instructions: Some(CHAT_PROMPT.into()),
+                confined,
+            },
+        )),
     };
     let history = if resuming {
         let transcript = read_transcript(&isolation, &worktree_path, agent, &id).await;
@@ -588,12 +680,12 @@ pub fn session_continue_command(state: State<'_, AppState>, id: String) -> CmdRe
         .profile(&profile_id)
         .cloned()
         .ok_or_else(|| format!("unknown agent profile {profile_id}"))?;
-    if ChatAgent::of(&profile).is_none() {
-        return Err(format!(
+    let agent = ChatAgent::of(&profile).ok_or_else(|| {
+        format!(
             "{} conversations can't be continued outside worki",
             profile.name
-        ));
-    }
+        )
+    })?;
     let project = projects
         .list_projects()
         .map_err(err)?
@@ -603,7 +695,7 @@ pub fn session_continue_command(state: State<'_, AppState>, id: String) -> CmdRe
     let isolation = projects
         .isolation_for_worktree(&project, &worktree)
         .map_err(err)?;
-    Ok(continue_command(&isolation, &worktree, &id))
+    Ok(continue_command(&isolation, &worktree, agent, &id))
 }
 
 /// The transcript the agent saved for a conversation, read where the agent runs. Empty when

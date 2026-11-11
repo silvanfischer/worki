@@ -1,5 +1,4 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { FolderGit2, GitBranchPlus } from "lucide-react";
@@ -22,6 +21,8 @@ import { keys, useAddProject, useIsolationSettings, useProjects, useWorktrees } 
 import { useUi } from "./lib/store";
 import { useApplyTheme } from "./lib/theme";
 import { useAutoUpdates } from "./lib/updates";
+import { useTauriEvent } from "./lib/events";
+import { useFollowSignIns } from "./lib/signIns";
 import { toast } from "./lib/toast";
 
 export function App() {
@@ -35,25 +36,29 @@ export function App() {
   useAutoUpdates();
   const [palette, setPalette] = useState(false);
 
-  useEffect(() => {
-    const unlisten = listen<SessionInfo>("session-changed", ({ payload }) => {
-      const before = qc.getQueryData<SessionInfo[]>(keys.sessions)?.find((s) => s.id === payload.id);
-      const sessions =
-        qc.setQueryData<SessionInfo[]>(keys.sessions, (old) =>
-          old?.some((s) => s.id === payload.id)
-            ? old.map((s) => (s.id === payload.id ? payload : s))
-            : [...(old ?? []), payload],
-        ) ?? [];
-      if (payload.activity === "waiting" && before?.activity !== "waiting") notifyWaiting(payload);
-      const waiting = sessions.filter((s) => s.state.kind === "running" && s.activity === "waiting").length;
-      getCurrentWindow()
-        .setBadgeCount(waiting || undefined)
-        .catch(() => {});
-    });
-    return () => {
-      unlisten.then((f) => f());
-    };
-  }, [qc]);
+  useTauriEvent("session-changed", (payload) => {
+    const before = qc.getQueryData<SessionInfo[]>(keys.sessions)?.find((s) => s.id === payload.id);
+    const sessions =
+      qc.setQueryData<SessionInfo[]>(keys.sessions, (old) =>
+        old?.some((s) => s.id === payload.id)
+          ? old.map((s) => (s.id === payload.id ? payload : s))
+          : [...(old ?? []), payload],
+      ) ?? [];
+    if (payload.activity === "waiting" && before?.activity !== "waiting") notifyWaiting(payload);
+    const waiting = sessions.filter((s) => s.state.kind === "running" && s.activity === "waiting").length;
+    getCurrentWindow()
+      .setBadgeCount(waiting || undefined)
+      .catch(() => {});
+  });
+
+  useFollowSignIns();
+
+  useTauriEvent("agent-installed", ({ projectId, worktreePath, agent }) =>
+    toast(`${agent} was installed in this worktree's environment. Save a snapshot so new worktrees start with it.`, "info", {
+      label: "Save snapshot…",
+      run: () => openDialog({ kind: "saveEnvironment", projectId, path: worktreePath }),
+    }),
+  );
 
   useEffect(() => {
     const refresh = (n: number) => {

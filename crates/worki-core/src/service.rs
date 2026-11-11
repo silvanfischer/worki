@@ -220,33 +220,67 @@ impl ProjectService {
         Ok(settings.with_known_installers())
     }
 
-    /// Installs `command`'s agent in every environment of `isolation`, streaming output, and
-    /// remembers it for environments created later.
-    pub async fn install_agent(
+    /// The environment `worktree`'s agents run in (call after `grant_access`).
+    pub async fn agent_instance(
         &self,
+        project: &Project,
+        worktree: &Path,
         isolation: &Isolation,
-        command: &str,
-        log: impl Fn(LogLine) + Send + Sync + Clone + 'static,
-    ) -> Result<()> {
+    ) -> Result<Arc<dyn Backend>> {
         let backend = isolation.backend();
-        let instances = blocking(move || backend.instances()).await?;
-        if instances.is_empty() {
-            log(LogLine::Info(
-                "No environments yet; it will be installed in each new one.".into(),
-            ));
+        let ws = Self::workspace(project, Some(worktree));
+        blocking(move || Ok(Arc::from(backend.instance_for(&ws).unwrap_or(backend)))).await
+    }
+
+    /// Makes sure `executable` runs in `instance`: when it's missing there, calls `installing` and
+    /// installs it with its known installer. Returns whether it installed it.
+    pub async fn ensure_agent(
+        &self,
+        instance: Arc<dyn Backend>,
+        isolation: &Isolation,
+        executable: &str,
+        installing: impl FnOnce(),
+    ) -> Result<bool> {
+        let (check, exe) = (instance.clone(), executable.to_owned());
+        if blocking(move || Ok(check.which(&exe).is_some())).await? {
+            return Ok(false);
         }
-        for (i, instance) in instances.iter().enumerate() {
-            if instances.len() > 1 {
-                log(LogLine::Info(format!(
-                    "— environment {} of {}",
-                    i + 1,
-                    instances.len()
-                )));
-            }
-            self.install_in(isolation, instance.as_ref(), command, log.clone())
-                .await?;
+        let label = isolation.label();
+        if !instance.capabilities().install {
+            return Err(Error::Isolation(format!(
+                "`{executable}` isn't installed for {label}. Open Isolation and use “Use my installation” under Agents."
+            )));
         }
-        self.update_agent_settings(|s| s.remember_setup(&isolation.scope_key(), command, true))
+        installing();
+        let output = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let lines = output.clone();
+        self.install_in(isolation, instance.as_ref(), executable, move |line| {
+            let (LogLine::Info(text) | LogLine::Stdout(text) | LogLine::Stderr(text)) = line;
+            let mut lines = lines.lock().unwrap();
+            lines.push(text);
+            let excess = lines.len().saturating_sub(10);
+            lines.drain(..excess);
+        })
+        .await
+        .map_err(|e| {
+            let tail = output.lock().unwrap().join("\n");
+            Error::Isolation(format!(
+                "Couldn't install `{executable}` for {label}: {e}\n{tail}"
+            ))
+        })?;
+        Ok(true)
+    }
+
+    /// Answers `executable`'s trust question for `worktree` in `instance` (see
+    /// `agents::trust_worktree`).
+    pub async fn trust_worktree(
+        &self,
+        instance: Arc<dyn Backend>,
+        executable: &str,
+        worktree: &Path,
+    ) -> Result<()> {
+        let (exe, worktree) = (executable.to_owned(), worktree.to_owned());
+        blocking(move || crate::agents::trust_worktree(instance.as_ref(), &exe, &worktree)).await
     }
 
     async fn install_in(
@@ -711,14 +745,6 @@ impl ProjectService {
             .cloned()
             .unwrap_or_default();
         let instance: Arc<dyn Backend> = instance.into();
-        for executable in &setup.install {
-            if let Err(e) = self
-                .install_in(isolation, instance.as_ref(), executable, |_| {})
-                .await
-            {
-                tracing::warn!("installing {executable} in a new environment: {e}");
-            }
-        }
         for executable in setup.copy_config {
             let Some(kit) = crate::agents::kit(&executable) else {
                 continue;

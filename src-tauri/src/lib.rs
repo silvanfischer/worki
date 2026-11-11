@@ -14,6 +14,7 @@ use worki_pty::{SessionHost, SessionInfo};
 pub struct AppState {
     pub projects: Arc<ProjectService>,
     pub sessions: Arc<SessionHost>,
+    pub app: tauri::AppHandle,
 }
 
 impl AppState {
@@ -78,6 +79,7 @@ pub fn run() {
             app.manage(AppState {
                 projects: Arc::new(projects),
                 sessions: Arc::new(sessions),
+                app: app.handle().clone(),
             });
 
             if let Some(window) = app.get_webview_window("main") {
@@ -125,12 +127,11 @@ pub fn run() {
             commands::create_worktree,
             commands::remove_worktree,
             commands::agent_settings,
-            commands::save_agent_settings,
+            commands::save_agent_profiles,
             isolation::isolation_settings,
             isolation::save_isolation_settings,
             isolation::isolation_doctor,
             isolation::isolation_fix,
-            isolation::install_agent,
             isolation::isolation_remove,
             isolation::isolation_build_image,
             isolation::worktree_isolation,

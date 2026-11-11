@@ -109,6 +109,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
 
   return (
     <div
+      data-overlay
       className="fixed inset-0 z-50 flex justify-center bg-black/20 pt-[14vh]"
       onMouseDown={(e) => e.target === e.currentTarget && onClose()}
     >

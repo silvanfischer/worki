@@ -16,9 +16,36 @@ pub struct Kit {
     pub rewrite_paths: &'static [&'static str],
     /// JSON settings file and the keys dropped from it because they run the human's own scripts.
     pub strip_keys: Option<(&'static str, &'static [&'static str])>,
-    /// Env var carrying a sign-in token for agents (see `sign_in_agent`), if the agent has one.
-    pub token_secret: Option<&'static str>,
+    /// How agents sign in without the human's own login, if worki can set that up.
+    pub sign_in: Option<SignIn>,
+    /// Where the agent records that it trusts a folder, so worki can answer its question.
+    pub trust: Option<Trust>,
 }
+
+pub struct Trust {
+    /// Config file, relative to the home directory.
+    pub file: &'static str,
+    /// The file's new content with the folder trusted, or `None` when it already is.
+    pub apply: fn(&str, &Path) -> Result<Option<String>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SignIn {
+    /// Env var the token or key is stored and passed as.
+    pub secret: &'static str,
+    pub kind: SignInKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SignInKind {
+    /// `claude setup-token`, approved in the browser, bound to the subscription.
+    SetupToken,
+    /// An API key the user pastes.
+    ApiKey,
+}
+
+pub const CODEX_API_KEY: &str = "OPENAI_API_KEY";
 
 const KITS: &[Kit] = &[
     Kit {
@@ -34,14 +61,28 @@ const KITS: &[Kit] = &[
         ],
         rewrite_paths: &[".claude/settings.json"],
         strip_keys: Some((".claude/settings.json", &["hooks", "statusLine"])),
-        token_secret: Some("CLAUDE_CODE_OAUTH_TOKEN"),
+        sign_in: Some(SignIn {
+            secret: "CLAUDE_CODE_OAUTH_TOKEN",
+            kind: SignInKind::SetupToken,
+        }),
+        trust: Some(Trust {
+            file: ".claude.json",
+            apply: trusted_claude_json,
+        }),
     },
     Kit {
         executable: "codex",
         config: &[".codex/config.toml", ".codex/AGENTS.md", ".codex/prompts"],
         rewrite_paths: &[".codex/config.toml"],
         strip_keys: None,
-        token_secret: Some("OPENAI_API_KEY"),
+        sign_in: Some(SignIn {
+            secret: CODEX_API_KEY,
+            kind: SignInKind::ApiKey,
+        }),
+        trust: Some(Trust {
+            file: ".codex/config.toml",
+            apply: trusted_codex_config,
+        }),
     },
 ];
 
@@ -103,10 +144,18 @@ pub fn copy_config(backend: &dyn Backend, kit: &Kit) -> Result<CopiedConfig> {
     let target_home = backend
         .home()
         .context("could not determine the environment's home")?;
-    let paths = host_config_paths(kit);
+    let found = host_config_paths(kit);
+    let read_only = backend.read_only_home_paths(&found);
+    let paths: Vec<PathBuf> = found
+        .into_iter()
+        .filter(|p| !read_only.contains(p))
+        .collect();
     backend.copy_home_files(&home, &paths)?;
 
-    let mut skipped = Vec::new();
+    let mut skipped: Vec<String> = read_only
+        .iter()
+        .map(|p| format!("{} (the environment provides it, read-only)", p.display()))
+        .collect();
     for rel in kit
         .rewrite_paths
         .iter()
@@ -116,7 +165,11 @@ pub fn copy_config(backend: &dyn Backend, kit: &Kit) -> Result<CopiedConfig> {
         let mut text = std::fs::read_to_string(home.join(rel))?;
         if let Some((file, keys)) = kit.strip_keys.filter(|(f, _)| Path::new(f) == rel) {
             let (stripped, removed) = strip_json_keys(&text, keys)?;
-            skipped.extend(removed.into_iter().map(|k| format!("{k} from {file}")));
+            skipped.extend(
+                removed
+                    .into_iter()
+                    .map(|k| format!("{k} from {file} (runs scripts from your home folder)")),
+            );
             text = stripped;
         }
         backend.write_home_file(rel, rewrite_home(&text, &home, &target_home).as_bytes())?;
@@ -176,6 +229,53 @@ fn merge_claude_json(backend: &dyn Backend, home: &Path, target_home: &Path) -> 
         }
     }
     backend.write_home_file(rel, serde_json::to_string_pretty(&target)?.as_bytes())
+}
+
+/// Marks `worktree` as trusted in the agent's own config inside an isolated environment, where
+/// nobody can answer the agent's trust question in a chat and the isolation already limits what
+/// it reaches.
+pub fn trust_worktree(backend: &dyn Backend, executable: &str, worktree: &Path) -> Result<()> {
+    let Some(trust) = kit(executable).and_then(|k| k.trust.as_ref()) else {
+        return Ok(());
+    };
+    let file = Path::new(trust.file);
+    let current = backend
+        .read_home_file(file)?
+        .map(|b| String::from_utf8_lossy(&b).into_owned())
+        .unwrap_or_default();
+    match (trust.apply)(&current, worktree)? {
+        Some(updated) => backend.write_home_file(file, updated.as_bytes()),
+        None => Ok(()),
+    }
+}
+
+/// `~/.claude.json` with `worktree`'s trust question answered, or `None` when it already is.
+fn trusted_claude_json(current: &str, worktree: &Path) -> Result<Option<String>> {
+    let mut json: Value = serde_json::from_str(current)
+        .ok()
+        .filter(Value::is_object)
+        .unwrap_or_else(|| Value::Object(Default::default()));
+    let project = &mut json["projects"][worktree.to_string_lossy().as_ref()];
+    if project["hasTrustDialogAccepted"] == true {
+        return Ok(None);
+    }
+    project["hasTrustDialogAccepted"] = Value::Bool(true);
+    Ok(Some(serde_json::to_string_pretty(&json)?))
+}
+
+/// Codex's `config.toml` with `worktree` as a trusted project, written the way Codex records it,
+/// or `None` when it already is.
+fn trusted_codex_config(current: &str, worktree: &Path) -> Result<Option<String>> {
+    let header = format!(
+        "[projects.{}]",
+        toml::Value::String(worktree.to_string_lossy().into_owned())
+    );
+    if current.contains(&header) {
+        return Ok(None);
+    }
+    Ok(Some(format!(
+        "{current}\n{header}\ntrust_level = \"trusted\"\n"
+    )))
 }
 
 /// Finds the token printed by `claude setup-token` in raw terminal output.
@@ -253,12 +353,38 @@ mod tests {
     }
 
     #[test]
-    fn known_kits() {
+    fn trusts_the_worktree_in_each_agents_config() {
+        let wt = Path::new("/Users/me/worki/worktrees/app/fix");
+        let claude = trusted_claude_json(r#"{"projects":{"/other":{}},"theme":"dark"}"#, wt)
+            .unwrap()
+            .unwrap();
+        let json: Value = serde_json::from_str(&claude).unwrap();
         assert_eq!(
-            kit("claude").unwrap().token_secret,
-            Some("CLAUDE_CODE_OAUTH_TOKEN")
+            json["projects"][wt.to_str().unwrap()]["hasTrustDialogAccepted"],
+            true
         );
-        assert_eq!(kit("codex").unwrap().token_secret, Some("OPENAI_API_KEY"));
+        assert_eq!(json["theme"], "dark");
+        assert_eq!(trusted_claude_json(&claude, wt).unwrap(), None);
+
+        let codex = trusted_codex_config("model = \"o3\"\n", wt)
+            .unwrap()
+            .unwrap();
+        let config: toml::Table = toml::from_str(&codex).unwrap();
+        assert_eq!(config["model"].as_str(), Some("o3"));
+        assert_eq!(
+            config["projects"][wt.to_str().unwrap()]["trust_level"].as_str(),
+            Some("trusted")
+        );
+        assert_eq!(trusted_codex_config(&codex, wt).unwrap(), None);
+    }
+
+    #[test]
+    fn known_kits() {
+        let sign_in = |exe| kit(exe).unwrap().sign_in.unwrap();
+        assert_eq!(sign_in("claude").secret, "CLAUDE_CODE_OAUTH_TOKEN");
+        assert_eq!(sign_in("claude").kind, SignInKind::SetupToken);
+        assert_eq!(sign_in("codex").secret, "OPENAI_API_KEY");
+        assert_eq!(sign_in("codex").kind, SignInKind::ApiKey);
         assert!(kit("aider").is_none());
         assert!(kit("claude")
             .unwrap()

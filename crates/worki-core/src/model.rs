@@ -322,33 +322,17 @@ impl AgentProfile {
     }
 }
 
+/// The Codex install command worki 0.2.8 and earlier saved into profiles.
 const OLD_CODEX_INSTALLER: &str = r#"npm install -g --prefix "$HOME/.local" @openai/codex"#;
-
-/// Codex's standalone binary for this machine from its latest release: no Node needed, and the
-/// musl builds run on Alpine.
-const CODEX_INSTALLER: &str = r#"set -e
-case "$(uname -s)-$(uname -m)" in
-  Darwin-arm64) target=aarch64-apple-darwin ;;
-  Darwin-x86_64) target=x86_64-apple-darwin ;;
-  Linux-aarch64 | Linux-arm64) target=aarch64-unknown-linux-musl ;;
-  Linux-x86_64) target=x86_64-unknown-linux-musl ;;
-  *) echo "Codex has no build for $(uname -s) $(uname -m)" >&2; exit 1 ;;
-esac
-tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
-echo "Downloading Codex for $target…"
-curl -fsSL "https://github.com/openai/codex/releases/latest/download/codex-$target.tar.gz" | tar -xz -C "$tmp"
-mkdir -p "$HOME/.local/bin"
-mv "$tmp/codex-$target" "$HOME/.local/bin/codex"
-chmod +x "$HOME/.local/bin/codex"
-"$HOME/.local/bin/codex" --version"#;
 
 /// Install commands for agents worki knows. They run as the isolated user, so they must not need
 /// root and should install into that user's home (`~/.local/bin` is on its PATH).
 fn known_installer(executable: &str) -> Option<&'static str> {
     match executable {
         "claude" => Some("curl -fsSL https://claude.ai/install.sh | bash"),
-        "codex" => Some(CODEX_INSTALLER),
+        "codex" => {
+            Some("curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh")
+        }
         _ => None,
     }
 }
@@ -364,7 +348,8 @@ pub struct AgentSettings {
     #[serde(default, deserialize_with = "scoped_secrets")]
     pub secrets: BTreeMap<String, Vec<String>>,
     /// Per isolation scope, agent setup to repeat in every new environment (e.g. each new
-    /// sandbox): which agents to install and whose config to copy, by executable.
+    /// sandbox): whose config to copy, by executable. Agents themselves are installed in an
+    /// environment when they first start there.
     #[serde(default)]
     pub environment_setup: BTreeMap<String, EnvironmentSetup>,
 }
@@ -372,8 +357,6 @@ pub struct AgentSettings {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct EnvironmentSetup {
-    #[serde(default)]
-    pub install: Vec<String>,
     #[serde(default)]
     pub copy_config: Vec<String>,
 }
@@ -431,14 +414,13 @@ impl AgentSettings {
         }
     }
 
-    /// Remembers that new environments in `scope` should get `executable` installed / its config.
-    pub fn remember_setup(&mut self, scope: &str, executable: &str, install: bool) {
-        let setup = self.environment_setup.entry(scope.to_owned()).or_default();
-        let list = if install {
-            &mut setup.install
-        } else {
-            &mut setup.copy_config
-        };
+    /// Remembers that new environments in `scope` should get `executable`'s config copied.
+    pub fn remember_config_copy(&mut self, scope: &str, executable: &str) {
+        let list = &mut self
+            .environment_setup
+            .entry(scope.to_owned())
+            .or_default()
+            .copy_config;
         if !list.iter().any(|e| e == executable) {
             list.push(executable.to_owned());
         }
@@ -499,7 +481,7 @@ mod tests {
             ..AgentSettings::default()
         };
         let old = saved(OLD_CODEX_INSTALLER).with_known_installers();
-        assert_eq!(old.profiles[0].install.as_deref(), Some(CODEX_INSTALLER));
+        assert_eq!(old.profiles[0].install.as_deref(), known_installer("codex"));
         let own = saved("brew install codex").with_known_installers();
         assert_eq!(
             own.profiles[0].install.as_deref(),

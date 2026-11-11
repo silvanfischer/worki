@@ -89,6 +89,16 @@ export function useProjectDefaultIsolation(project: Project): Isolation | undefi
   return project.isolation.kind === "inherit" ? settings?.default : project.isolation;
 }
 
+/** Refreshes everything that shows which secrets are stored, after one was saved or removed. */
+export function useRefreshSecrets() {
+  const qc = useQueryClient();
+  return async () => {
+    await qc.invalidateQueries({ queryKey: keys.agentSettings });
+    qc.invalidateQueries({ queryKey: keys.allSecretStatus });
+    qc.invalidateQueries({ queryKey: keys.allAgentStatuses });
+  };
+}
+
 export const useAgentStatuses = (isolation: Isolation) =>
   useQuery({ queryKey: keys.agentStatuses(isolation), queryFn: () => api.agentStatuses(isolation), staleTime: 0 });
 

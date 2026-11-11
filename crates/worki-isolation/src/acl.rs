@@ -1,7 +1,8 @@
-//! macOS ACL helpers. Access is granted per path, and everything next to the path from the
-//! first folder others couldn't enter before is explicitly denied, so granting a path never
-//! exposes its siblings.
+//! macOS ACL helpers. Access is granted per path, and everything next to the path is explicitly
+//! denied from the first folder others couldn't enter (or, where every folder is open, among
+//! your own folders), so granting a path never exposes its siblings.
 
+use std::collections::HashSet;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -95,8 +96,35 @@ pub fn has_full(path: &Path, user: &str) -> Result<bool> {
     })
 }
 
-fn has_allow(path: &Path, user: &str) -> Result<bool> {
-    has(path, user, |l| l.contains(" allow "))
+/// Which of `paths` give `user` an explicit allow entry, with one `ls` per 200 paths.
+fn with_allow(paths: &[PathBuf], user: &str) -> Result<HashSet<PathBuf>> {
+    let needle = entry(user, "");
+    let mut found = HashSet::new();
+    for chunk in paths.chunks(200) {
+        let out = Command::new("/bin/ls")
+            .arg("-led")
+            .args(chunk)
+            .output()
+            .context("ls -led")?;
+        let mut current: Option<&PathBuf> = None;
+        for line in String::from_utf8_lossy(&out.stdout).lines() {
+            let is_acl = line
+                .trim_start()
+                .split_once(':')
+                .is_some_and(|(n, _)| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()));
+            if !is_acl {
+                current = chunk.iter().find(|p| {
+                    let p = p.to_string_lossy();
+                    line.ends_with(p.as_ref()) || line.contains(&format!(" {p} -> "))
+                });
+            } else if let Some(path) = current {
+                if line.contains(&needle) && line.contains(" allow ") {
+                    found.insert(path.clone());
+                }
+            }
+        }
+    }
+    Ok(found)
 }
 
 /// Whether an ACL line grants at least `access`. On directories macOS prints file rights under
@@ -173,8 +201,32 @@ pub fn confine(targets: &[PathBuf], user: &str) -> Result<()> {
     confine_below(targets, user, Path::new("/"))
 }
 
+/// Where a target's route starts in `chain` (its ancestors from the top), and whether the folders
+/// there are open to others.
+struct RouteStart {
+    index: usize,
+    open: bool,
+}
+
+fn route_start(chain: &[&Path], owned: impl Fn(&Path) -> bool) -> Result<Option<RouteStart>> {
+    if chain.is_empty() {
+        return Ok(None);
+    }
+    for (index, dir) in chain.iter().enumerate() {
+        if !others_can_enter(dir)? {
+            return Ok(Some(RouteStart { index, open: false }));
+        }
+    }
+    let index = chain
+        .iter()
+        .position(|d| owned(d))
+        .unwrap_or(chain.len() - 1);
+    Ok(Some(RouteStart { index, open: true }))
+}
+
 fn confine_below(targets: &[PathBuf], user: &str, floor: &Path) -> Result<()> {
     let uid = current_uid();
+    let owned = |p: &Path| std::fs::symlink_metadata(p).is_ok_and(|m| m.uid() == uid);
     let on_route = |p: &Path| targets.iter().any(|t| t.starts_with(p));
 
     for target in targets {
@@ -184,22 +236,10 @@ fn confine_below(targets: &[PathBuf], user: &str, floor: &Path) -> Result<()> {
             .filter(|a| a.starts_with(floor))
             .collect();
         chain.reverse();
-        if chain.is_empty() {
+        let Some(RouteStart { index: start, open }) = route_start(&chain, owned)? else {
             continue;
-        }
-        let owned = |p: &Path| std::fs::symlink_metadata(p).is_ok_and(|m| m.uid() == uid);
-        let mut private = None;
-        for (i, dir) in chain.iter().enumerate() {
-            if !others_can_enter(dir)? {
-                private = Some(i);
-                break;
-            }
-        }
-        let open = private.is_none();
-        let start = private
-            .or_else(|| chain.iter().position(|d| owned(d)))
-            .unwrap_or(chain.len() - 1);
-
+        };
+        let may_change = |p: &Path| !open || owned(p);
         if !open {
             if let Some(dir) = chain[start..].iter().find(|d| !owned(d)) {
                 bail!(
@@ -208,43 +248,44 @@ fn confine_below(targets: &[PathBuf], user: &str, floor: &Path) -> Result<()> {
                 );
             }
         }
-        let ours: Vec<&Path> = chain[start..]
-            .iter()
-            .copied()
-            .filter(|d| !open || owned(d))
-            .collect();
+
         // `chmod -a` strips these permissions from every deny entry, so it has to run before
         // the route's own deny entries are added.
         let route: Vec<&Path> = chain[start + 1..]
             .iter()
             .copied()
             .chain([target.as_path()])
-            .filter(|p| !open || owned(p))
+            .filter(|p| may_change(p))
             .collect();
         chmod(&["-h", "-a", &entry(user, DENY)], &route)?;
-        for dir in &ours {
+        for dir in chain[start..].iter().filter(|d| may_change(d)) {
             add(dir, user, ROUTE)?;
             add(dir, user, NO_LIST)?;
             add(dir, user, &format!("{DENY},{DENY_NEW_ENTRIES}"))?;
         }
         // The allow entry also marks the target as routed, so later calls for other targets
         // don't deny it as a sibling.
-        let marker = if target.is_dir() { ROUTE } else { FILE_ROUTE };
-        if !open || owned(target) {
+        if may_change(target) {
+            let marker = if target.is_dir() { ROUTE } else { FILE_ROUTE };
             add(target, user, marker)?;
         }
 
         for dir in &chain[start..] {
-            let mut deny = Vec::new();
+            let mut siblings = Vec::new();
             for entry in
                 std::fs::read_dir(dir).with_context(|| format!("list {}", dir.display()))?
             {
                 let path = entry?.path();
-                if !on_route(&path) && (!open || owned(&path)) && !has_allow(&path, user)? {
-                    deny.push(path);
+                if !on_route(&path) && may_change(&path) {
+                    siblings.push(path);
                 }
             }
-            let deny: Vec<&Path> = deny.iter().map(PathBuf::as_path).collect();
+            let routed = with_allow(&siblings, user)?;
+            let deny: Vec<&Path> = siblings
+                .iter()
+                .filter(|p| !routed.contains(*p))
+                .map(PathBuf::as_path)
+                .collect();
             for chunk in deny.chunks(200) {
                 if !chmod(&["-h", "+a", &entry(user, DENY)], chunk)? && open {
                     bail!(
@@ -340,13 +381,19 @@ mod tests {
         std::fs::write(dir.path().join("sub/f"), "x").unwrap();
 
         grant_tree(dir.path(), &me, READ_ONLY).unwrap();
-        assert!(has_allow(&dir.path().join("sub/f"), &me).unwrap());
+        let allowed = |p: &str| {
+            let path = dir.path().join(p);
+            with_allow(std::slice::from_ref(&path), &me)
+                .unwrap()
+                .contains(&path)
+        };
+        assert!(allowed("sub/f"));
         assert!(!has_full(dir.path(), &me).unwrap());
 
         grant_tree(dir.path(), &me, FULL_ACCESS).unwrap();
         assert!(has_full(dir.path(), &me).unwrap());
         std::fs::write(dir.path().join("sub/new"), "y").unwrap();
-        assert!(has_allow(&dir.path().join("sub/new"), &me).unwrap());
+        assert!(allowed("sub/new"));
 
         let before = lines(dir.path());
         grant_tree(dir.path(), &me, FULL_ACCESS).unwrap();

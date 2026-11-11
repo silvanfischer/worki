@@ -643,6 +643,9 @@ impl Mount {
 fn mounts(repo: &Path, worktree: &Path, admin_dir: Option<&Path>) -> Vec<Mount> {
     let git = repo.join(".git");
     let mount = |path: PathBuf, read_only| Mount { path, read_only };
+    if crate::same_dir(worktree, repo) {
+        return main_checkout_mounts(repo);
+    }
     let mut writable = vec![git.join("objects"), git.join("refs"), git.join("logs")];
     writable.extend(admin_dir.map(Path::to_path_buf));
     for dir in &writable {
@@ -658,6 +661,44 @@ fn mounts(repo: &Path, worktree: &Path, admin_dir: Option<&Path>) -> Vec<Mount> 
         .chain(pinned.into_iter().map(|p| mount(p, true)))
         .filter(|m| m.path.exists())
         .collect()
+}
+
+/// In the main checkout git writes HEAD and the index into `.git` itself, so `.git` stays
+/// writable; what your own git runs commands from is read-only on top of it: hooks, config, and
+/// the folders holding submodules' and other worktrees' config. The folders are created first,
+/// since an agent could otherwise create one itself, hooks included.
+fn main_checkout_mounts(repo: &Path) -> Vec<Mount> {
+    let git = repo.join(".git");
+    let protected = ["hooks", "info", "modules", "worktrees"].map(|d| git.join(d));
+    for dir in &protected {
+        std::fs::create_dir_all(dir).ok();
+    }
+    [Mount {
+        path: repo.to_path_buf(),
+        read_only: false,
+    }]
+    .into_iter()
+    .chain(
+        protected
+            .into_iter()
+            .chain([git.join("config")])
+            .filter(|p| p.exists())
+            .map(|path| Mount {
+                path,
+                read_only: true,
+            }),
+    )
+    .collect()
+}
+
+/// Docker Sandboxes' images are named after the agent they contain; worki's own image has Claude
+/// Code.
+pub(crate) fn image_ships(sandbox: bool, image: &str, command: &str) -> bool {
+    if sandbox {
+        image == command
+    } else {
+        image == DEFAULT_CONTAINER_IMAGE && command == "claude"
+    }
 }
 
 /// `docker.io/library/app:1` and `localhost/app:1` are the same image as `app:1`.
@@ -881,7 +922,6 @@ impl Backend for Container {
         let Some(worktree) = &ws.worktree else {
             return Ok(());
         };
-        crate::require_linked_worktree(&ws.repo, worktree)?;
         let name = sandbox_name(worktree);
         if let Some(listed) = self.list()?.into_iter().find(|s| s.name == name) {
             return self.ensure_running(&listed);
@@ -1219,11 +1259,8 @@ impl Backend for Container {
     /// Bound to an environment: looked up inside it. Otherwise only what the image ships is known.
     fn which(&self, command: &str) -> Option<String> {
         if self.bound.is_none() {
-            let ships = match self.engine {
-                Engine::Sbx => command == self.image,
-                _ => self.image == DEFAULT_CONTAINER_IMAGE && command == "claude",
-            };
-            return ships.then(|| format!("in the `{}` image", self.image));
+            return image_ships(self.engine == Engine::Sbx, &self.image, command)
+                .then(|| format!("in the `{}` image", self.image));
         }
         let out = self
             .sh(r#"bash -lc 'command -v "$1"' _ "$1""#, &[command], None)
@@ -1266,6 +1303,20 @@ impl Backend for Container {
         self.list()
             .map(|l| l.iter().any(|s| s.name == name))
             .unwrap_or(false)
+    }
+
+    fn read_only_home_paths(&self, paths: &[PathBuf]) -> Vec<PathBuf> {
+        let args: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        let script = r#"for p; do t="$p"; while [ ! -e "$t" ] && [ "$t" != . ]; do t=$(dirname "$t"); done; [ -w "$t" ] || printf '%s\n' "$p"; done"#;
+        self.sh(script, &args, None)
+            .map(|out| {
+                String::from_utf8_lossy(&out.stdout)
+                    .lines()
+                    .map(PathBuf::from)
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// Streams a tar of the host files into `tar -x` inside the environment's home.
@@ -1396,6 +1447,34 @@ mod tests {
             hooks.volume_arg(),
             format!("{0}:{0}:ro", repo.join(".git/hooks").display())
         );
+    }
+
+    #[test]
+    fn main_checkout_mounts_protect_what_git_runs_from() {
+        let root = tempfile::tempdir().unwrap();
+        let repo = root.path().join("repo");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::write(repo.join(".git/config"), "x").unwrap();
+
+        let m = mounts(&repo, &repo, None);
+        assert_eq!(
+            m[0],
+            Mount {
+                path: repo.clone(),
+                read_only: false
+            }
+        );
+        for ro in ["hooks", "config", "info", "modules", "worktrees"] {
+            let path = repo.join(".git").join(ro);
+            assert!(path.exists(), "{ro} is created so it can be mounted");
+            assert!(
+                m.contains(&Mount {
+                    path,
+                    read_only: true
+                }),
+                "{ro} not read-only in {m:?}"
+            );
+        }
     }
 
     #[test]

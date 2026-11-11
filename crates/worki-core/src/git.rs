@@ -24,9 +24,11 @@ pub async fn main_checkout(host: &Host, path: &Path) -> Result<PathBuf> {
 }
 
 pub async fn list_worktrees(host: &Host, repo: &Path) -> Result<Vec<Worktree>> {
-    let mut worktrees =
-        parse_worktree_porcelain(&host.git(repo, ["worktree", "list", "--porcelain"]).await?);
-    let bases = branch_bases(host, repo).await;
+    let (listing, bases) = tokio::join!(
+        host.git(repo, ["worktree", "list", "--porcelain"]),
+        branch_bases(host, repo)
+    );
+    let mut worktrees = parse_worktree_porcelain(&listing?);
     for wt in &mut worktrees {
         wt.base = wt.branch.as_ref().and_then(|b| bases.get(b).cloned());
     }

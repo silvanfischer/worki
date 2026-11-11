@@ -181,6 +181,7 @@ export function Dialog({
 
   return (
     <div
+      data-overlay
       className="fixed inset-0 z-50 flex items-start justify-center bg-black/25 pt-[12vh] backdrop-blur-[1px]"
       onMouseDown={(e) => e.target === e.currentTarget && onClose()}
     >
@@ -230,7 +231,7 @@ export function Menu({ trigger, items }: { trigger: (open: () => void) => ReactN
     <div ref={ref} className="relative">
       {trigger(() => setOpen((o) => !o))}
       {isOpen && (
-        <div className="absolute right-0 z-40 mt-1 min-w-48 rounded-lg border border-line bg-elevated p-1 shadow-xl">
+        <div data-overlay className="absolute right-0 z-40 mt-1 min-w-48 rounded-lg border border-line bg-elevated p-1 shadow-xl">
           {items.map((item) => (
             <button
               key={item.label}

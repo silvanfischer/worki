@@ -13,13 +13,7 @@ pub async fn run_logged(
     launch: Launch,
     log: impl Fn(LogLine) + Send + Sync + Clone + 'static,
 ) -> Result<()> {
-    let mut cmd = Command::new(&launch.program);
-    cmd.args(&launch.args).current_dir(&launch.cwd);
-    if launch.clear_env {
-        cmd.env_clear();
-    }
-    let mut child = cmd
-        .envs(launch.env)
+    let mut child = Command::from(launch.command())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

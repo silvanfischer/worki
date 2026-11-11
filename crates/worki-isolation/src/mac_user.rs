@@ -8,7 +8,7 @@ use anyhow::{bail, Context, Result};
 use crate::none::shell_args;
 use crate::ssh::shell_quote;
 use crate::{
-    acl, check_output, command_path, current_user, ensure_relative, ensure_valid_env,
+    acl, canonical, check_output, command_path, current_user, ensure_relative, ensure_valid_env,
     file_contents, home_path, pack_home_files, run_with_stdin, vault, Backend, Capabilities, Check,
     Fix, Isolation, Launch, LaunchRequest, Workspace, READ_FILE_SCRIPT, WRITE_FILE_SCRIPT,
 };
@@ -227,11 +227,6 @@ fn run_admin(args: &[&str], prompt: &str) -> Result<()> {
     Ok(())
 }
 
-fn canonical(path: &Path) -> Result<PathBuf> {
-    path.canonicalize()
-        .with_context(|| format!("resolve {}", path.display()))
-}
-
 /// The `.git/worktrees/<name>` folder a linked worktree's `.git` file points to.
 fn worktree_admin_dir(worktree: &Path) -> Result<PathBuf> {
     let gitfile = std::fs::read_to_string(worktree.join(".git"))
@@ -290,14 +285,16 @@ impl Backend for MacUser {
         }
         self.revoke_legacy_grants(ws)?;
 
+        let linked = match &ws.worktree {
+            Some(worktree) => {
+                let worktree = crate::linked_worktree(&ws.repo, worktree)?;
+                let admin = worktree_admin_dir(&worktree)?;
+                Some((worktree, admin))
+            }
+            None => None,
+        };
         let mut targets = vec![git_dir.clone()];
-        let mut admin = None;
-        if let Some(worktree) = &ws.worktree {
-            crate::require_linked_worktree(&ws.repo, worktree)?;
-            let worktree = canonical(worktree)?;
-            admin = Some(worktree_admin_dir(&worktree)?);
-            targets.push(worktree);
-        }
+        targets.extend(linked.as_ref().map(|(worktree, _)| worktree.clone()));
         acl::confine(&targets, user)?;
 
         acl::grant_tree(&git_dir, user, acl::READ_ONLY)?;
@@ -313,9 +310,7 @@ impl Backend for MacUser {
         }
         acl::grant_file(&fetch_head, user, acl::READ_WRITE_FILE)?;
 
-        if let (Some(worktree), Some(admin)) =
-            (ws.worktree.as_deref().map(canonical).transpose()?, admin)
-        {
+        if let Some((worktree, admin)) = linked {
             for dir in [&worktree, &admin] {
                 acl::grant_tree(dir, user, acl::FULL_ACCESS)?;
                 acl::grant_tree(dir, &self.human, acl::FULL_ACCESS)?;

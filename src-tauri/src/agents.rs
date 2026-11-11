@@ -1,12 +1,15 @@
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde::Serialize;
 use tauri::ipc::Channel;
-use tauri::State;
+use tauri::{Emitter, State};
 use worki_core::agents;
 use worki_core::{secrets, Isolation, LogLine};
-use worki_isolation::host_which;
+use worki_isolation::{host_which, Backend, LaunchRequest};
 
+use crate::sessions::events;
 use crate::{blocking, err, AppState, CmdResult};
 
 #[derive(Serialize)]
@@ -19,7 +22,8 @@ pub struct AgentStatus {
     env_path: Option<String>,
     /// Where it resolves for the human user.
     host_path: Option<String>,
-    can_install: bool,
+    /// New environments have it from their image, without installing.
+    in_base_image: bool,
     /// The human's own installation can be reused inside.
     can_share: bool,
     /// worki knows this agent's config layout and the human has some config to copy.
@@ -30,8 +34,9 @@ pub struct AgentStatus {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthStatus {
-    /// Env var the sign-in token is passed as.
+    /// Env var the sign-in token or key is passed as.
     secret: String,
+    kind: agents::SignInKind,
     /// A token is stored for this isolation.
     set: bool,
 }
@@ -72,14 +77,14 @@ pub async fn agent_statuses(
                 Some(AgentStatus {
                     env_path: env_path(&executable),
                     host_path: host_which(&executable),
-                    can_install: caps.install
-                        && p.install.as_deref().is_some_and(|s| !s.trim().is_empty()),
+                    in_base_image: isolation.image_ships(&executable),
                     can_share: caps.share_host_install,
                     has_config: caps.copy_config
                         && kit.is_some_and(|k| !agents::host_config_paths(k).is_empty()),
-                    auth: kit.and_then(|k| k.token_secret).map(|secret| AuthStatus {
-                        set: secrets::is_set(&scope, secret),
-                        secret: secret.to_owned(),
+                    auth: kit.and_then(|k| k.sign_in).map(|sign_in| AuthStatus {
+                        set: secrets::is_set(&scope, sign_in.secret),
+                        secret: sign_in.secret.to_owned(),
+                        kind: sign_in.kind,
                     }),
                     profile_id: p.id,
                     name: p.name,
@@ -121,7 +126,7 @@ pub async fn copy_agent_config(
     .await?;
     state
         .projects
-        .update_agent_settings(|s| s.remember_setup(&scope, &executable, false))
+        .update_agent_settings(|s| s.remember_config_copy(&scope, &executable))
         .map_err(err)?;
     Ok(copied)
 }
@@ -137,7 +142,9 @@ pub async fn sign_in_agent(
     on_log: Channel<LogLine>,
 ) -> CmdResult<()> {
     let secret = agents::kit(&executable)
-        .and_then(|k| k.token_secret)
+        .and_then(|k| k.sign_in)
+        .filter(|s| s.kind == agents::SignInKind::SetupToken)
+        .map(|s| s.secret)
         .ok_or_else(|| {
             format!("worki can't sign in {executable}; add its API key as a secret instead")
         })?;
@@ -187,4 +194,126 @@ pub async fn sign_in_agent(
         .projects
         .update_agent_settings(|s| s.add_secret(&scope, secret))
         .map_err(err)
+}
+
+/// Shown in the worktree while Codex waits for its device-code sign-in.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentSignIn {
+    worktree_path: PathBuf,
+    agent: String,
+    url: String,
+    code: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SignInEnded {
+    worktree_path: PathBuf,
+}
+
+/// Signs Codex in where `worktree`'s agents run, when it isn't yet and no API key is stored for
+/// the isolation: Codex's device-code sign-in, whose link and code the worktree shows until it's
+/// approved in the browser. The login stays in that environment.
+pub async fn sign_in_codex(
+    state: &AppState,
+    instance: Arc<dyn Backend>,
+    worktree: &Path,
+    isolation: &Isolation,
+    agent: &str,
+) -> CmdResult<()> {
+    if secrets::is_set(&isolation.scope_key(), agents::CODEX_API_KEY) {
+        return Ok(());
+    }
+    let request = |command: &str, interactive: bool| LaunchRequest {
+        cwd: worktree.to_owned(),
+        command: Some(command.into()),
+        interactive,
+        stdin: false,
+        env: Vec::new(),
+        session: None,
+    };
+    let (status, sign_in) = (
+        request("codex login status", false),
+        request("codex login --device-auth", true),
+    );
+    let app = state.app.clone();
+    let (worktree_path, agent) = (worktree.to_owned(), agent.to_owned());
+    blocking(move || {
+        let mut status = instance.launch(&status)?.command();
+        if status
+            .stdin(std::process::Stdio::null())
+            .output()?
+            .status
+            .success()
+        {
+            return Ok(());
+        }
+        let launch = instance.launch(&sign_in)?;
+        let mut output = String::new();
+        let mut shown = false;
+        let code = worki_pty::run_captured(
+            &launch.program,
+            &launch.args,
+            &launch.cwd,
+            120,
+            Duration::from_secs(15 * 60),
+            |bytes| {
+                output.push_str(&agents::strip_ansi(&String::from_utf8_lossy(bytes)));
+                if let (false, Some((url, code))) = (shown, device_code(&output)) {
+                    shown = true;
+                    let event = AgentSignIn {
+                        worktree_path: worktree_path.clone(),
+                        agent: agent.clone(),
+                        url,
+                        code,
+                    };
+                    app.emit(events::AGENT_SIGN_IN, event).ok();
+                }
+            },
+        );
+        app.emit(events::AGENT_SIGNED_IN, SignInEnded { worktree_path })
+            .ok();
+        match code? {
+            Some(0) => Ok(()),
+            None => anyhow::bail!("Codex sign-in expired; start Codex again for a new code."),
+            Some(_) => anyhow::bail!("Codex sign-in didn't finish: {}", output.trim()),
+        }
+    })
+    .await
+}
+
+/// The link and one-time code in Codex's device-code sign-in output.
+fn device_code(output: &str) -> Option<(String, String)> {
+    let words: Vec<&str> = output.split_whitespace().collect();
+    let url = words.iter().find(|w| w.starts_with("https://"))?;
+    let code = words.iter().find(|w| {
+        w.split_once('-').is_some_and(|(a, b)| {
+            [a, b].iter().all(|part| {
+                (4..=6).contains(&part.len())
+                    && part
+                        .chars()
+                        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+            })
+        })
+    })?;
+    Some((url.to_string(), code.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn reads_the_device_code_from_codex_output() {
+        let output = "Follow these steps to sign in with ChatGPT using device code authorization:\n\n\
+1. Open this link in your browser and sign in to your account\n   https://auth.openai.com/codex/device\n\n\
+2. Enter this one-time code (expires in 15 minutes)\n   CWPX-HIAOL\n";
+        assert_eq!(
+            super::device_code(output),
+            Some((
+                "https://auth.openai.com/codex/device".into(),
+                "CWPX-HIAOL".into()
+            ))
+        );
+        assert_eq!(super::device_code("1. Open this link"), None);
+    }
 }

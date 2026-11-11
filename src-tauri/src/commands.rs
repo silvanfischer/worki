@@ -411,9 +411,20 @@ pub fn agent_settings(state: State<'_, AppState>) -> CmdResult<AgentSettings> {
     state.projects.agent_settings().map_err(err)
 }
 
+/// Saves what the agents dialog edits; secrets and what new environments get set up with stay.
 #[tauri::command]
-pub fn save_agent_settings(state: State<'_, AppState>, settings: AgentSettings) -> CmdResult<()> {
-    state.projects.save_agent_settings(&settings).map_err(err)
+pub fn save_agent_profiles(
+    state: State<'_, AppState>,
+    profiles: Vec<AgentProfile>,
+    default_profile: Option<String>,
+) -> CmdResult<()> {
+    state
+        .projects
+        .update_agent_settings(|s| {
+            s.profiles = profiles;
+            s.default_profile = default_profile;
+        })
+        .map_err(err)
 }
 
 /// Puts text on the clipboard natively, for writes that don't come from a click or key press

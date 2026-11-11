@@ -134,7 +134,7 @@ function SandboxImage({
   return (
     <div className="flex flex-col gap-2">
       <label className="flex items-center gap-2">
-        <span className="w-16 text-xs text-muted">Agent</span>
+        <span className="w-20 text-xs text-muted">Base image</span>
         <Select value={image} onChange={(e) => onChange(e.target.value, template)} className="h-8 text-[13px]">
           {SANDBOX_IMAGES.map((img) => (
             <option key={img} value={img}>
@@ -144,7 +144,7 @@ function SandboxImage({
         </Select>
       </label>
       <label className="flex items-center gap-2">
-        <span className="w-16 text-xs text-muted">Start from</span>
+        <span className="w-20 text-xs text-muted">Start from</span>
         <TemplateSelect
           isolation={{ kind: "dockerSandbox", image }}
           value={template}
@@ -153,6 +153,10 @@ function SandboxImage({
           onChange={(t) => onChange(image, t)}
         />
       </label>
+      <span className="text-xs text-faint">
+        Docker's sandbox image with that agent already in it. Agents missing from it are installed in a worktree's
+        sandbox the first time they start there.
+      </span>
       <span className="text-xs text-faint">
         A snapshot saved from a worktree's sandbox (Save snapshot in its isolation dialog) gives new worktrees
         everything installed in it. Existing sandboxes keep theirs.

@@ -21,6 +21,7 @@ import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import {
+  type AgentStatusKind,
   api,
   type ChatAttachment,
   type ChatQuestion,
@@ -31,6 +32,7 @@ import {
   type SessionInfo,
 } from "../lib/api";
 import { type Chat, type ChatItem, useChat } from "../lib/chat";
+import { useAsyncAction } from "../lib/useAsyncAction";
 import { PERMISSION_MODES } from "./AgentStatus";
 import { ChatVisual, VISUAL_LANGUAGES } from "./ChatVisual";
 import { Button, ErrorText, Select, Textarea } from "./ui";
@@ -208,27 +210,29 @@ function UserMessage({ item, session }: { item: UserItem; session: SessionInfo }
  * command. Stopping that command, or moving it to the background, makes it read the message
  * now. */
 function QueuedNote({ session }: { session: SessionInfo }) {
-  const [error, setError] = useState<string | null>(null);
-  const button = "rounded border border-line bg-elevated px-1.5 py-0.5 font-medium text-fg hover:bg-hover disabled:opacity-50";
+  const { busy, error, run } = useAsyncAction();
+  const button = "h-auto px-1.5 py-0.5 fs-chat-xs";
   return (
     <div className="flex flex-col gap-1 font-sans whitespace-normal">
       <div className="flex flex-wrap items-center gap-2 fs-chat-xs text-muted">
         <Clock size={11} className="shrink-0" />
         <span>Queued until the current step finishes</span>
-        <button
-          onClick={() => api.interruptChat(session.id).catch((e) => setError(errorMessage(e)))}
+        <Button
+          onClick={() => run(() => api.interruptChat(session.id))}
+          disabled={busy}
           title="Stop the current step so the agent reads this now"
           className={button}
         >
           Send now
-        </button>
-        <button
-          onClick={() => api.backgroundChatCommands(session.id).catch((e) => setError(errorMessage(e)))}
+        </Button>
+        <Button
+          onClick={() => run(() => api.backgroundChatCommands(session.id))}
+          disabled={busy}
           title="Move the running command to the background, where it keeps going, and start on this now"
           className={button}
         >
           Run alongside
-        </button>
+        </Button>
       </div>
       <ErrorText>{error}</ErrorText>
     </div>
@@ -260,7 +264,7 @@ function runningTools(items: ChatItem[]): Tool[] {
   return [];
 }
 
-const STATUS_LABELS: Record<string, string> = {
+const STATUS_LABELS: Partial<Record<AgentStatusKind, string>> = {
   requesting: "Waiting for the model",
   thinking: "Thinking",
   writing: "Writing",
@@ -277,7 +281,6 @@ function activityLabel(chat: Chat, root: string): string {
   return STATUS_LABELS[status.status] ?? status.status.charAt(0).toUpperCase() + status.status.slice(1);
 }
 
-/** What the agent is doing right now, and for how long the turn has run. */
 function Activity({ chat, root }: { chat: Chat; root: string }) {
   const now = useNow(true);
   return (
@@ -390,6 +393,7 @@ function ToolCall({ tool, session }: { tool: Tool; session: SessionInfo }) {
 
 /** What the tool was asked to do: a diff for edits, the command for shells, else the input. */
 function ToolInput({ name, input }: { name: string; input: Record<string, unknown> }) {
+  if (name === "Edit" && typeof input.diff === "string") return <Diff text={input.diff} />;
   if (name === "Edit") return <Changes edits={[input]} />;
   if (name === "MultiEdit" && Array.isArray(input.edits)) return <Changes edits={input.edits as Record<string, unknown>[]} />;
   if (name === "Write" && typeof input.content === "string")
@@ -411,6 +415,20 @@ function Changes({ edits }: { edits: Record<string, unknown>[] }) {
       .filter((l, i, all) => l || i < all.length - 1)
       .map((text) => ({ kind: "add" as const, text })),
   ]);
+  return <Lines lines={lines} />;
+}
+
+function Diff({ text }: { text: string }) {
+  const lines = text
+    .split("\n")
+    .filter((l) => l && !l.startsWith("@@") && !l.startsWith("+++") && !l.startsWith("---"))
+    .map((l) =>
+      l.startsWith("+")
+        ? { kind: "add" as const, text: l.slice(1) }
+        : l.startsWith("-")
+          ? { kind: "del" as const, text: l.slice(1) }
+          : { kind: "plain" as const, text: l.slice(1) },
+    );
   return <Lines lines={lines} />;
 }
 
@@ -674,32 +692,33 @@ function Composer({ session, chat, onSend }: { session: SessionInfo; chat: Chat;
 
   const stop = () => api.interruptChat(session.id).catch((e) => setError(errorMessage(e)));
   const stopJobs = (ids: string[]) => api.stopChatTasks(session.id, ids).catch((e) => setError(errorMessage(e)));
+  const hasJobs = chat.background.length > 0;
   const stopAll = () => {
     if (busy) stop();
-    if (chat.background.length > 0) stopJobs(chat.background.map((t) => t.id));
+    if (hasJobs) stopJobs(chat.background.map((t) => t.id));
   };
   const stopAllRef = useRef(stopAll);
   stopAllRef.current = stopAll;
-  const canStop = busy || chat.background.length > 0;
+  const canStop = busy || hasJobs;
   useEffect(() => {
     if (!canStop) return;
     const onKey = (e: KeyboardEvent) => {
-      // Dialogs, the command palette and full-window visuals sit in a fixed full-window layer
-      // and close on Esc themselves.
-      if (e.key !== "Escape" || e.defaultPrevented || document.querySelector(".fixed.inset-0")) return;
+      // Dialogs, menus and full-window visuals close on Esc themselves.
+      if (e.key !== "Escape" || document.querySelector("[data-overlay]")) return;
       const focus = document.activeElement;
       if (focus && focus !== document.body && !input.current?.closest("[data-chat]")?.contains(focus)) return;
       e.preventDefault();
       stopAllRef.current();
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    // Capture phase: overlays close on Esc before the event would reach a bubbling listener.
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
   }, [canStop]);
 
   return (
     <div className="shrink-0 border-t border-line px-5 py-3">
       <div className="mx-auto flex max-w-5xl flex-col gap-1.5">
-        {chat.background.length > 0 && <BackgroundJobs tasks={chat.background} onStop={stopJobs} />}
+        {hasJobs && <BackgroundJobs tasks={chat.background} onStop={stopJobs} />}
         <div className="flex flex-col gap-1.5 rounded-lg border border-line bg-panel px-2 py-1.5 focus-within:border-accent">
           {attached.length > 0 && (
             <div className="flex flex-wrap gap-1.5 px-1 pt-0.5">
@@ -745,7 +764,7 @@ function Composer({ session, chat, onSend }: { session: SessionInfo; chat: Chat;
           {busy && !ready ? (
             <button
               onClick={stopAll}
-              title={chat.background.length > 0 ? "Stop, including background jobs (Esc)" : "Stop (Esc)"}
+              title={hasJobs ? "Stop, including background jobs (Esc)" : "Stop (Esc)"}
               className="flex size-7 shrink-0 items-center justify-center rounded-md bg-fg text-panel hover:opacity-80"
             >
               <Square size={11} fill="currentColor" />

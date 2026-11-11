@@ -71,18 +71,15 @@ impl ClaudeProtocol {
         };
         if response["subtype"] != "success" {
             let error = response["error"].as_str().unwrap_or("the agent refused");
-            return match request["subtype"].as_str() {
-                Some("initialize" | "interrupt") | None => Vec::new(),
-                Some("background_tasks") => vec![ChatEvent::Notice {
-                    text: format!("Couldn't move the command to the background: {error}"),
-                }],
-                Some("stop_task") => vec![ChatEvent::Notice {
-                    text: format!("Couldn't stop the background job: {error}"),
-                }],
-                Some(what) => vec![ChatEvent::Notice {
-                    text: format!("Couldn't change the setting ({what}): {error}"),
-                }],
+            let what = match request["subtype"].as_str() {
+                Some("initialize" | "interrupt") | None => return Vec::new(),
+                Some("background_tasks") => "move the command to the background".to_owned(),
+                Some("stop_task") => "stop the background job".to_owned(),
+                Some(setting) => format!("change the setting ({setting})"),
             };
+            return vec![ChatEvent::Notice {
+                text: format!("Couldn't {what}: {error}"),
+            }];
         }
         let answer = &response["response"];
         match request["subtype"].as_str() {
@@ -460,15 +457,14 @@ impl ChatProtocol for ClaudeProtocol {
                 _ => Vec::new(),
             },
             Some("system") if msg["subtype"] == "background_tasks_changed" => {
-                let tasks = msg["tasks"].as_array().cloned().unwrap_or_default();
-                let str = |t: &Value, key: &str| t[key].as_str().unwrap_or_default().to_owned();
+                let field = |t: &Value, key: &str| t[key].as_str().unwrap_or_default().to_owned();
+                let tasks = msg["tasks"].as_array().into_iter().flatten();
                 vec![ChatEvent::BackgroundTasks {
                     tasks: tasks
-                        .iter()
                         .map(|t| BackgroundTask {
-                            id: str(t, "task_id"),
-                            kind: str(t, "task_type"),
-                            description: str(t, "description"),
+                            id: field(t, "task_id"),
+                            kind: field(t, "task_type"),
+                            description: field(t, "description"),
                         })
                         .collect(),
                 }]

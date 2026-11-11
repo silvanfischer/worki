@@ -120,8 +120,12 @@ const timingChart = `<div class="c"><div class="h"><b>Where the checkout tests s
   .map(([name, share, time]) => `<div class="r"><span>${name}</span><div class="t"><i style="--w:${share}%"></i></div><b>${time}</b></div>`)
   .join("")}</div><style>.c{padding:18px 20px;border:1px solid var(--line);border-radius:14px;background:var(--elevated);font:13px/1.4 -apple-system,system-ui,sans-serif}.h{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:14px;color:var(--muted)}.h b{font-size:14px;font-weight:600;color:var(--fg)}.r{display:grid;grid-template-columns:72px 1fr 52px;gap:14px;align-items:center;margin:10px 0;color:var(--muted)}.t{height:8px;border-radius:4px;background:var(--hover)}.t i{display:block;height:100%;width:var(--w);border-radius:4px;background:linear-gradient(90deg,color-mix(in srgb,var(--accent) 55%,transparent),var(--accent))}.r b{font-weight:500;color:var(--fg);text-align:right;font-variant-numeric:tabular-nums}</style>`;
 
+const devServer = { id: "b1", kind: "local_bash", description: "Start the dev server" };
+const testWatcher = { id: "b2", kind: "local_bash", description: "Watch the checkout tests" };
+const fixtureAgent = { id: "b3", kind: "local_agent", description: "Look for slow fixtures in the other suites" };
+
 /** The website's first screenshot: a chat at work, with jobs running in the background. Each
- * step is sent as if it happened `ago` seconds earlier, so the timers show real-looking times. */
+ * step is stamped as if it happened `ago` seconds earlier, so the timers show real-looking times. */
 const heroSteps: [number, object[]][] = [
   [
     150,
@@ -135,18 +139,12 @@ const heroSteps: [number, object[]][] = [
       { type: "text", id: "h1:0", parent: null, text: "I'll start the dev server and a test watcher in the background, then profile the suite." },
     ],
   ],
-  [140, [...bash("h2", "Start the dev server", "pnpm dev", "Command running in background with ID: b1", true), { type: "backgroundTasks", tasks: [{ id: "b1", kind: "local_bash", description: "Start the dev server" }] }]],
+  [140, [...bash("h2", "Start the dev server", "pnpm dev", "Command running in background with ID: b1", true), { type: "backgroundTasks", tasks: [devServer] }]],
   [
     132,
     [
       ...bash("h3", "Watch the checkout tests", "pnpm vitest src/checkout", "Command running in background with ID: b2", true),
-      {
-        type: "backgroundTasks",
-        tasks: [
-          { id: "b1", kind: "local_bash", description: "Start the dev server" },
-          { id: "b2", kind: "local_bash", description: "Watch the checkout tests" },
-        ],
-      },
+      { type: "backgroundTasks", tasks: [devServer, testWatcher] },
       ...bash("h4", "Profile the checkout tests", "pnpm vitest run src/checkout --reporter=json", "4 test files, 31 tests, 2.41 s"),
       {
         type: "text",
@@ -159,14 +157,7 @@ const heroSteps: [number, object[]][] = [
   [
     70,
     [
-      {
-        type: "backgroundTasks",
-        tasks: [
-          { id: "b1", kind: "local_bash", description: "Start the dev server" },
-          { id: "b2", kind: "local_bash", description: "Watch the checkout tests" },
-          { id: "b3", kind: "local_agent", description: "Look for slow fixtures in the other suites" },
-        ],
-      },
+      { type: "backgroundTasks", tasks: [devServer, testWatcher, fixtureAgent] },
       {
         type: "toolCall",
         id: "h6",
@@ -242,6 +233,7 @@ const chatEvents: object[] = [
 type DemoChannel = { onmessage?: (data: number[]) => void };
 let chatSettings: Record<string, string> = { model: "claude-opus-5-5", permissionMode: "default", effort: "high" };
 let chatChannel: DemoChannel | null = null;
+let sentMessages = 0;
 const sendTo = (channel: DemoChannel | null, events: object[]) =>
   channel?.onmessage?.(Array.from(new TextEncoder().encode(events.map((e) => JSON.stringify(e) + "\n").join(""))));
 const sendChat = (...events: object[]) => sendTo(chatChannel, events);
@@ -407,8 +399,8 @@ function handle(cmd: string, args: Record<string, any>): unknown {
       ];
     case "agent_statuses":
       return [
-        { profileId: "claude", name: "Claude Code", executable: "claude", envPath: "/usr/local/bin/claude", hostPath: "/opt/homebrew/bin/claude", canInstall: true, canShare: false, hasConfig: true, auth: { secret: "CLAUDE_CODE_OAUTH_TOKEN", set: true } },
-        { profileId: "codex", name: "Codex", executable: "codex", envPath: null, hostPath: "/opt/homebrew/bin/codex", canInstall: true, canShare: false, hasConfig: false, auth: null },
+        { profileId: "claude", name: "Claude Code", executable: "claude", envPath: "/usr/local/bin/claude", hostPath: "/opt/homebrew/bin/claude", canShare: false, hasConfig: true, inBaseImage: true, auth: { secret: "CLAUDE_CODE_OAUTH_TOKEN", set: true, kind: "setupToken" } },
+        { profileId: "codex", name: "Codex", executable: "codex", envPath: null, hostPath: "/opt/homebrew/bin/codex", canShare: false, hasConfig: false, inBaseImage: false, auth: null },
       ];
     case "secret_status":
       return (args.names as string[]).map((n) => [n, true]);
@@ -421,23 +413,19 @@ function handle(cmd: string, args: Record<string, any>): unknown {
       if (args.id === "s1") setTimeout(() => channel.onmessage?.(Array.from(new TextEncoder().encode(terminal))), 50);
       if (args.id === "s5") {
         chatChannel = channel;
-        setTimeout(() => {
-          if (scene !== "hero") return sendTo(channel, chatEvents);
-          const realNow = Date.now;
-          sendTo(channel, chatEvents.slice(0, 1));
-          for (const [ago, events] of heroSteps) {
-            Date.now = () => realNow() - ago * 1000;
-            sendTo(channel, events);
-          }
-          Date.now = realNow;
-        }, 50);
+        const hero = [
+          ...chatEvents.slice(0, 1),
+          ...heroSteps.flatMap(([ago, events]) => events.map((e) => ({ ...e, at: Date.now() - ago * 1000 }))),
+        ];
+        setTimeout(() => sendTo(channel, scene === "hero" ? hero : chatEvents), 50);
       }
       return 1;
     }
     case "send_chat_message": {
+      const id = `m${++sentMessages}`;
       sendChat(
-        { type: "user", id: `m${now}`, text: args.text, attachments: (args.attachments ?? []).map((a: { path?: string; name?: string }) => a.name ?? a.path?.split("/").pop()) },
-        { type: "userRead", id: `m${now}` },
+        { type: "user", id, text: args.text, attachments: (args.attachments ?? []).map((a: { path?: string; name?: string }) => a.name ?? a.path?.split("/").pop()) },
+        { type: "userRead", id },
       );
       let i = 0;
       const words = "Sure — I'll take care of that next.".split(" ");

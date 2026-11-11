@@ -55,10 +55,12 @@ checks it and cleans it up again.
 - **A doctor for every backend.** Checks phrased the way you'd want to read them ("_worki can't
   read files in your home folder") with one-click fixes: create the agent user, start the
   sandbox daemon or Podman machine, build the image.
-- **Agents ready inside the sandbox.** Install Claude Code, or Codex (experimental), into the
-  environment, or reuse your own installation. Copy your agent configuration (settings, `CLAUDE.md`, agents,
-  commands, skills) and sign in with a token that uses your subscription, while your own login
-  stays untouched. Setup is remembered and repeated for every new environment.
+- **Agents ready inside the sandbox.** Claude Code, or Codex (experimental), is installed in a
+  worktree's environment the first time you start it there, and the agent trusts the worktree
+  without asking. Copy your agent configuration (settings, `CLAUDE.md`, agents, commands, skills)
+  into every environment, and sign in with a token that uses your subscription, while your own
+  login stays untouched. Codex signs in with an API key, or per environment with a code you
+  approve in the browser.
 - **Secrets stay in your Keychain.** Tokens are stored per isolation and passed to sessions as
   environment variables.
 - **Snapshots.** Install what a project needs (a JDK, system packages) once, save the worktree's
@@ -98,10 +100,10 @@ Run Claude Code in its terminal, or as a chat that worki draws itself:
 
 Choose the default under Settings › General; the **+** menu offers both.
 
-**Codex (experimental).** Codex runs in a terminal, in any isolation. worki installs its standalone
-build into the environment, signs it in with an OpenAI API key from your Keychain, lists it under
+**Codex (experimental).** Codex runs as a chat or in a terminal, in any isolation. worki installs it with OpenAI's
+installer, signs it in with an OpenAI API key from your Keychain, lists it under
 **Needs you** when it asks for approval or finishes a turn, and resumes its conversation when
-worki starts again. The chat view and the status bar details are Claude Code only.
+worki starts again. The status bar details (model, context, token usage) are Claude Code only.
 
 ## From task to pull request
 

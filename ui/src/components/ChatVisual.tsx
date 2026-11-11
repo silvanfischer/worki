@@ -125,7 +125,7 @@ function Overlay({ tools, onClose, children }: { tools: ReactNode; onClose: () =
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-black/70 backdrop-blur-sm" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div data-overlay className="fixed inset-0 z-50 flex flex-col bg-black/70 backdrop-blur-sm" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="flex shrink-0 items-center justify-end gap-1 p-2">
         {tools}
         <ToolButton title="Close (Esc)" onClick={onClose}>
@@ -361,7 +361,7 @@ function Viewer({
   }, []);
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex flex-col bg-black/70 backdrop-blur-sm" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div data-overlay className="fixed inset-0 z-50 flex flex-col bg-black/70 backdrop-blur-sm" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="flex shrink-0 items-center justify-end gap-1 p-2">
         <ToolButton title="Zoom out (−)" onClick={() => zoomBy(0.8)}>
           <ZoomOut size={12} />

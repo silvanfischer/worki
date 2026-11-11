@@ -5,6 +5,7 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 
 import { api, errorMessage, type SessionInfo } from "../lib/api";
 import { toast } from "../lib/toast";
+import { useCopy } from "../lib/useCopy";
 import { formatTokens, totalUsage } from "../lib/usage";
 
 export const PERMISSION_MODES: Record<string, string> = {
@@ -14,6 +15,9 @@ export const PERMISSION_MODES: Record<string, string> = {
   auto: "Auto",
   dontAsk: "Don't ask",
   bypassPermissions: "Bypass permissions",
+  untrusted: "Ask before commands",
+  "on-request": "Ask when needed",
+  never: "Never ask",
 };
 
 /** Status bar under the agent's terminal: model, effort, permissions and context use, with
@@ -64,7 +68,7 @@ export function AgentStatus({ session }: { session: SessionInfo }) {
       </button>
       <CopyContinue session={session} />
       {open && (
-        <div className="absolute right-2 bottom-full z-40 mb-1 w-64 rounded-lg border border-line bg-elevated p-3 text-xs shadow-xl">
+        <div data-overlay className="absolute right-2 bottom-full z-40 mb-1 w-64 rounded-lg border border-line bg-elevated p-3 text-xs shadow-xl">
           <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5">
             <Row label="Model">{a.model}</Row>
             {a.effort && <Row label="Effort">{a.effort}</Row>}
@@ -96,7 +100,7 @@ export function AgentStatus({ session }: { session: SessionInfo }) {
 
 /** Copies the command that continues this conversation in the user's own terminal. */
 function CopyContinue({ session }: { session: SessionInfo }) {
-  const [copied, setCopied] = useState(false);
+  const { copied, copy: copyText } = useCopy();
   // Fetched ahead, so the click can write the clipboard while it still counts as one.
   const { data: command, error } = useQuery({
     queryKey: ["continueCommand", session.id],
@@ -109,13 +113,7 @@ function CopyContinue({ session }: { session: SessionInfo }) {
       toast(error ? errorMessage(error) : "Not ready yet, try again in a moment");
       return;
     }
-    navigator.clipboard.writeText(command).then(
-      () => {
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1500);
-      },
-      (e) => toast(errorMessage(e)),
-    );
+    copyText(command);
   }
   return (
     <button

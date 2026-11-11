@@ -188,6 +188,92 @@ fn lifecycle(isolation: Isolation) {
     );
 }
 
+/// An agent in the main checkout can commit, but can't touch what your own git runs.
+fn main_checkout(isolation: Isolation) {
+    let home = std::env::var("HOME").unwrap();
+    let base = Path::new(&home).join("worki");
+    std::fs::create_dir_all(&base).unwrap();
+    let tmp = tempfile::Builder::new()
+        .prefix(".e2e-")
+        .tempdir_in(&base)
+        .unwrap();
+    let repo = tmp.path().canonicalize().unwrap().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    std::fs::write(repo.join("README.md"), "hello\n").unwrap();
+    git(&repo, &["add", "."]);
+    git(
+        &repo,
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-qm",
+            "init",
+        ],
+    );
+
+    let backend = isolation.backend();
+    backend.ready().expect("engine available and running");
+    let ws = Workspace {
+        repo: repo.clone(),
+        worktree_root: tmp.path().to_path_buf(),
+        worktree: Some(repo.clone()),
+    };
+    backend.grant_access(&ws).expect("environment created");
+    let run_in = |command: &str| {
+        run(backend
+            .launch(&LaunchRequest {
+                cwd: repo.clone(),
+                command: Some(command.into()),
+                interactive: false,
+                stdin: false,
+                env: vec![],
+                session: None,
+            })
+            .unwrap())
+    };
+
+    let (ok, out) = run_in(
+        "git config --global --add safe.directory '*'; echo x > agent.txt && git add agent.txt && git -c user.name=s -c user.email=s@s commit -qm agent",
+    );
+    assert!(ok, "commit failed: {out}");
+    assert!(git(&repo, &["log", "--oneline", "-1"]).contains("agent"));
+
+    for attempt in [
+        "touch .git/hooks/pre-commit",
+        "echo '[core]' >> .git/config",
+        "mkdir -p .git/modules/x && touch .git/modules/x/config",
+        "touch .git/info/attributes",
+    ] {
+        let (ok, out) = run_in(attempt);
+        assert!(!ok, "`{attempt}` must fail: {out}");
+    }
+    assert!(!repo.join(".git/hooks/pre-commit").exists());
+
+    backend.release(&ws).expect("environment removed");
+}
+
+#[test]
+#[ignore = "needs Docker Desktop running"]
+fn docker_main_checkout() {
+    pull("docker");
+    main_checkout(Isolation::Docker {
+        image: TEST_IMAGE.into(),
+    });
+}
+
+#[test]
+#[ignore = "needs Docker Sandboxes (sbx)"]
+fn sbx_main_checkout() {
+    main_checkout(Isolation::DockerSandbox {
+        image: "shell".into(),
+        template: None,
+    });
+}
+
 fn pull(engine: &str) {
     let ok = Command::new(engine)
         .args(["pull", "-q", TEST_IMAGE])

@@ -1,6 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { Bot, LoaderCircle, MessageSquare, Plus, RotateCcw, SquareTerminal, X } from "lucide-react";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { Bot, Copy, KeyRound, LoaderCircle, MessageSquare, Plus, RotateCcw, SquareTerminal, X } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 
 import {
@@ -14,6 +15,9 @@ import {
   type Worktree,
 } from "../lib/api";
 import { onCommand } from "../lib/commands";
+import { useTauriEvent } from "../lib/events";
+import { useCopy } from "../lib/useCopy";
+import { type PendingSignIn, useSignIns } from "../lib/signIns";
 import { keys, useAgentSettings, useSessions } from "../lib/queries";
 import { useUi } from "../lib/store";
 import { ActivityDot, sessionState, stateLabel } from "./ActivityDot";
@@ -34,6 +38,14 @@ export function SessionArea({ project, worktree }: { project: Project; worktree:
   const agentView = useUi((s) => s.agentView);
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState<string | null>(null);
+
+  useTauriEvent(
+    "agent-installing",
+    ({ worktreePath, agent }) => {
+      if (worktreePath === worktree.path) setStarting(`${agent} isn't installed here yet. Installing it…`);
+    },
+    starting !== null,
+  );
 
   const sessions = allSessions.filter((s) => s.worktreePath === worktree.path);
   const active = sessions.find((s) => s.id === activeId) ?? sessions[sessions.length - 1];
@@ -135,31 +147,31 @@ export function SessionArea({ project, worktree }: { project: Project; worktree:
   ];
   const other: SessionKind = agentView === "chat" ? "terminal" : "chat";
 
+  const signIn = useSignIns((s) => s.byWorktree[worktree.path]);
+
   if (sessions.length === 0) {
+    if (signIn) return <SignInCard signIn={signIn} />;
     return (
       <div className="flex h-full flex-col items-center justify-center gap-4 p-8">
         <div className="flex size-12 items-center justify-center rounded-xl bg-hover">
           <Bot size={22} className="text-muted" />
         </div>
         <div className="flex flex-wrap justify-center gap-2">
-          {defaultProfile && (
-            <Button variant="primary" onClick={() => spawn(defaultProfile.id)}>
-              Start {defaultProfile.name}
-            </Button>
+          {[...(defaultProfile ? [defaultProfile] : []), ...profiles.filter((p) => p.id !== defaultProfile?.id)].map(
+            (p) => {
+              const kinds: SessionKind[] = canChat(p) ? [agentView, other] : ["terminal"];
+              return kinds.map((kind, i) => (
+                <Button
+                  key={`${p.id}-${kind}`}
+                  variant={p.id === defaultProfile?.id && i === 0 ? "primary" : "secondary"}
+                  onClick={() => spawn(p.id, null, kind)}
+                >
+                  {kind === "chat" ? <MessageSquare size={13} /> : <SquareTerminal size={13} />}
+                  {kind === "chat" ? `${p.name} chat` : canChat(p) ? `${p.name} in a terminal` : p.name}
+                </Button>
+              ));
+            },
           )}
-          {defaultProfile && canChat(defaultProfile) && (
-            <Button onClick={() => spawn(defaultProfile.id, null, other)}>
-              {other === "chat" ? <MessageSquare size={13} /> : <SquareTerminal size={13} />}
-              {other === "chat" ? "As a chat" : "In a terminal"}
-            </Button>
-          )}
-          {profiles
-            .filter((p) => p.id !== defaultProfile?.id)
-            .map((p) => (
-              <Button key={p.id} onClick={() => spawn(p.id)}>
-                {p.name}
-              </Button>
-            ))}
           <Button onClick={() => spawn(null)}>
             <SquareTerminal size={13} />
             Shell
@@ -212,6 +224,7 @@ export function SessionArea({ project, worktree }: { project: Project; worktree:
           <ErrorText>{error}</ErrorText>
         </div>
       )}
+      {signIn && <SignInCard signIn={signIn} />}
       <div className="relative min-h-0 flex-1">
         {active &&
           (active.kind === "chat" ? (
@@ -328,6 +341,47 @@ function SessionTab({
       >
         <X size={11} />
       </button>
+    </div>
+  );
+}
+
+/** An agent waits for its device-code sign-in in this worktree's environment. */
+function SignInCard({ signIn }: { signIn: PendingSignIn }) {
+  const { copied, copy } = useCopy();
+  return (
+    <div className="flex shrink-0 justify-center p-6">
+      <div className="flex w-full max-w-md flex-col gap-4 rounded-xl border border-line bg-elevated p-5 shadow-lg">
+        <div className="flex items-center gap-2 text-[14px] font-semibold">
+          <KeyRound size={15} className="text-accent" />
+          Sign in to {signIn.agent}
+        </div>
+        <p className="text-[13px] leading-relaxed text-muted">
+          {signIn.agent} runs in this worktree's environment and isn't signed in there yet. It starts as soon as you've
+          approved the sign-in.
+        </p>
+        <ol className="flex flex-col gap-3 text-[13px]">
+          <li className="flex items-center gap-3">
+            <span className="w-4 text-faint">1.</span>
+            <Button variant="primary" onClick={() => openUrl(signIn.url)}>
+              Open the sign-in page
+            </Button>
+          </li>
+          <li className="flex items-center gap-3">
+            <span className="w-4 text-faint">2.</span>
+            <span>Enter</span>
+            <code className="selectable rounded-md bg-hover px-2 py-1 font-mono text-[16px] tracking-widest">
+              {signIn.code}
+            </code>
+            <Button onClick={() => copy(signIn.code)}>
+              <Copy size={12} />
+              {copied ? "Copied" : "Copy"}
+            </Button>
+          </li>
+        </ol>
+        <p className="text-xs text-faint">
+          The code expires in 15 minutes. The sign-in stays in this worktree's environment.
+        </p>
+      </div>
     </div>
   );
 }

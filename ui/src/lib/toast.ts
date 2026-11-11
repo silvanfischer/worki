@@ -4,11 +4,17 @@ export interface Toast {
   id: number;
   message: string;
   kind: "error" | "info";
+  action?: ToastAction;
+}
+
+export interface ToastAction {
+  label: string;
+  run: () => void;
 }
 
 interface ToastState {
   toasts: Toast[];
-  push: (message: string, kind?: Toast["kind"]) => void;
+  push: (message: string, kind?: Toast["kind"], action?: ToastAction) => void;
   dismiss: (id: number) => void;
   /** Stops the toast from closing on its own, e.g. while it's being read or copied. */
   keep: (id: number) => void;
@@ -20,12 +26,15 @@ let next = 1;
 
 export const useToasts = create<ToastState>()((set) => ({
   toasts: [],
-  push: (message, kind = "error") => {
+  push: (message, kind = "error", action) => {
     const id = next++;
-    set((s) => ({ toasts: [...s.toasts.slice(-3), { id, message, kind }] }));
+    set((s) => ({ toasts: [...s.toasts.slice(-3), { id, message, kind, action }] }));
     timers.set(
       id,
-      setTimeout(() => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })), kind === "error" ? 8000 : 4000),
+      setTimeout(
+        () => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
+        kind === "error" || action ? 8000 : 4000,
+      ),
     );
   },
   dismiss: (id) => {
@@ -39,4 +48,5 @@ export const useToasts = create<ToastState>()((set) => ({
   },
 }));
 
-export const toast = (message: string, kind?: Toast["kind"]) => useToasts.getState().push(message, kind);
+export const toast = (message: string, kind?: Toast["kind"], action?: ToastAction) =>
+  useToasts.getState().push(message, kind, action);

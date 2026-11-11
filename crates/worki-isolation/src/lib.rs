@@ -102,6 +102,31 @@ impl ProjectIsolation {
 }
 
 impl Isolation {
+    /// Agents run in an environment worki sets up and confines, not as the user or on an SSH
+    /// host.
+    pub fn is_confined(&self) -> bool {
+        !matches!(self, Self::None | Self::Ssh { .. })
+    }
+
+    /// Each worktree gets its own container or sandbox, which a snapshot can be saved from.
+    pub fn is_container(&self) -> bool {
+        matches!(
+            self,
+            Self::DockerSandbox { .. } | Self::Docker { .. } | Self::Podman { .. }
+        )
+    }
+
+    /// The image environments are built from already contains `executable`.
+    pub fn image_ships(&self, executable: &str) -> bool {
+        match self {
+            Self::DockerSandbox { image, .. } => container::image_ships(true, image, executable),
+            Self::Docker { image } | Self::Podman { image } => {
+                container::image_ships(false, image, executable)
+            }
+            _ => false,
+        }
+    }
+
     pub fn backend(&self) -> Box<dyn Backend> {
         match self {
             Self::None => Box::new(NoIsolation),
@@ -224,19 +249,49 @@ pub struct Launch {
     pub cwd: PathBuf,
 }
 
-/// Isolated agents run in linked worktrees only: in the main checkout, `.git` itself holds the
-/// index and HEAD, so all of it would have to be writable, config and hooks included.
-pub(crate) fn require_linked_worktree(repo: &Path, worktree: &Path) -> anyhow::Result<()> {
-    let same = match (repo.canonicalize(), worktree.canonicalize()) {
-        (Ok(repo), Ok(worktree)) => repo == worktree,
-        _ => repo == worktree,
-    };
-    if same {
-        bail!(
-            "Isolated agents only work in worktrees, not in the main checkout. Create a worktree for this task."
-        );
+impl Launch {
+    /// The process to spawn, with its environment set up.
+    pub fn command(&self) -> Command {
+        let mut cmd = Command::new(&self.program);
+        cmd.args(&self.args).current_dir(&self.cwd);
+        if self.clear_env {
+            cmd.env_clear();
+        }
+        cmd.envs(self.env.iter().cloned());
+        cmd
     }
-    Ok(())
+}
+
+/// User Isolation runs agents in linked worktrees only: in the main checkout, `.git` itself holds
+/// the index and HEAD, so all of it would have to be writable, config and hooks included, and
+/// ACLs can't put read-only folders on top the way container mounts do. Returns the worktree's
+/// resolved path.
+pub(crate) fn linked_worktree(repo: &Path, worktree: &Path) -> anyhow::Result<PathBuf> {
+    let worktree = canonical(worktree)?;
+    if worktree == canonical(repo)? {
+        bail!("{}", main_checkout_refused(&worktree));
+    }
+    Ok(worktree)
+}
+
+pub fn main_checkout_refused(checkout: &Path) -> String {
+    format!(
+        "User Isolation only runs agents in worktrees, not in the main checkout ({}). Create a worktree for this task, or use a container isolation or None for this checkout.",
+        checkout.display()
+    )
+}
+
+/// Whether two paths are the same folder, following symlinks where they resolve.
+pub fn same_dir(a: &Path, b: &Path) -> bool {
+    match (a.canonicalize(), b.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a == b,
+    }
+}
+
+pub(crate) fn canonical(path: &Path) -> anyhow::Result<PathBuf> {
+    path.canonicalize()
+        .with_context(|| format!("resolve {}", path.display()))
 }
 
 /// What an isolated agent may reach for one project: the repository's git data and, when given,
@@ -425,6 +480,12 @@ pub trait Backend: Send + Sync {
         bail!("sharing host executables is not supported by this isolation")
     }
 
+    /// Which of `paths` (relative to the environment's home) can't be written there, e.g. because
+    /// the environment provides them read-only.
+    fn read_only_home_paths(&self, _paths: &[PathBuf]) -> Vec<PathBuf> {
+        Vec::new()
+    }
+
     /// Copies files and directories, given relative to `from_home`, into the environment's home.
     fn copy_home_files(&self, _from_home: &Path, _paths: &[PathBuf]) -> anyhow::Result<()> {
         bail!("copying files is not supported by this isolation")
@@ -522,6 +583,7 @@ pub(crate) fn pack_home_files(from_home: &Path, paths: &[PathBuf]) -> Command {
         "--no-acls",
         "--no-xattrs",
         "--no-mac-metadata",
+        "--no-fflags",
         "-L",
         "-cf",
         "-",
@@ -555,9 +617,12 @@ mod tests {
         let wt = dir.path().join("wt");
         std::fs::create_dir_all(&repo).unwrap();
         std::fs::create_dir_all(&wt).unwrap();
-        let err = require_linked_worktree(&repo, &repo.join(".")).unwrap_err();
-        assert!(err.to_string().contains("only work in worktrees"));
-        require_linked_worktree(&repo, &wt).unwrap();
+        let err = linked_worktree(&repo, &repo.join(".")).unwrap_err();
+        assert!(err.to_string().contains("only runs agents in worktrees"));
+        assert_eq!(
+            linked_worktree(&repo, &wt).unwrap(),
+            wt.canonicalize().unwrap()
+        );
     }
 
     use super::*;

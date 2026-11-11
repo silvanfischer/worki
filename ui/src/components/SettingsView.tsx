@@ -43,6 +43,7 @@ export function SettingsView({ tab }: { tab: SettingsTab }) {
 
   return (
     <div
+      data-overlay
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/25 p-8 backdrop-blur-[1px]"
       onMouseDown={(e) => e.target === e.currentTarget && closeDialog()}
     >

@@ -28,8 +28,7 @@ export function AgentSettingsDialog({ settings, onClose }: { settings: AgentSett
     if (snapshot === saved.current) return;
     const timer = setTimeout(async () => {
       try {
-        const { secrets } = await api.agentSettings();
-        await api.saveAgentSettings({ profiles: cleaned, defaultProfile: nextDefault, secrets });
+        await api.saveAgentProfiles(cleaned, nextDefault);
         saved.current = snapshot;
         setError(null);
         await qc.invalidateQueries({ queryKey: keys.agentSettings });

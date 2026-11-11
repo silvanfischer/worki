@@ -2,6 +2,7 @@ import clsx from "clsx";
 import { CircleAlert, Copy, Info, X } from "lucide-react";
 
 import { useToasts } from "../lib/toast";
+import { Button } from "./ui";
 
 export function Toaster() {
   const toasts = useToasts((s) => s.toasts);
@@ -29,6 +30,17 @@ export function Toaster() {
             )}
           >
             {t.message}
+            {t.action && (
+              <Button
+                className="mt-1.5 flex h-6 px-2 text-xs"
+                onClick={() => {
+                  dismiss(t.id);
+                  t.action?.run();
+                }}
+              >
+                {t.action.label}
+              </Button>
+            )}
           </span>
           <button
             aria-label="Copy message"

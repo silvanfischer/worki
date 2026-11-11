@@ -209,14 +209,11 @@ impl SessionHost {
         chat.send(&lines)
     }
 
-    /// Stops jobs the chat agent runs in the background; a `BackgroundTasks` event then lists
-    /// the ones left.
+    /// Stops jobs the chat agent runs in the background; a `BackgroundTasks` event then lists the
+    /// jobs left.
     pub fn stop_tasks(&self, id: &str, task_ids: &[String]) -> Result<()> {
-        let session = self.get(id)?;
-        let chat = session.io.chat().context("not a chat session")?;
-        let mut lines = Vec::new();
-        {
-            let mut protocol = lock(&chat.protocol);
+        self.send_to_agent(id, |protocol| {
+            let mut lines = Vec::new();
             for task_id in task_ids {
                 lines.extend(
                     protocol
@@ -224,19 +221,18 @@ impl SessionHost {
                         .ok_or_else(|| anyhow!("this agent can't stop background jobs"))?,
                 );
             }
-        }
-        chat.send(&lines)
+            Ok(lines)
+        })
     }
 
     /// Moves the chat agent's foreground commands to the background; they keep running and
     /// the agent reads its queued messages.
     pub fn background(&self, id: &str) -> Result<()> {
-        let session = self.get(id)?;
-        let chat = session.io.chat().context("not a chat session")?;
-        let lines = lock(&chat.protocol)
-            .background()
-            .ok_or_else(|| anyhow!("this agent can't move commands to the background"))?;
-        chat.send(&lines)
+        self.send_to_agent(id, |protocol| {
+            protocol
+                .background()
+                .ok_or_else(|| anyhow!("this agent can't move commands to the background"))
+        })
     }
 
     /// Answers a chat agent's permission request or questions.
@@ -267,19 +263,32 @@ impl SessionHost {
     /// Switches a chat agent's model, permission mode or effort; the agent confirms it with a
     /// `Session` event.
     pub fn change_setting(&self, id: &str, setting: &ChatSetting) -> Result<()> {
-        let session = self.get(id)?;
-        let chat = session.io.chat().context("not a chat session")?;
-        let lines = lock(&chat.protocol)
-            .set(setting)
-            .ok_or_else(|| anyhow!("this agent can't change that setting"))?;
-        chat.send(&lines)
+        self.send_to_agent(id, |protocol| {
+            protocol
+                .set(setting)
+                .ok_or_else(|| anyhow!("this agent can't change that setting"))
+        })
     }
 
     /// Stops what a chat agent is doing; it waits for the next message afterwards.
     pub fn interrupt(&self, id: &str) -> Result<()> {
+        self.send_to_agent(id, |protocol| Ok(protocol.interrupt()))
+    }
+
+    /// Sends the lines `request` gets from the protocol of chat session `id` to its agent.
+    fn send_to_agent(
+        &self,
+        id: &str,
+        request: impl FnOnce(&mut dyn ChatProtocol) -> Result<Vec<String>>,
+    ) -> Result<()> {
         let session = self.get(id)?;
         let chat = session.io.chat().context("not a chat session")?;
-        let lines = lock(&chat.protocol).interrupt();
+        let (lines, events) = {
+            let mut protocol = lock(&chat.protocol);
+            let lines = request(protocol.as_mut())?;
+            (lines, protocol.take_events())
+        };
+        emit(&session, &self.on_change, &events);
         chat.send(&lines)
     }
 }
@@ -386,14 +395,20 @@ fn emit(session: &Session, on_change: &OnChange, events: &[ChatEvent]) {
     refresh(session, on_change);
 }
 
-/// Events as JSON, one per line.
+/// One JSON line per event, stamped with when it was recorded (`at`, Unix milliseconds), so
+/// timers stay right when the history is replayed later.
 fn event_lines(events: &[ChatEvent]) -> Vec<u8> {
+    let at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64);
     let mut bytes = Vec::new();
     for event in events {
-        if let Ok(json) = serde_json::to_vec(event) {
-            bytes.extend_from_slice(&json);
-            bytes.push(b'\n');
-        }
+        let Ok(mut json) = serde_json::to_value(event) else {
+            continue;
+        };
+        json["at"] = at.into();
+        bytes.extend_from_slice(json.to_string().as_bytes());
+        bytes.push(b'\n');
     }
     bytes
 }

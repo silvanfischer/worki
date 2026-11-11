@@ -1,6 +1,13 @@
 import { useEffect, useState } from "react";
 
-import { api, type BackgroundTask, type ChatEvent, type ChatQuestion, type ModelChoice } from "./api";
+import {
+  api,
+  type AgentStatusKind,
+  type BackgroundTask,
+  type ChatEvent,
+  type ChatQuestion,
+  type ModelChoice,
+} from "./api";
 
 export type ChatItem =
   | {
@@ -8,8 +15,6 @@ export type ChatItem =
       key: string;
       text: string;
       attachments: string[];
-      /** Set for messages sent in this session. */
-      messageId: string | null;
       /** Sent while the agent was busy and not read by it yet. */
       queued: boolean;
     }
@@ -46,8 +51,8 @@ export interface Chat {
   exited: { code: number; error: string | null } | null;
   /** Open permission requests, oldest first. */
   open: Extract<ChatItem, { kind: "permission" }>[];
-  /** What the agent does between tool calls, such as `thinking`; null once the turn ends. */
-  status: { status: string; tool: string | null } | null;
+  /** What the agent does between tool calls; null once the turn ends. */
+  status: { status: AgentStatusKind; tool: string | null } | null;
   /** When the current turn started, in ms. */
   turnStarted: number | null;
   background: (BackgroundTask & { started: number })[];
@@ -71,25 +76,18 @@ export class ChatModel {
   private seq = 0;
 
   apply(event: ChatEvent) {
+    const at = event.at ?? Date.now();
     switch (event.type) {
       case "user": {
         const key = `u${this.seq++}`;
-        const messageId = event.id ?? null;
-        const queued = messageId !== null && this.turnStarted !== null;
-        if (messageId) this.unread.set(messageId, key);
-        if (!queued) this.turnStarted = Date.now();
-        this.push(null, {
-          kind: "user",
-          key,
-          text: event.text,
-          attachments: event.attachments ?? [],
-          messageId,
-          queued,
-        });
+        const queued = !!event.id && this.turnStarted !== null;
+        if (event.id) this.unread.set(event.id, key);
+        if (!queued) this.turnStarted = at;
+        this.push(null, { kind: "user", key, text: event.text, attachments: event.attachments ?? [], queued });
         break;
       }
       case "userRead":
-        this.turnStarted ??= Date.now();
+        this.turnStarted ??= at;
         this.markRead(this.unread.get(event.id));
         this.unread.delete(event.id);
         break;
@@ -144,23 +142,19 @@ export class ChatModel {
         break;
       case "backgroundTasks": {
         const seen = new Map(this.background.map((t) => [t.id, t.started]));
-        this.background = event.tasks.map((t) => ({ ...t, started: seen.get(t.id) ?? Date.now() }));
+        this.background = event.tasks.map((t) => ({ ...t, started: seen.get(t.id) ?? at }));
         break;
       }
       case "turnEnded":
-        this.status = null;
-        this.turnStarted = null;
-        this.closeOpen();
+        this.endTurn();
         if (event.error)
           this.push(null, { kind: "notice", key: `n${this.seq++}`, text: event.error, tone: "error" });
         break;
       case "exited":
-        this.status = null;
-        this.turnStarted = null;
+        this.endTurn();
         this.background = [];
         for (const key of this.unread.values()) this.markRead(key);
         this.unread.clear();
-        this.closeOpen();
         this.exited = { code: event.code, error: event.error };
         break;
       case "session":
@@ -208,6 +202,12 @@ export class ChatModel {
     }
     const at = this.items.findIndex((i) => i.key === item.key);
     if (at >= 0) this.items[at] = item;
+  }
+
+  private endTurn() {
+    this.status = null;
+    this.turnStarted = null;
+    this.closeOpen();
   }
 
   private markRead(key: string | undefined) {

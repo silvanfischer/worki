@@ -1,16 +1,12 @@
-import { listen } from "@tauri-apps/api/event";
 import { LoaderCircle } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
+
+import { useTauriEvent } from "../lib/events";
 
 export function QuittingOverlay() {
   const [quitting, setQuitting] = useState(false);
 
-  useEffect(() => {
-    const unlisten = listen("app-quitting", () => setQuitting(true));
-    return () => {
-      unlisten.then((f) => f());
-    };
-  }, []);
+  useTauriEvent("app-quitting", () => setQuitting(true));
 
   if (!quitting) return null;
   return (
