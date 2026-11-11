@@ -15,12 +15,12 @@ export function Toaster() {
           key={t.id}
           role={t.kind === "error" ? "alert" : "status"}
           onMouseEnter={() => keep(t.id)}
-          className="pointer-events-auto flex items-start gap-2 rounded-lg border border-line bg-elevated px-3 py-2.5 text-xs shadow-lg"
+          className="pointer-events-auto flex items-start gap-2 rounded-lg border border-line bg-elevated px-3 py-2.5 text-[13px] shadow-lg"
         >
           {t.kind === "error" ? (
-            <CircleAlert size={14} className="mt-px shrink-0 text-removed" />
+            <CircleAlert size={15} className="mt-0.5 shrink-0 text-removed" />
           ) : (
-            <Info size={14} className="mt-px shrink-0 text-accent" />
+            <Info size={15} className="mt-0.5 shrink-0 text-accent" />
           )}
           <span
             className={clsx(
@@ -39,10 +39,10 @@ export function Toaster() {
             }}
             className="text-faint hover:text-fg"
           >
-            <Copy size={12} />
+            <Copy size={14} />
           </button>
           <button aria-label="Dismiss" onClick={() => dismiss(t.id)} className="text-faint hover:text-fg">
-            <X size={12} />
+            <X size={14} />
           </button>
         </div>
       ))}
