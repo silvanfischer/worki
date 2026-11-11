@@ -114,8 +114,8 @@ main {
 }
 
 .hero-icon {
-  width: 112px;
-  height: 112px;
+  width: 144px;
+  height: 144px;
   margin-bottom: 24px;
   filter: drop-shadow(0 8px 24px rgb(0 0 0 / 0.2));
 }
@@ -271,6 +271,14 @@ main {
   content: "✕";
   background: color-mix(in srgb, var(--no) 14%, transparent);
   color: var(--no);
+}
+
+.reach-note {
+  max-width: 640px;
+  margin: 18px auto 0;
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--faint);
 }
 
 .reach code {
@@ -542,8 +550,8 @@ footer nav {
     padding-top: 48px;
   }
   .hero-icon {
-    width: 88px;
-    height: 88px;
+    width: 112px;
+    height: 112px;
   }
   .cards,
   .grid,

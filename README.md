@@ -48,17 +48,22 @@ checks it and cleans it up again.
   by ACLs) at the same path as on your Mac, so paths in agent output match yours. Of the
   repository's `.git`, only what committing needs is writable; hooks and config stay read-only,
   so an agent can't plant anything that later runs as you.
+- **No credentials unless you hand them over.** No SSH agent, no `~/.gitconfig` or git
+  credential helper, no GitHub CLI login and none of your environment variables (API keys in your
+  shell) reach an agent; it gets the terminal type, language and worki's own session variables,
+  plus the tokens you store for an isolation. With isolation set to None, an agent runs as you.
 - **A doctor for every backend.** Checks phrased the way you'd want to read them ("_worki can't
   read files in your home folder") with one-click fixes: create the agent user, start the
-  daemon, build the image.
-- **Agents ready inside the sandbox.** Install Claude Code or Codex into the environment, or
-  reuse your own installation. Copy your agent configuration (settings, `CLAUDE.md`, agents,
+  sandbox daemon or Podman machine, build the image.
+- **Agents ready inside the sandbox.** Install Claude Code into the environment, or reuse your
+  own installation. Copy your agent configuration (settings, `CLAUDE.md`, agents,
   commands, skills) and sign in with a token that uses your subscription, while your own login
   stays untouched. Setup is remembered and repeated for every new environment.
 - **Secrets stay in your Keychain.** Tokens are stored per isolation and passed to sessions as
   environment variables.
 - **Snapshots.** Install what a project needs (a JDK, system packages) once, save the worktree's
-  sandbox or container as a snapshot, and new worktrees start from it with everything installed.
+  sandbox or container as a snapshot, and the project's new worktrees start from it with
+  everything installed.
 - **Agents stay put.** Environments keep running when worki quits (or stop, if you prefer), and
   Claude Code sessions pick up their conversation when worki starts again.
 - **No leftovers.** Environments are removed together with their worktree or project.
@@ -80,10 +85,11 @@ Run Claude Code in its terminal, or as a chat that worki draws itself:
 - **Questions as buttons.** Permission requests get Allow and Deny, the agent's questions their
   options, and Esc stops a turn.
 - **Switch while you talk.** Model, effort and permission mode sit under the message box.
-- **Attach files and paste screenshots.** worki reads them itself, so they reach agents in any
+- **Attach text files and images, or paste screenshots.** worki reads them itself, so they reach agents in any
   isolation.
 - **Visuals in place.** Diagrams (Mermaid), drawings (SVG) and charts (HTML, in a sandboxed frame)
-  match worki's theme, open full-window with zoom, and save as SVG, PNG or HTML.
+  match worki's theme and open full-window. Diagrams and drawings zoom and save as SVG or PNG;
+  charts save as HTML.
 - **Picks up where you left off.** Chats reopen with their history when worki starts.
 
 <p align="center">
@@ -99,8 +105,9 @@ for now.
   <img src="docs/screenshots/branch.png" alt="The Branch tab: status against origin/main, commits and the open pull request" width="900">
 </p>
 
-- **Commit** the files you pick from the **Changes** tab, or ask the agent to do it.
-- **Branch** tab: how the branch stands against `origin/main`, with **Rebase** (it fetches
+- **Commit** the files you pick from the **Changes** tab, or let the agent write the commit
+  messages.
+- **Branch** tab: how the branch stands against the branch it was started from, with **Rebase** (it fetches
   first; on conflicts nothing changes and the agent can resolve them), the branch's commits and
   every file it touched.
 - **Pull requests** through the GitHub CLI: create one, follow its checks, push new commits, and
@@ -118,9 +125,10 @@ Commits and pull requests can be turned off under Settings › Git. Pull request
 - **See who needs you.** Agents waiting for an answer are listed under **Needs you**, across all
   projects, the moment they ask, with a notification and a Dock badge.
 - **Real terminals.** Agent and shell sessions in GPU-rendered terminals that keep running when
-  you switch worktrees. Each tab shows its token usage, and YOLO mode is one checkbox per agent.
+  you switch worktrees. For Claude Code, the status bar shows model, context and token usage.
+  YOLO mode is one checkbox per agent.
 - **Remote projects.** Work on repositories on an SSH host, with saved hosts you set up once;
-  sessions run in tmux there and survive a dropped connection.
+  terminal sessions run in tmux there and survive a dropped connection.
 - **Keyboard first.** ⌘K jumps to any worktree or action, ⌘T starts an agent, ⌘J shows the
   changes.
 - **Open in anything.** Jump to the worktree in your editor or terminal from the toolbar.
@@ -152,7 +160,8 @@ hot reload for the UI.
 
 ### Share setup with your team
 
-Commit a `.worki.toml` to give every worktree the same base branch and setup script:
+Commit a `.worki.toml` to share the setup script, and the base branch worki picks up when the
+project is added:
 
 ```toml
 [worktree]

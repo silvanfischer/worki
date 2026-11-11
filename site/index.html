@@ -14,7 +14,7 @@
 </head>
 <body>
   <header class="nav">
-    <a class="brand" href="#top"><img src="icon.png" alt="" width="28" height="28">worki</a>
+    <a class="brand" href="#top"><img src="icon.png" alt="" width="32" height="32">worki</a>
     <nav>
       <a href="#isolation">Isolation</a>
       <a href="#chat">Chat</a>
@@ -26,7 +26,7 @@
 
   <main id="top">
     <section class="hero">
-      <img class="hero-icon" src="icon.png" alt="worki icon" width="112" height="112">
+      <img class="hero-icon" src="icon.png" alt="worki icon" width="144" height="144">
       <h1>Let coding agents run free.<br><span>Locked in their own sandbox.</span></h1>
       <p class="lead">
         worki runs every coding agent in its own sandbox and its own git worktree. It reaches the
@@ -76,9 +76,15 @@
             <li>Your browser profiles</li>
             <li>Your other repositories and worktrees</li>
             <li>Git hooks and config that later run as you</li>
+            <li>Your SSH agent, git credentials and GitHub login</li>
+            <li>Your environment variables, like API keys in your shell</li>
           </ul>
         </div>
       </div>
+      <p class="reach-note">
+        Credentials reach an agent only when you hand it a token yourself. With isolation set to
+        None, an agent runs as you and can reach what you can.
+      </p>
     </section>
 
     <section id="isolation" class="feature">
@@ -100,10 +106,10 @@
       </figure>
       <ul class="points">
         <li><b>Only the worktree.</b> It appears at the same path as on your Mac. Git hooks and config stay read-only, so an agent can't plant anything that later runs as you.</li>
-        <li><b>A doctor for every backend.</b> Plain-language checks with one-click fixes: create the agent user, start the daemon, build the image.</li>
-        <li><b>Agents ready inside.</b> Install Claude Code or Codex in the environment, bring your settings and skills, and sign in with your subscription.</li>
+        <li><b>A doctor for every backend.</b> Plain-language checks with one-click fixes: create the agent user, start the sandbox daemon or Podman machine, build the image.</li>
+        <li><b>Agents ready inside.</b> Install Claude Code in the environment, bring your settings and skills, and sign in with your subscription.</li>
         <li><b>Secrets stay in your Keychain</b> and reach sessions as environment variables.</li>
-        <li><b>Snapshots.</b> Install a JDK or system packages once; new worktrees start with them.</li>
+        <li><b>Snapshots.</b> Install a JDK or system packages once and save the sandbox or container; new worktrees of the project start from it.</li>
         <li><b>No leftovers.</b> Environments go away with their worktree or project.</li>
       </ul>
     </section>
@@ -126,9 +132,9 @@
         </figure>
       </div>
       <ul class="points">
-        <li><b>See what it's doing.</b> The running command, background jobs, and how long the turn has run.</li>
+        <li><b>See what it's doing.</b> The step it's on, its background jobs, and how long the turn has run.</li>
         <li><b>Switch while you talk.</b> Model, effort and permission mode sit under the message box.</li>
-        <li><b>Attach files and paste screenshots.</b> They reach agents in any isolation.</li>
+        <li><b>Attach text files and images, or paste screenshots.</b> worki reads them itself, so they reach agents in any isolation.</li>
         <li><b>Picks up where you left off.</b> Conversations reopen with their history.</li>
       </ul>
     </section>
@@ -143,7 +149,7 @@
              alt="The Branch tab with the branch's status, its commits and the open pull request">
       </figure>
       <ul class="points">
-        <li><b>Commit</b> the files you pick, or ask the agent to.</li>
+        <li><b>Commit</b> the files you pick, or let the agent write the commit messages.</li>
         <li><b>Branch tab.</b> How the branch stands against the branch it started from, with a safe Rebase and every file it touched.</li>
         <li><b>Pull requests</b> through the GitHub CLI: open one, follow its checks, and bring review comments back to the agent.</li>
         <li><b>Review in place.</b> Comment on any diff line and send the comments to the agent as one review.</li>
@@ -158,7 +164,7 @@
       <div class="grid">
         <article><h3>Parallel worktrees</h3><p>Branch off any branch in one step, with a setup script that runs in the agent's isolation.</p></article>
         <article><h3>See who needs you</h3><p>Agents waiting for an answer show under Needs you, with a notification and a Dock badge.</p></article>
-        <article><h3>Remote projects</h3><p>Work on repositories on an SSH host. Sessions run in tmux and survive a dropped connection.</p></article>
+        <article><h3>Remote projects</h3><p>Work on repositories on an SSH host. Terminal sessions run in tmux there and survive a dropped connection.</p></article>
         <article><h3>Keyboard first</h3><p><kbd>⌘K</kbd> jumps anywhere, <kbd>⌘T</kbd> starts an agent, <kbd>⌘J</kbd> shows the changes.</p></article>
         <article><h3>Agents stay put</h3><p>Environments keep running when worki quits, and Claude Code continues its conversations.</p></article>
         <article><h3>Open in anything</h3><p>Jump to the worktree in your editor or terminal from the toolbar.</p></article>
