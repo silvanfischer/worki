@@ -426,7 +426,7 @@ const ui = {
   selectedProjectId: "acme-web",
   selectedWorktreePath: checkout,
   collapsed: {},
-  showChanges: true,
+  showChanges: scene !== "terminal",
   changesScope: scene === "branch" ? "branch" : "uncommitted",
   panelWidths: { sidebar: 256, diff: 520, changes: 320 },
   theme: "dark",

@@ -86,6 +86,10 @@ Run Claude Code in its terminal, or as a chat that worki draws itself:
   match worki's theme, open full-window with zoom, and save as SVG, PNG or HTML.
 - **Picks up where you left off.** Chats reopen with their history when worki starts.
 
+<p align="center">
+  <img src="docs/screenshots/terminal.png" alt="Claude Code in its terminal, running the tests in a Docker Sandbox" width="900">
+</p>
+
 Choose the default under Settings › General; the **+** menu offers both. Codex runs in a terminal
 for now.
 
