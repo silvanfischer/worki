@@ -8,9 +8,10 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { type ITheme, Terminal } from "@xterm/xterm";
 import { useEffect, useRef } from "react";
 
-import { api } from "../lib/api";
+import { api, errorMessage } from "../lib/api";
 import { useUi } from "../lib/store";
 import { useIsDark } from "../lib/theme";
+import { toast } from "../lib/toast";
 
 const darkTheme: ITheme = {
   background: "#1c1c1e",
@@ -94,7 +95,8 @@ export function TerminalView({ sessionId, active }: { sessionId: string; active:
     }
 
     term.attachCustomKeyEventHandler((e) => {
-      if (e.type === "keydown" && e.metaKey && e.key === "k") {
+      if (e.type !== "keydown" || !e.metaKey) return true;
+      if (e.key === "k") {
         term.clear();
         return false;
       }
@@ -137,6 +139,19 @@ export function TerminalView({ sessionId, active }: { sessionId: string; active:
       })
       .catch((e) => term.write(`\r\n\x1b[31m${String(e)}\x1b[0m\r\n`));
 
+    const osc52 = term.parser.registerOscHandler(52, (data) => {
+      const payload = data.slice(data.indexOf(";") + 1);
+      if (!payload || payload === "?") return true;
+      let text: string;
+      try {
+        text = new TextDecoder().decode(Uint8Array.from(atob(payload), (c) => c.charCodeAt(0)));
+      } catch {
+        return true;
+      }
+      api.writeClipboard(text).catch((e) => toast(errorMessage(e)));
+      return true;
+    });
+
     const input = term.onData((data) => api.writeSession(sessionId, data).catch(() => {}));
 
     let resizeFrame = 0;
@@ -151,7 +166,20 @@ export function TerminalView({ sessionId, active }: { sessionId: string; active:
       resizeFrame = requestAnimationFrame(fitNow);
     };
     el.addEventListener("worki-refit", refit);
-
+    // WebKit enables Copy only for a real text selection, and the terminal draws its own: keep
+    // the selected text selected in xterm's hidden textarea so Cmd+C has something to copy.
+    const mirror = term.onSelectionChange(() => {
+      const area = term.textarea;
+      if (!area) return;
+      area.value = term.hasSelection() ? term.getSelection() : "";
+      if (area.value) area.select();
+    });
+    const copy = (e: ClipboardEvent) => {
+      if (!term.hasSelection() || !el.contains(document.activeElement)) return;
+      e.clipboardData?.setData("text/plain", term.getSelection());
+      e.preventDefault();
+    };
+    document.addEventListener("copy", copy, true);
 
     return () => {
       disposed = true;
@@ -159,6 +187,9 @@ export function TerminalView({ sessionId, active }: { sessionId: string; active:
       cancelAnimationFrame(resizeFrame);
       observer.disconnect();
       el.removeEventListener("worki-refit", refit);
+      document.removeEventListener("copy", copy, true);
+      mirror.dispose();
+      osc52.dispose();
       input.dispose();
       if (sinkId !== null) api.detachSession(sessionId, sinkId);
       term.dispose();

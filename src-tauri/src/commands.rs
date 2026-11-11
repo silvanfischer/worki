@@ -416,6 +416,28 @@ pub fn save_agent_settings(state: State<'_, AppState>, settings: AgentSettings) 
     state.projects.save_agent_settings(&settings).map_err(err)
 }
 
+/// Puts text on the clipboard natively, for writes that don't come from a click or key press
+/// (the web clipboard refuses those), such as a terminal program copying through OSC 52.
+#[tauri::command]
+pub async fn write_clipboard(text: String) -> CmdResult<()> {
+    tauri::async_runtime::spawn_blocking(move || -> std::io::Result<()> {
+        use std::io::Write;
+        let mut child = std::process::Command::new("/usr/bin/pbcopy")
+            .stdin(std::process::Stdio::piped())
+            .spawn()?;
+        child
+            .stdin
+            .take()
+            .expect("stdin is piped")
+            .write_all(text.as_bytes())?;
+        child.wait()?;
+        Ok(())
+    })
+    .await
+    .map_err(err)?
+    .map_err(err)
+}
+
 /// Writes a file the user picked a location for in the save dialog, such as a chat diagram.
 #[tauri::command]
 pub async fn save_file(path: PathBuf, contents: Vec<u8>) -> CmdResult<()> {

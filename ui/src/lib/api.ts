@@ -397,6 +397,7 @@ export const api = {
     invoke<PrComment[]>("pr_review_comments", { worktreePath, number }),
   environmentTemplates: (isolation: Isolation) => invoke<string[]>("environment_templates", { isolation }),
   snapshots: () => invoke<Snapshot[]>("snapshots"),
+  writeClipboard: (text: string) => invoke<void>("write_clipboard", { text }),
   saveFile: (path: string, contents: Uint8Array) => invoke<void>("save_file", { path, contents: Array.from(contents) }),
   deleteSnapshot: (engine: SnapshotEngine, name: string) => invoke<void>("delete_snapshot", { engine, name }),
   saveEnvironmentTemplate: (projectId: string, worktreePath: string, tag: string, useForProject: boolean) =>

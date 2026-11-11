@@ -164,6 +164,7 @@ pub fn run() {
             commands::environment_templates,
             commands::snapshots,
             commands::save_file,
+            commands::write_clipboard,
             commands::delete_snapshot,
             commands::commit_changes,
             commands::branch_log,
