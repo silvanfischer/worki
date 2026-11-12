@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { useState } from "react";
+import { type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, Coins, GitBranch, MoreHorizontal, PanelRight, Send, SquareTerminal } from "lucide-react";
 
 import { type ChangedFile, errorMessage, type Project, type Worktree, worktreeLabel } from "../lib/api";
@@ -324,8 +324,26 @@ function FileList({
   /** Lines the rows up with the other lists in a branch section. */
   inSection?: boolean;
 }) {
+  function onKeyDown(e: KeyboardEvent) {
+    if (!files?.length) return;
+    const at = files.findIndex((f) => f.path === diffFile);
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      const next = at < 0 ? 0 : Math.min(files.length - 1, Math.max(0, at + (e.key === "ArrowDown" ? 1 : -1)));
+      onOpen(files[next].path);
+    } else if (e.key === "Escape" && at >= 0) {
+      e.preventDefault();
+      onOpen(null);
+    }
+  }
+
   return (
-    <div className={inSection ? "-mx-2" : "px-2.5 py-2"}>
+    <div
+      role="listbox"
+      tabIndex={0}
+      onKeyDown={onKeyDown}
+      className={clsx("outline-none", inSection ? "-mx-2" : "px-2.5 py-2")}
+    >
       {!!error && <p className="px-2 fs-panel text-removed">{String(error)}</p>}
       {files?.length === 0 && <p className="px-2 py-1 fs-panel text-faint">{empty}</p>}
       {files?.map((f) => (
@@ -368,11 +386,18 @@ function ChangeRow({
 }) {
   const kind = changeKind(file.code);
   const slash = file.path.lastIndexOf("/");
+  const row = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (selected) row.current?.scrollIntoView({ block: "nearest" });
+  }, [selected]);
   return (
     <div
+      ref={row}
+      role="option"
+      aria-selected={selected}
       onClick={onOpen}
       className={clsx("flex h-7 items-center gap-2 rounded-md px-2", selected ? "bg-selected" : "hover:bg-hover")}
-      title={`${file.path} — click to view the diff`}
+      title={`${file.path} — click to view the diff, ↑↓ for the next file`}
     >
       {checked !== undefined && (
         <input
