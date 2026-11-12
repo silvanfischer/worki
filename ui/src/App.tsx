@@ -1,6 +1,4 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { getCurrentWindow } from "@tauri-apps/api/window";
-import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { FolderGit2, GitBranchPlus } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 
@@ -17,6 +15,7 @@ import { Toaster } from "./components/Toaster";
 import { Button } from "./components/ui";
 import { WorktreeView } from "./components/WorktreeView";
 import { api, errorMessage, isolationLabel, type SessionInfo } from "./lib/api";
+import { notify, useAttention } from "./lib/attention";
 import { keys, useAddProject, useIsolationSettings, useProjects, useWorktrees } from "./lib/queries";
 import { useUi } from "./lib/store";
 import { useApplyTheme } from "./lib/theme";
@@ -38,18 +37,14 @@ export function App() {
 
   useTauriEvent("session-changed", (payload) => {
     const before = qc.getQueryData<SessionInfo[]>(keys.sessions)?.find((s) => s.id === payload.id);
-    const sessions =
-      qc.setQueryData<SessionInfo[]>(keys.sessions, (old) =>
-        old?.some((s) => s.id === payload.id)
-          ? old.map((s) => (s.id === payload.id ? payload : s))
-          : [...(old ?? []), payload],
-      ) ?? [];
-    if (payload.activity === "waiting" && before?.activity !== "waiting") notifyWaiting(payload);
-    const waiting = sessions.filter((s) => s.state.kind === "running" && s.activity === "waiting").length;
-    getCurrentWindow()
-      .setBadgeCount(waiting || undefined)
-      .catch(() => {});
+    qc.setQueryData<SessionInfo[]>(keys.sessions, (old) =>
+      old?.some((s) => s.id === payload.id) ? old.map((s) => (s.id === payload.id ? payload : s)) : [...(old ?? []), payload],
+    );
+    if (payload.activity === "waiting" && before?.activity !== "waiting") {
+      notify(`${payload.title} is waiting`, payload.attention ?? `In ${payload.worktreePath.split("/").pop() ?? ""}`);
+    }
   });
+  useAttention();
 
   useFollowSignIns();
 
@@ -231,17 +226,4 @@ function Centered({ children }: { children: ReactNode }) {
       {children}
     </div>
   );
-}
-
-/** A macOS notification when an agent starts waiting while worki is in the background. */
-async function notifyWaiting(session: SessionInfo) {
-  if (document.hasFocus()) return;
-  let granted = await isPermissionGranted().catch(() => false);
-  if (!granted) granted = (await requestPermission().catch(() => "denied")) === "granted";
-  if (!granted) return;
-  const where = session.worktreePath.split("/").pop() ?? "";
-  sendNotification({
-    title: `${session.title} is waiting`,
-    body: session.attention ?? `In ${where}`,
-  });
 }

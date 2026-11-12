@@ -485,10 +485,10 @@ export function PrSection({ worktree, base }: { worktree: Worktree; base: string
   );
 }
 
-function PrStateIcon({ pr }: { pr: PullRequest }) {
-  if (pr.state === "MERGED") return <GitMerge size={14} className="mt-px shrink-0 text-[#8250df]" />;
-  if (pr.state === "CLOSED") return <GitPullRequest size={14} className="mt-px shrink-0 text-removed" />;
-  return <GitPullRequest size={14} className={clsx("mt-px shrink-0", pr.isDraft ? "text-faint" : "text-added")} />;
+export function PrStateIcon({ pr, size = 14, className = "mt-px" }: { pr: PullRequest; size?: number; className?: string }) {
+  if (pr.state === "MERGED") return <GitMerge size={size} className={clsx(className, "shrink-0 text-[#8250df]")} />;
+  if (pr.state === "CLOSED") return <GitPullRequest size={size} className={clsx(className, "shrink-0 text-removed")} />;
+  return <GitPullRequest size={size} className={clsx(className, "shrink-0", pr.isDraft ? "text-faint" : "text-added")} />;
 }
 
 function Checks({ pr }: { pr: PullRequest }) {

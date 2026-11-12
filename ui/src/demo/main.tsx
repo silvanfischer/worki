@@ -387,9 +387,13 @@ function handle(cmd: string, args: Record<string, any>): unknown {
         ),
       );
     case "pull_request":
-      return args.worktreePath === checkout
-        ? { number: 42, title: "Redesign the checkout summary", url: "https://github.com/acme/web/pull/42", state: "OPEN", isDraft: false, checksPassed: 3, checksFailed: 0, checksPending: 1 }
-        : null;
+      if (args.worktreePath === checkout)
+        return { number: 42, title: "Redesign the checkout summary", url: "https://github.com/acme/web/pull/42", state: "OPEN", isDraft: false, checksPassed: 3, checksFailed: 0, checksPending: 1 };
+      if (args.worktreePath === worktrees["acme-web"][2].path)
+        return { number: 39, title: "Fix the login race", url: "https://github.com/acme/web/pull/39", state: "MERGED", isDraft: false, checksPassed: 3, checksFailed: 0, checksPending: 0 };
+      if (args.worktreePath === worktrees["acme-web"][3].path)
+        return { number: 44, title: "Upgrade to React 19", url: "https://github.com/acme/web/pull/44", state: "OPEN", isDraft: false, checksPassed: 2, checksFailed: 1, checksPending: 0 };
+      return null;
     case "file_diff":
       return diff;
     case "environment_templates":

@@ -69,6 +69,8 @@ interface UiState {
   showCommits: boolean;
   /** Pull request section and status, which ask GitHub through `gh`. */
   showPullRequests: boolean;
+  /** Pull requests whose failed checks were skipped under Needs you, until their checks pass again. */
+  dismissedChecks: string[];
   dialog: DialogState;
   select: (projectId: string, worktreePath: string | null) => void;
   toggleCollapsed: (projectId: string) => void;
@@ -78,6 +80,8 @@ interface UiState {
   setWriterCommand: (command: string) => void;
   toggleChanges: () => void;
   toggleTerminal: () => void;
+  dismissChecks: (key: string) => void;
+  keepDismissedChecks: (stillFailing: string[]) => void;
   setChangesScope: (scope: ChangesScope) => void;
   setPanelWidth: (panel: Panel, width: number) => void;
   setTheme: (theme: Theme) => void;
@@ -125,6 +129,7 @@ export const useUi = create<UiState>()(
       autoUpdate: true,
       showCommits: true,
       showPullRequests: true,
+      dismissedChecks: [],
       dialog: null,
       select: (selectedProjectId, selectedWorktreePath) => set({ selectedProjectId, selectedWorktreePath }),
       toggleCollapsed: (id) => set((s) => ({ collapsed: { ...s.collapsed, [id]: !s.collapsed[id] } })),
@@ -142,6 +147,12 @@ export const useUi = create<UiState>()(
       setWriterCommand: (writerCommand) => set({ writerCommand }),
       toggleChanges: () => set((s) => ({ showChanges: !s.showChanges })),
       toggleTerminal: () => set((s) => ({ showTerminal: !s.showTerminal })),
+      dismissChecks: (key) => set((s) => ({ dismissedChecks: [...s.dismissedChecks, key] })),
+      keepDismissedChecks: (stillFailing) =>
+        set((s) => {
+          const kept = s.dismissedChecks.filter((k) => stillFailing.includes(k));
+          return kept.length === s.dismissedChecks.length ? s : { dismissedChecks: kept };
+        }),
       setChangesScope: (changesScope) => set({ changesScope }),
       setPanelWidth: (panel, width) => {
         const { min, max } = PANEL_LIMITS[panel];

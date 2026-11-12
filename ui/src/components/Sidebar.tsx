@@ -3,6 +3,7 @@ import clsx from "clsx";
 import {
   ArrowDownToLine,
   BellRing,
+  CircleX,
   ChevronRight,
   X,
   MessageSquare,
@@ -12,17 +13,22 @@ import {
   LoaderCircle,
   MoreHorizontal,
   Plus,
+  RefreshCw,
   Server,
   Settings,
   Settings2,
 } from "lucide-react";
+import { useState } from "react";
 
-import { api, type Project, type Worktree, worktreeLabel } from "../lib/api";
+import { api, errorMessage, type Project, type PullRequest, type Worktree, worktreeLabel } from "../lib/api";
+import { checksFailed, checksKey, useFailedChecks } from "../lib/pullRequests";
 import { useWorktreeComments } from "../lib/review";
-import { keys, useAddProject, useProjects, useSessions, useWorktrees, useWorktreeStatus } from "../lib/queries";
+import { keys, useAddProject, useProjects, usePullRequest, useSessions, useWorktrees, useWorktreeStatus } from "../lib/queries";
 import { useUi } from "../lib/store";
+import { toast } from "../lib/toast";
 import { installUpdate, useUpdates } from "../lib/updates";
 import { ActivityDot, summarize } from "./ActivityDot";
+import { PrStateIcon } from "./BranchPanel";
 import { ResizeHandle } from "./ResizeHandle";
 import { DiffStat, ErrorText, IconButton, Menu } from "./ui";
 import { worktreeActions } from "./worktreeActions";
@@ -91,6 +97,23 @@ function ProjectNode({ project }: { project: Project }) {
   const toggle = useUi((s) => s.toggleCollapsed);
   const openDialog = useUi((s) => s.openDialog);
   const { data: worktrees = [], error } = useWorktrees(project.id);
+  const qc = useQueryClient();
+  const [fetching, setFetching] = useState(false);
+
+  async function fetchAll() {
+    setFetching(true);
+    try {
+      await api.fetchRemote(project.repoPath);
+      await qc.invalidateQueries({
+        predicate: ({ queryKey: [kind] }) =>
+          ["branches", "compareBase", "branchLog", "branchChanges", "status", "pullRequest"].includes(kind as string),
+      });
+    } catch (e) {
+      toast(`Couldn't fetch ${project.name}: ${errorMessage(e)}`);
+    } finally {
+      setFetching(false);
+    }
+  }
 
   return (
     <div className="mb-1">
@@ -106,7 +129,10 @@ function ProjectNode({ project }: { project: Project }) {
             {project.name}
           </span>
         </button>
-        <div className="flex opacity-0 group-hover:opacity-100">
+        <div className="flex opacity-0 group-hover:opacity-100 has-disabled:opacity-100">
+          <IconButton label="Fetch (git fetch --all)" onClick={fetchAll} disabled={fetching}>
+            <RefreshCw size={13} className={clsx(fetching && "animate-spin")} />
+          </IconButton>
           <IconButton label="New worktree" onClick={() => openDialog({ kind: "newWorktree", projectId: project.id })}>
             <Plus size={14} />
           </IconButton>
@@ -146,6 +172,8 @@ function WorktreeRow({ project, worktree }: { project: Project; worktree: Worktr
   const activity = summarize(mine);
   const waitingOn = mine.find((s) => s.state.kind === "running" && s.activity === "waiting");
   const comments = useWorktreeComments(worktree.path).length;
+  const showPullRequests = useUi((s) => s.showPullRequests);
+  const { data: pr } = usePullRequest(worktree.path, showPullRequests && !worktree.isMain && !!worktree.branch);
 
   return (
     <div
@@ -160,12 +188,21 @@ function WorktreeRow({ project, worktree }: { project: Project; worktree: Worktr
     >
       {worktree.isMain ? (
         <House size={13} className="shrink-0 text-faint" />
+      ) : pr ? (
+        <span className="flex shrink-0" title={`Pull request #${pr.number} ${prStateLabel(pr)}: ${pr.title}`}>
+          <PrStateIcon pr={pr} size={13} className="" />
+        </span>
       ) : (
         <GitBranch size={13} className="shrink-0 text-faint" />
       )}
       <span className={clsx("min-w-0 flex-1 truncate", worktree.prunable && "text-faint line-through")}>
         {worktreeLabel(worktree)}
       </span>
+      {pr && checksFailed(pr) && (
+        <CircleX size={12} className="shrink-0 text-removed">
+          <title>{`${pr.checksFailed} check${pr.checksFailed === 1 ? "" : "s"} failed on #${pr.number}`}</title>
+        </CircleX>
+      )}
       {activity && activity !== "exited" && (
         <ActivityDot
           state={activity}
@@ -206,7 +243,12 @@ function NeedsYou({ projects }: { projects: Project[] }) {
   const select = useUi((s) => s.select);
   const setActive = useUi((s) => s.setActiveSession);
   const waiting = sessions.filter((s) => s.state.kind === "running" && s.activity === "waiting");
-  if (waiting.length === 0) return null;
+  const failed = useFailedChecks();
+  const dismissChecks = useUi((s) => s.dismissChecks);
+  const setScope = useUi((s) => s.setChangesScope);
+  const showChanges = useUi((s) => s.showChanges);
+  const toggleChanges = useUi((s) => s.toggleChanges);
+  if (waiting.length === 0 && failed.length === 0) return null;
   return (
     <div className="mb-2 rounded-lg bg-warn/8 p-1">
       <div className="flex items-center gap-1.5 px-2 pt-1 pb-1 fs-sidebar-xs font-semibold tracking-wide text-warn uppercase">
@@ -241,8 +283,44 @@ function NeedsYou({ projects }: { projects: Project[] }) {
           </div>
         );
       })}
+      {failed.map((f) => (
+        <div key={checksKey(f)} className="group/need flex items-start rounded-md hover:bg-hover">
+          <button
+            onClick={() => {
+              select(f.project.id, f.worktree.path);
+              setScope("branch");
+              if (!showChanges) toggleChanges();
+            }}
+            title={`${f.pr.checksFailed} check${f.pr.checksFailed === 1 ? "" : "s"} failed on #${f.pr.number}`}
+            className="flex min-w-0 flex-1 flex-col px-2 py-1 text-left"
+          >
+            <span className="flex min-w-0 items-center gap-1 fs-sidebar">
+              <CircleX size={12} className="shrink-0 text-removed" />
+              <span className="truncate">
+                Checks failed <span className="text-faint">· {worktreeLabel(f.worktree)}</span>
+              </span>
+            </span>
+            <span className="truncate fs-sidebar-xs text-muted">
+              #{f.pr.number} {f.pr.title}
+            </span>
+          </button>
+          <IconButton
+            label="Skip for now: hides this until the checks pass"
+            onClick={() => dismissChecks(checksKey(f))}
+            className="mt-1 mr-1 size-5 opacity-0 group-hover/need:opacity-100"
+          >
+            <X size={12} />
+          </IconButton>
+        </div>
+      ))}
     </div>
   );
+}
+
+function prStateLabel(pr: PullRequest) {
+  if (pr.state === "MERGED") return "merged";
+  if (pr.state === "CLOSED") return "closed";
+  return pr.isDraft ? "draft" : "open";
 }
 
 /** Offers the newer release once one was found, and installs it on click. */

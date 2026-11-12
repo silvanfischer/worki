@@ -117,7 +117,8 @@ worki starts again. The status bar details (model, context, token usage) are Cla
   first; on conflicts nothing changes and the agent can resolve them), the branch's commits and
   every file it touched.
 - **Pull requests** through the GitHub CLI: create one, follow its checks, push new commits, and
-  pull review comments into worki to send them to the agent.
+  pull review comments into worki to send them to the agent. The sidebar shows each worktree's
+  pull request (open, draft, merged or closed), and failed checks land under **Needs you**.
 - **Review in place.** Comment on any diff line, expand hidden context, and send the comments to
   the agent as one review.
 
@@ -128,8 +129,8 @@ Commits and pull requests can be turned off under Settings › Git. Pull request
 
 - **Parallel worktrees.** Branch off any existing branch in one step, with an optional setup
   script (`pnpm install`, copying `.env` files) that runs in the same isolation as the agent.
-- **See who needs you.** Agents waiting for an answer are listed under **Needs you**, across all
-  projects, the moment they ask, with a notification and a Dock badge.
+- **See who needs you.** Agents waiting for an answer, and pull requests whose checks failed, are
+  listed under **Needs you**, across all projects, with a notification and a Dock badge.
 - **Real terminals.** Agent and shell sessions in GPU-rendered terminals that keep running when
   you switch worktrees. For Claude Code, the status bar shows model, context and token usage.
   YOLO mode is one checkbox per agent.
