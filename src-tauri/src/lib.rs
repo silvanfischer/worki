@@ -7,6 +7,9 @@ mod sessions;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use tauri::menu::Menu;
+#[cfg(target_os = "macos")]
+use tauri::menu::{AboutMetadata, PredefinedMenuItem};
 use tauri::{AppHandle, Emitter, Manager, RunEvent, WindowEvent};
 use worki_core::ProjectService;
 use worki_pty::{SessionHost, SessionInfo};
@@ -63,8 +66,34 @@ fn fit_to_screen(window: &tauri::WebviewWindow) {
     window.center().ok();
 }
 
+/// Tauri's default menu, with worki's icon in the About panel.
+fn app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    let menu = Menu::default(app)?;
+    #[cfg(target_os = "macos")]
+    if let Some(app_submenu) = menu.items()?.first().and_then(|item| item.as_submenu()) {
+        let info = app.package_info();
+        let config = app.config();
+        let about = PredefinedMenuItem::about(
+            app,
+            None,
+            Some(AboutMetadata {
+                name: Some(info.name.clone()),
+                version: Some(info.version.to_string()),
+                copyright: config.bundle.copyright.clone(),
+                authors: config.bundle.publisher.clone().map(|p| vec![p]),
+                icon: Some(tauri::include_image!("icons/128x128@2x.png")),
+                ..Default::default()
+            }),
+        )?;
+        app_submenu.remove_at(0)?;
+        app_submenu.insert(&about, 0)?;
+    }
+    Ok(menu)
+}
+
 pub fn run() {
     let app = tauri::Builder::default()
+        .menu(app_menu)
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())

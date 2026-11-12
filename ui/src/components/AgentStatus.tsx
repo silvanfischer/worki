@@ -20,7 +20,7 @@ export const PERMISSION_MODES: Record<string, string> = {
   never: "Never ask",
 };
 
-/** Status bar under the agent's terminal: model, effort, permissions and context use, with
+/** Status bar below the session tabs: model, effort, permissions and context use, with
  * everything else the agent reports on click. */
 export function AgentStatus({ session }: { session: SessionInfo }) {
   const [open, setOpen] = useState(false);
@@ -44,7 +44,7 @@ export function AgentStatus({ session }: { session: SessionInfo }) {
   const context = a.contextUsed !== null ? Math.round(a.contextUsed) : null;
 
   return (
-    <div ref={ref} className="@container relative flex shrink-0 border-t border-line">
+    <div ref={ref} className="@container relative flex shrink-0 border-b border-line">
       <button
         onClick={() => setOpen((o) => !o)}
         title="Agent status"
@@ -68,7 +68,7 @@ export function AgentStatus({ session }: { session: SessionInfo }) {
       </button>
       <CopyContinue session={session} />
       {open && (
-        <div data-overlay className="absolute right-2 bottom-full z-40 mb-1 w-64 rounded-lg border border-line bg-elevated p-3 text-xs shadow-xl">
+        <div data-overlay className="absolute top-full right-2 z-40 mt-1 w-64 rounded-lg border border-line bg-elevated p-3 text-xs shadow-xl">
           <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5">
             <Row label="Model">{a.model}</Row>
             {a.effort && <Row label="Effort">{a.effort}</Row>}

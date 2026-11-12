@@ -222,8 +222,7 @@ function ReviewBar({ worktreePath, onOpen }: { worktreePath: string; onOpen: (fi
   const setActive = useUi((s) => s.setActiveSession);
   const [error, setError] = useState<string | null>(null);
   const [picked, setPicked] = useState<string | null>(null);
-  if (comments.length === 0)
-    return <p className="border-t border-line px-5 py-4 fs-panel-sm text-faint">Hover a line in a diff to comment on it.</p>;
+  if (comments.length === 0) return null;
 
   const agents = sessions.filter((s) => s.worktreePath === worktreePath && s.profileId && s.state.kind === "running");
   const target = agents.find((s) => s.id === picked) ?? reviewTarget(agents, activeId);

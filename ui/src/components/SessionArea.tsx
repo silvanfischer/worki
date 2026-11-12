@@ -223,6 +223,7 @@ export function SessionArea({ project, worktree }: { project: Project; worktree:
           items={newMenu}
         />
       </div>
+      {active?.state.kind === "running" && <AgentStatus session={active} />}
       {error && (
         <div className="px-3 pt-2">
           <ErrorText>{error}</ErrorText>
@@ -269,7 +270,6 @@ export function SessionArea({ project, worktree }: { project: Project; worktree:
             </ExitBanner>
           ))}
       </div>
-      {active?.state.kind === "running" && <AgentStatus session={active} />}
     </div>
   );
 }

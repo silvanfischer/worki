@@ -16,7 +16,16 @@ import {
   SquareTerminal,
   X,
 } from "lucide-react";
-import { isValidElement, memo, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  isValidElement,
+  memo,
+  type ReactNode,
+  type SelectHTMLAttributes,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -35,7 +44,7 @@ import { type Chat, type ChatItem, useChat } from "../lib/chat";
 import { useAsyncAction } from "../lib/useAsyncAction";
 import { PERMISSION_MODES } from "./AgentStatus";
 import { ChatVisual, VISUAL_LANGUAGES } from "./ChatVisual";
-import { Button, ErrorText, Select, Textarea } from "./ui";
+import { Button, ErrorText, Textarea } from "./ui";
 
 type Permission = Extract<ChatItem, { kind: "permission" }>;
 type Tool = Extract<ChatItem, { kind: "tool" }>;
@@ -738,13 +747,15 @@ function Composer({ session, chat, onSend }: { session: SessionInfo; chat: Chat;
             </div>
           )}
         <div className="flex items-end gap-2">
-          <button
-            onClick={pick}
-            title="Attach files (or paste an image)"
-            className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted hover:bg-hover hover:text-fg"
-          >
-            <Paperclip size={14} />
-          </button>
+          <div className={lineBox}>
+            <button
+              onClick={pick}
+              title="Attach files (or paste an image)"
+              className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted hover:bg-hover hover:text-fg"
+            >
+              <Paperclip size={14} />
+            </button>
+          </div>
           <Textarea
             ref={input}
             rows={1}
@@ -759,26 +770,28 @@ function Composer({ session, chat, onSend }: { session: SessionInfo; chat: Chat;
               }
             }}
             placeholder={busy ? "Add to what the agent is doing…" : `Message ${session.title}`}
-            className="flex-1 border-transparent! bg-transparent px-1 py-1 font-sans fs-chat outline-none!"
+            className="flex-1 border-transparent! bg-transparent px-1 font-sans fs-chat outline-none!"
           />
-          {busy && !ready ? (
-            <button
-              onClick={stopAll}
-              title={hasJobs ? "Stop, including background jobs (Esc)" : "Stop (Esc)"}
-              className="flex size-7 shrink-0 items-center justify-center rounded-md bg-fg text-panel hover:opacity-80"
-            >
-              <Square size={11} fill="currentColor" />
-            </button>
-          ) : (
-            <button
-              onClick={send}
-              disabled={!ready || sending}
-              title="Send (Enter)"
-              className="flex size-7 shrink-0 items-center justify-center rounded-md bg-accent text-accent-fg hover:brightness-110 disabled:opacity-40"
-            >
-              <ArrowUp size={14} />
-            </button>
-          )}
+          <div className={lineBox}>
+            {busy && !ready ? (
+              <button
+                onClick={stopAll}
+                title={hasJobs ? "Stop, including background jobs (Esc)" : "Stop (Esc)"}
+                className="flex size-7 shrink-0 items-center justify-center rounded-md bg-fg text-panel hover:opacity-80"
+              >
+                <Square size={11} fill="currentColor" />
+              </button>
+            ) : (
+              <button
+                onClick={send}
+                disabled={!ready || sending}
+                title="Send (Enter)"
+                className="flex size-7 shrink-0 items-center justify-center rounded-md bg-accent text-accent-fg hover:brightness-110 disabled:opacity-40"
+              >
+                <ArrowUp size={14} />
+              </button>
+            )}
+          </div>
         </div>
         </div>
         <Settings session={session} chat={chat} onError={setError} />
@@ -787,6 +800,9 @@ function Composer({ session, chat, onSend }: { session: SessionInfo; chat: Chat;
     </div>
   );
 }
+
+/** One line of the prompt field: the same padding, border and line height, so its buttons stay centred on the last line. */
+const lineBox = "box-content flex h-[1lh] shrink-0 items-center border border-transparent py-2 text-[13px] text-xs fs-chat";
 
 /** The model, permission mode and effort the agent runs with, switchable mid-conversation. */
 function Settings({ session, chat, onError }: { session: SessionInfo; chat: Chat; onError: (e: string | null) => void }) {
@@ -813,18 +829,16 @@ function Settings({ session, chat, onError }: { session: SessionInfo; chat: Chat
     onError(null);
     api.changeChatSetting(session.id, setting).catch((e) => onError(errorMessage(e)));
   };
-  const select = "h-6 max-w-44 border-transparent bg-transparent fs-chat-xs text-muted hover:bg-hover hover:text-fg";
-
   return (
-    <div className="flex flex-wrap items-center gap-1">
-      <Select
+    <div className="flex flex-wrap items-center justify-end gap-1">
+      <SettingSelect
         title="Model"
+        shown={current ? label(current) : (settings.model ?? "Model")}
         value={current?.value ?? ""}
         onChange={(e) => {
           setPickedModel(e.target.value);
           change({ kind: "model", value: e.target.value });
         }}
-        className={select}
       >
         {!current && <option value="">{settings.model ?? "Model"}</option>}
         {models.map((m) => (
@@ -832,13 +846,13 @@ function Settings({ session, chat, onError }: { session: SessionInfo; chat: Chat
             {label(m)}
           </option>
         ))}
-      </Select>
+      </SettingSelect>
       {current && current.effortLevels.length > 0 && (
-        <Select
+        <SettingSelect
           title="Effort"
+          shown={effort ? `${effort} effort` : "Default effort"}
           value={effort}
           onChange={(e) => change({ kind: "effort", value: e.target.value })}
-          className={select}
         >
           {!effort && <option value="">Default effort</option>}
           {current.effortLevels.map((level) => (
@@ -846,13 +860,13 @@ function Settings({ session, chat, onError }: { session: SessionInfo; chat: Chat
               {level} effort
             </option>
           ))}
-        </Select>
+        </SettingSelect>
       )}
-      <Select
+      <SettingSelect
         title="Permissions"
+        shown={settings.permissionMode ? (PERMISSION_MODES[settings.permissionMode] ?? settings.permissionMode) : "Permissions"}
         value={settings.permissionMode ?? ""}
         onChange={(e) => change({ kind: "permissionMode", value: e.target.value })}
-        className={select}
       >
         {settings.permissionMode && !options.permissionModes.includes(settings.permissionMode) && (
           <option value={settings.permissionMode}>
@@ -864,7 +878,20 @@ function Settings({ session, chat, onError }: { session: SessionInfo; chat: Chat
             {PERMISSION_MODES[mode] ?? mode}
           </option>
         ))}
-      </Select>
+      </SettingSelect>
     </div>
+  );
+}
+
+/** A select as wide as its current label, which a native select can't be: it's sized to its longest option. */
+function SettingSelect({ shown, title, ...props }: SelectHTMLAttributes<HTMLSelectElement> & { shown: string }) {
+  return (
+    <label
+      title={title}
+      className="relative flex h-6 max-w-44 min-w-0 cursor-pointer items-center rounded-md px-2 fs-chat-xs text-muted hover:bg-hover hover:text-fg has-[:focus-visible]:ring-1 has-[:focus-visible]:ring-accent"
+    >
+      <span className="truncate">{shown}</span>
+      <select {...props} aria-label={title} className="absolute inset-0 cursor-pointer appearance-none opacity-0" />
+    </label>
   );
 }
