@@ -92,7 +92,7 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
           {showTerminal && <TerminalPanel project={project} worktree={worktree} />}
         </section>
 
-        {diffFile && (
+        {showChanges && diffFile && (
           <section className="relative min-h-0 shrink-0 border-l border-line" style={{ width: widths.diff }}>
             <ResizeHandle panel="diff" edge="left" />
             <DiffView

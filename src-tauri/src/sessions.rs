@@ -146,6 +146,7 @@ async fn start_session(
         &ClaudeOptions {
             remote_control,
             name: session_name(&project, &worktree_path),
+            container: isolation.is_container(),
         },
         prompt.as_deref(),
     );
@@ -673,8 +674,12 @@ async fn start_chat(
         remote_control,
     } = prepare(state, &project_id, &worktree_path, Some(&profile_id), id).await?;
     let profile = profile.ok_or("pick an agent to chat with")?;
-    let name = session_name(&project, &worktree_path);
-    let (agent, req) = chat_request(&profile, &worktree_path, env, &id, confined, &name)
+    let claude = ClaudeOptions {
+        remote_control,
+        name: session_name(&project, &worktree_path),
+        container: isolation.is_container(),
+    };
+    let (agent, req) = chat_request(&profile, &worktree_path, env, &id, confined, &claude)
         .ok_or_else(|| {
             format!(
                 "{} can't run as a chat yet; start it in a terminal",

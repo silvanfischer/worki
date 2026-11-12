@@ -286,10 +286,25 @@ pub async fn status(host: &Host, worktree: &Path) -> Result<WorktreeStatus> {
         )
         .await?;
     let mut status = parse_status_v2(&porcelain);
+    drop_sandbox_placeholders(host, worktree, &mut status.changed_files);
     if let Ok(stat) = host.git(worktree, ["diff", "HEAD", "--shortstat"]).await {
         (status.insertions, status.deletions) = parse_shortstat(&stat);
     }
     Ok(status)
+}
+
+/// Leaves out the empty, read-only files Claude Code's sandbox puts in the worktree to protect
+/// paths like `.bashrc` or `.claude/skills`, and sometimes leaves behind. Only checked on this
+/// machine.
+fn drop_sandbox_placeholders(host: &Host, worktree: &Path, files: &mut Vec<ChangedFile>) {
+    if !matches!(host, Host::Local) {
+        return;
+    }
+    files.retain(|f| {
+        f.code != "??"
+            || !std::fs::metadata(worktree.join(&f.path))
+                .is_ok_and(|m| m.is_file() && m.len() == 0 && m.permissions().readonly())
+    });
 }
 
 pub fn parse_status_v2(text: &str) -> WorktreeStatus {
@@ -591,6 +606,7 @@ pub async fn branch_changes(host: &Host, worktree: &Path, base: &str) -> Result<
                 code: "??".into(),
             }),
     );
+    drop_sandbox_placeholders(host, worktree, &mut files);
     let stat = host.git(worktree, ["diff", &from, "--shortstat"]).await?;
     let (insertions, deletions) = parse_shortstat(&stat);
     let commits = host
@@ -850,6 +866,34 @@ mod tests {
         let wts = parse_worktree_porcelain(text);
         assert_eq!(wts.len(), 1);
         assert_eq!(wts[0].path, PathBuf::from("/w/a"));
+    }
+
+    #[test]
+    fn leaves_out_the_sandbox_placeholder_files() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let file = |name: &str, content: &str, mode: u32| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, content).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+        };
+        file(".bashrc", "", 0o444);
+        file("empty.txt", "", 0o644);
+        file("readonly.txt", "text", 0o444);
+        let changed = |path: &str, code: &str| super::ChangedFile {
+            path: path.into(),
+            code: code.into(),
+        };
+        let mut files = vec![
+            changed(".bashrc", "??"),
+            changed("empty.txt", "??"),
+            changed("readonly.txt", "??"),
+            changed("src/main.rs", " M"),
+        ];
+        super::drop_sandbox_placeholders(&super::Host::Local, dir.path(), &mut files);
+        let paths: Vec<_> = files.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(paths, ["empty.txt", "readonly.txt", "src/main.rs"]);
     }
 
     #[test]

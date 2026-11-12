@@ -26,9 +26,12 @@ pub fn session_env(session_id: &str, worktree: &Path) -> Vec<(String, String)> {
 /// What only Claude Code is started with.
 #[derive(Debug, Clone, Default)]
 pub struct ClaudeOptions {
+    /// Terminals only: a chat turns it on over its protocol.
     pub remote_control: bool,
     /// The session's name, which Remote Control lists it by on claude.ai/code.
     pub name: String,
+    /// Runs in a container or sandbox of its own, whose filesystem Claude may write.
+    pub container: bool,
 }
 
 /// An agent profile, or a plain shell for `None`. `exec` hands the PTY to the agent itself.
@@ -81,7 +84,7 @@ pub fn chat_request(
     env: Vec<(String, String)>,
     session_id: &str,
     confined: bool,
-    name: &str,
+    claude: &ClaudeOptions,
 ) -> Option<(ChatAgent, LaunchRequest)> {
     let agent = ChatAgent::of(profile)?;
     let command = match agent {
@@ -89,7 +92,10 @@ pub fn chat_request(
             let sandbox = if confined {
                 format!(
                     " --settings {}",
-                    shell_quote(r#"{"sandbox":{"enabled":false}}"#)
+                    shell_quote(
+                        &serde_json::json!({ "sandbox": confined_sandbox(claude.container) })
+                            .to_string(),
+                    )
                 )
             } else {
                 String::new()
@@ -99,7 +105,7 @@ pub fn chat_request(
 --include-partial-messages --replay-user-messages --permission-prompt-tool stdio --append-system-prompt {}{sandbox} \"$@\"",
                 claude_conversation(session_id),
                 profile.command,
-                claude_name(name),
+                claude_name(&claude.name),
                 shell_quote(CHAT_PROMPT),
             )
         }
@@ -272,7 +278,7 @@ fn claude_command(
     claude: &ClaudeOptions,
     prompt: &str,
 ) -> String {
-    let hooks = shell_quote(&claude_settings(confined, claude.remote_control));
+    let hooks = shell_quote(&claude_settings(confined, claude));
     let name = claude_name(&claude.name);
     let (conversation, args) = match session_id {
         Some(id) => (format!("{} ", claude_conversation(id)), " \"$@\""),
@@ -373,7 +379,18 @@ fn claude_saved(id: &str) -> String {
 /// where the PTY reader picks it up. Going through the terminal works the same for every
 /// isolation: as the user, as an agent user, inside a sandbox. Inside tmux (kept-alive remote
 /// sessions) the marker is wrapped so tmux passes it through.
-fn claude_settings(confined: bool, remote_control: bool) -> String {
+/// Organization policy can force Claude Code's sandbox on even here, so in a container it may write
+/// the whole filesystem, which belongs to the container; worki's mounts keep their own read-only
+/// parts, such as the repository's hooks and config.
+fn confined_sandbox(container: bool) -> serde_json::Value {
+    if container {
+        serde_json::json!({ "enabled": false, "filesystem": { "allowWrite": ["/"] } })
+    } else {
+        serde_json::json!({ "enabled": false })
+    }
+}
+
+fn claude_settings(confined: bool, claude: &ClaudeOptions) -> String {
     // `$s` holds the state; the marker is wrapped for tmux when the session runs inside it.
     let print = "[ -n \"$WORKI_TTY\" ] && { if [ -n \"$TMUX\" ]; then printf '\\033Ptmux;\\033\\033]777;worki;%s\\007\\033\\\\' \"$s\"; else printf '\\033]777;worki;%s\\007' \"$s\"; fi; } > \"$WORKI_TTY\" 2>/dev/null || true";
     let hook = |command: String| serde_json::json!({ "type": "command", "command": command });
@@ -402,9 +419,9 @@ fn claude_settings(confined: bool, remote_control: bool) -> String {
         "Notification": marker("waiting"),
     }, "statusLine": { "type": "command", "command": STATUS_LINE }});
     if confined {
-        settings["sandbox"] = serde_json::json!({ "enabled": false });
+        settings["sandbox"] = confined_sandbox(claude.container);
     }
-    if remote_control {
+    if claude.remote_control {
         settings["remoteControlAtStartup"] = true.into();
     }
     settings.to_string()
@@ -519,7 +536,7 @@ mod tests {
     #[test]
     fn prompt_hook_reports_the_permission_mode() {
         let settings: serde_json::Value =
-            serde_json::from_str(&claude_settings(false, false)).unwrap();
+            serde_json::from_str(&claude_settings(false, &ClaudeOptions::default())).unwrap();
         let command = settings["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"]
             .as_str()
             .unwrap();
@@ -811,12 +828,26 @@ case "$1" in resume) echo "resume $2" ;; *) echo new ;; esac >> "$LOG"
             command: "codex --yolo".into(),
             install: None,
         };
-        let (agent, req) =
-            chat_request(&profile, Path::new("/w"), vec![], "s1", false, "").unwrap();
+        let (agent, req) = chat_request(
+            &profile,
+            Path::new("/w"),
+            vec![],
+            "s1",
+            false,
+            &ClaudeOptions::default(),
+        )
+        .unwrap();
         assert_eq!(agent, ChatAgent::Codex);
         assert_eq!(req.command.as_deref(), Some("exec codex app-server"));
-        let (_, confined) =
-            chat_request(&profile, Path::new("/w"), vec![], "s1", true, "").unwrap();
+        let (_, confined) = chat_request(
+            &profile,
+            Path::new("/w"),
+            vec![],
+            "s1",
+            true,
+            &ClaudeOptions::default(),
+        )
+        .unwrap();
         assert!(confined
             .command
             .unwrap()
@@ -860,16 +891,26 @@ case "$1" in resume) echo "resume $2" ;; *) echo new ;; esac >> "$LOG"
             command: command.into(),
             install: None,
         };
-        assert!(
-            chat_request(&profile("aider"), Path::new("/w"), vec![], "abc", false, "").is_none()
-        );
+        assert!(chat_request(
+            &profile("aider"),
+            Path::new("/w"),
+            vec![],
+            "abc",
+            false,
+            &ClaudeOptions::default()
+        )
+        .is_none());
         let (agent, req) = chat_request(
             &profile("claude --model opus"),
             Path::new("/w"),
             vec![],
             "abc",
             true,
-            "acme/w",
+            &ClaudeOptions {
+                name: "acme/w".into(),
+                container: true,
+                ..ClaudeOptions::default()
+            },
         )
         .unwrap();
         assert_eq!(agent, ChatAgent::Claude);
@@ -890,7 +931,7 @@ case "$1" in resume) echo "resume $2" ;; *) echo new ;; esac >> "$LOG"
             String::from_utf8(out.stdout).unwrap(),
             "--model|opus|--name|acme/w|-p|--input-format|stream-json|--output-format|stream-json|--verbose|\
 --include-partial-messages|--replay-user-messages|--permission-prompt-tool|stdio|--append-system-prompt|PROMPT|\
---settings|{\"sandbox\":{\"enabled\":false}}|--session-id|abc|"
+--settings|{\"sandbox\":{\"enabled\":false,\"filesystem\":{\"allowWrite\":[\"/\"]}}}|--session-id|abc|"
                 .replace("PROMPT", CHAT_PROMPT)
         );
     }
@@ -960,8 +1001,8 @@ case "$1" in resume) echo "resume $2" ;; *) echo new ;; esac >> "$LOG"
         .unwrap();
         assert!(command.starts_with("export WORKI_TTY=\"$(tty)\"; exec claude --settings '"));
         let named = ClaudeOptions {
-            remote_control: false,
             name: "acme/w".into(),
+            ..ClaudeOptions::default()
         };
         let named = session_request(Some(&p), Path::new("/w"), vec![], None, false, &named, None);
         assert!(named
@@ -978,12 +1019,30 @@ case "$1" in resume) echo "resume $2" ;; *) echo new ;; esac >> "$LOG"
             .unwrap();
         let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
         assert!(json.get("sandbox").is_none());
-        let confined: serde_json::Value =
-            serde_json::from_str(&super::claude_settings(true, false)).unwrap();
-        assert_eq!(confined["sandbox"]["enabled"], false);
+        let settings = |container: bool| -> serde_json::Value {
+            let claude = ClaudeOptions {
+                container,
+                ..ClaudeOptions::default()
+            };
+            serde_json::from_str(&super::claude_settings(true, &claude)).unwrap()
+        };
+        assert_eq!(
+            settings(false)["sandbox"],
+            serde_json::json!({ "enabled": false })
+        );
+        assert_eq!(
+            settings(true)["sandbox"]["filesystem"]["allowWrite"],
+            serde_json::json!(["/"])
+        );
         assert!(json.get("remoteControlAtStartup").is_none());
-        let remote: serde_json::Value =
-            serde_json::from_str(&super::claude_settings(false, true)).unwrap();
+        let remote: serde_json::Value = serde_json::from_str(&super::claude_settings(
+            false,
+            &ClaudeOptions {
+                remote_control: true,
+                ..ClaudeOptions::default()
+            },
+        ))
+        .unwrap();
         assert_eq!(remote["remoteControlAtStartup"], true);
         let hook = json["hooks"]["Stop"][0]["hooks"][0]["command"]
             .as_str()
@@ -1011,7 +1070,8 @@ case "$1" in resume) echo "resume $2" ;; *) echo new ;; esac >> "$LOG"
     fn tool_calls_mark_working_except_questions() {
         use std::io::Write;
         let settings: serde_json::Value =
-            serde_json::from_str(&super::claude_settings(false, false)).unwrap();
+            serde_json::from_str(&super::claude_settings(false, &ClaudeOptions::default()))
+                .unwrap();
         let hooks = &settings["hooks"];
         assert!(hooks["PermissionRequest"].is_array() && hooks["PostToolUse"].is_array());
         let hook = hooks["PreToolUse"][0]["hooks"][0]["command"]
