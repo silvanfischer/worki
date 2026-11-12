@@ -9,4 +9,8 @@ if [ ! -d node_modules ] || [ pnpm-lock.yaml -nt node_modules/.modules.yaml ]; t
   pnpm install --frozen-lockfile
 fi
 
+runner="$PWD/scripts/dev_run.sh"
+export CARGO_TARGET_AARCH64_APPLE_DARWIN_RUNNER="$runner"
+export CARGO_TARGET_X86_64_APPLE_DARWIN_RUNNER="$runner"
+
 exec pnpm tauri dev "$@"

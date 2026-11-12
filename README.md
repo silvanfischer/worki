@@ -164,6 +164,16 @@ cd worki
 `start_dev.sh` installs the frontend dependencies when needed, compiles the app and starts it with
 hot reload for the UI.
 
+A dev build counts as a new app for macOS after every rebuild, so it asks again for worki's
+Keychain item on each start. Create a signing certificate once, and dev builds are signed with it:
+
+```bash
+scripts/create_dev_certificate.sh
+```
+
+Choose **Always Allow** at the next prompt. To sign with another certificate, such as your Apple
+Development one, set `WORKI_DEV_SIGNING_IDENTITY` to its name.
+
 ### Share setup with your team
 
 Commit a `.worki.toml` to share the setup script, and the base branch worki picks up when the
