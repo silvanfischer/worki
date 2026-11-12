@@ -141,6 +141,11 @@ textarea,
   -webkit-user-select: text;
 }
 
+.selectable button {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
 button {
   cursor: default;
 }

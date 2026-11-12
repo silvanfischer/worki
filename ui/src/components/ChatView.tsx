@@ -69,7 +69,7 @@ export function ChatView({ session }: { session: SessionInfo }) {
         }}
         className="min-h-0 flex-1 overflow-y-auto"
       >
-        <div className="mx-auto flex max-w-5xl flex-col gap-3 px-5 py-4">
+        <div className="selectable mx-auto flex max-w-5xl flex-col gap-3 px-5 py-4">
           {chat.items.length === 0 && (
             <p className="py-10 text-center fs-chat-xs text-faint">Ask {session.title} something to start.</p>
           )}
@@ -186,7 +186,7 @@ function UserMessage({ item, session }: { item: UserItem; session: SessionInfo }
   return (
     <div
       className={clsx(
-        "flex max-w-[85%] flex-col gap-1.5 self-end rounded-lg px-3 py-2 fs-chat whitespace-pre-wrap",
+        "flex max-w-[85%] flex-col gap-1.5 self-end rounded-lg px-3 py-2 fs-chat whitespace-pre-wrap wrap-anywhere",
         item.queued ? "border border-dashed border-line bg-hover" : "bg-selected",
       )}
     >
