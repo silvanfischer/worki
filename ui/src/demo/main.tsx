@@ -63,6 +63,8 @@ const commits = [
   { sha: "c3d4e5f6", subject: "Split shipping and discount into their own rows", author: "Claude", time: now - 3 * 3600 },
 ];
 
+const shellPrompt = "\x1b[32mdev@mac\x1b[0m \x1b[34m~/worki/worktrees/acme-web/checkout-redesign\x1b[0m $ pnpm test\r\n\r\n \x1b[32m✓\x1b[0m 128 tests passed (2.4s)\r\n\r\n\x1b[32mdev@mac\x1b[0m \x1b[34m~/worki/worktrees/acme-web/checkout-redesign\x1b[0m $ ";
+
 const isolation = { kind: "dockerSandbox", image: "claude", template: "worki-acme-web:20261109-1430" };
 
 const session = (id: string, path: string, activity: string, extra: object = {}) => ({
@@ -73,6 +75,7 @@ const session = (id: string, path: string, activity: string, extra: object = {})
   title: "Claude Code",
   runAs: "sbx: worki-" + path.split("/").pop(),
   resumable: false,
+  panel: false,
   state: { kind: "running" },
   activity,
   attention: null,
@@ -408,8 +411,19 @@ function handle(cmd: string, args: Record<string, any>): unknown {
       return [];
     case "setup_scripts":
       return { project: null, repoFile: "pnpm install" };
+    case "spawn_worktree_shell":
+      return {
+        ...session("panel-shell", args.worktreePath, "idle"),
+        profileId: null,
+        title: "Terminal",
+        runAs: null,
+        panel: true,
+        usage: [],
+      };
     case "attach_session": {
       const channel = args.onData;
+      if (args.id === "panel-shell")
+        setTimeout(() => channel.onmessage?.(Array.from(new TextEncoder().encode(shellPrompt))), 50);
       if (args.id === "s1") setTimeout(() => channel.onmessage?.(Array.from(new TextEncoder().encode(terminal))), 50);
       if (args.id === "s5") {
         chatChannel = channel;
@@ -505,6 +519,7 @@ const ui = {
   selectedWorktreePath: checkout,
   collapsed: {},
   showChanges: scene !== "terminal",
+  showTerminal: scene === "panel",
   changesScope: scene === "branch" ? "branch" : "uncommitted",
   panelWidths: { sidebar: 256, diff: 520, changes: 320 },
   theme: "dark",

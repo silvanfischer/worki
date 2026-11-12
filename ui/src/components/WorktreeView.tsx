@@ -1,6 +1,6 @@
 import clsx from "clsx";
 import { useState } from "react";
-import { ArrowDown, ArrowUp, Coins, GitBranch, MoreHorizontal, PanelRight, Send } from "lucide-react";
+import { ArrowDown, ArrowUp, Coins, GitBranch, MoreHorizontal, PanelRight, Send, SquareTerminal } from "lucide-react";
 
 import { type ChangedFile, errorMessage, type Project, type Worktree, worktreeLabel } from "../lib/api";
 import { useBranchChanges, useCompareBase, useSessions, useWorktreeStatus } from "../lib/queries";
@@ -12,6 +12,7 @@ import { DiffView } from "./DiffView";
 import { OpenInMenu } from "./OpenInMenu";
 import { ResizeHandle } from "./ResizeHandle";
 import { SessionArea } from "./SessionArea";
+import { TerminalPanel } from "./TerminalPanel";
 import { Button, DiffStat, ErrorText, IconButton, Menu, Select } from "./ui";
 import { WorktreeIsolationBadge } from "./WorktreeIsolation";
 import { worktreeActions } from "./worktreeActions";
@@ -20,6 +21,8 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
   const openDialog = useUi((s) => s.openDialog);
   const showChanges = useUi((s) => s.showChanges);
   const toggleChanges = useUi((s) => s.toggleChanges);
+  const showTerminal = useUi((s) => s.showTerminal);
+  const toggleTerminal = useUi((s) => s.toggleTerminal);
   const { data: status, error } = useWorktreeStatus(worktree.path, 5_000);
   const [diffFile, setDiffFile] = useState<string | null>(null);
   const widths = useUi((s) => s.panelWidths);
@@ -75,6 +78,13 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
           items={worktreeActions(project, worktree, openDialog)}
         />
         <IconButton
+          label={`${showTerminal ? "Hide" : "Show"} terminal (⌃\`)`}
+          onClick={toggleTerminal}
+          className={clsx(showTerminal && "text-fg")}
+        >
+          <SquareTerminal size={14} />
+        </IconButton>
+        <IconButton
           label={`${showChanges ? "Hide" : "Show"} changes (⌘J)${pending > 0 ? ` · ${pending} review comment${pending === 1 ? "" : "s"}` : ""}`}
           onClick={toggleChanges}
           className={clsx("relative", showChanges && "text-fg")}
@@ -89,8 +99,11 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
       </header>
 
       <div className="flex min-h-0 flex-1 overflow-hidden">
-        <section className="min-h-0 min-w-[240px] flex-1">
-          <SessionArea project={project} worktree={worktree} />
+        <section className="flex min-h-0 min-w-[240px] flex-1 flex-col">
+          <div className="min-h-0 flex-1">
+            <SessionArea project={project} worktree={worktree} />
+          </div>
+          {showTerminal && <TerminalPanel project={project} worktree={worktree} />}
         </section>
 
         {diffFile && (

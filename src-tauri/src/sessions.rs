@@ -55,6 +55,45 @@ pub async fn spawn_session(
     .await
 }
 
+/// Opens the user's own shell in the worktree for its terminal panel: on this Mac outside the
+/// worktree's isolation, or on the host of a remote project.
+#[tauri::command]
+pub async fn spawn_worktree_shell(
+    state: State<'_, AppState>,
+    project_id: String,
+    worktree_path: PathBuf,
+    cols: u16,
+    rows: u16,
+) -> CmdResult<SessionInfo> {
+    let project = state.projects.project(&project_id).map_err(err)?;
+    let isolation = match &project.remote {
+        Some(_) => state.projects.isolation_for(&project).map_err(err)?,
+        None => Isolation::None,
+    };
+    let req = session_request(None, &worktree_path, Vec::new(), None, false, None);
+    let backend_isolation = isolation.clone();
+    let launch = blocking(move || backend_isolation.backend().launch(&req)).await?;
+    state
+        .sessions
+        .spawn(SpawnSpec {
+            id: uuid::Uuid::new_v4().to_string(),
+            worktree_path,
+            profile_id: None,
+            title: "Terminal".into(),
+            program: launch.program,
+            args: launch.args,
+            env: launch.env,
+            clear_env: launch.clear_env,
+            run_as: project.remote.as_ref().map(|r| r.target().display()),
+            cwd: project.remote.is_some().then_some(launch.cwd),
+            resumable: false,
+            panel: true,
+            cols,
+            rows,
+        })
+        .map_err(err)
+}
+
 /// Starts a session, under `id` when it is one worki ran before and should resume.
 #[allow(clippy::too_many_arguments)]
 async fn start_session(
@@ -132,6 +171,7 @@ async fn start_session(
             run_as: (isolation != Isolation::None).then(|| isolation.label()),
             cwd: remote.then_some(launch.cwd),
             resumable,
+            panel: false,
             cols,
             rows,
         })
@@ -432,6 +472,7 @@ fn attach_spec(
         run_as: project.remote.as_ref().map(|r| r.target().display()),
         cwd: Some(launch.cwd),
         resumable: true,
+        panel: info.panel,
         cols,
         rows,
     }
@@ -530,6 +571,7 @@ pub async fn restore_remote_sessions(state: State<'_, AppState>) -> CmdResult<us
                 title: remote.title,
                 run_as: None,
                 resumable: true,
+                panel: false,
                 state: SessionState::Running,
                 activity: worki_pty::Activity::Idle,
                 attention: None,

@@ -167,7 +167,8 @@ pub fn worktree_isolation(
     })
 }
 
-/// Changes a worktree's isolation: its sessions are closed and its old environment removed.
+/// Changes a worktree's isolation: its sessions are closed and its old environment removed. The
+/// terminal panel's shell runs outside the isolation and stays open.
 #[tauri::command]
 pub async fn set_worktree_isolation(
     state: State<'_, AppState>,
@@ -175,7 +176,7 @@ pub async fn set_worktree_isolation(
     worktree_path: std::path::PathBuf,
     choice: worki_core::ProjectIsolation,
 ) -> CmdResult<Isolation> {
-    state.close_sessions(|s| s.worktree_path == worktree_path);
+    state.close_sessions(|s| s.worktree_path == worktree_path && !s.panel);
     state
         .projects
         .set_worktree_isolation(&project_id, &worktree_path, choice)

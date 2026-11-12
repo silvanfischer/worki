@@ -25,12 +25,13 @@ export type Theme = "system" | "light" | "dark";
 
 export const FONT_SIZES = [11, 12, 13, 14, 15, 16, 18];
 
-export type Panel = "sidebar" | "diff" | "changes";
+export type Panel = "sidebar" | "diff" | "changes" | "terminal";
 
 export const PANEL_LIMITS: Record<Panel, { min: number; max: number; initial: number }> = {
   sidebar: { min: 180, max: 480, initial: 256 },
   diff: { min: 280, max: 1400, initial: 560 },
   changes: { min: 180, max: 600, initial: 280 },
+  terminal: { min: 80, max: 1000, initial: 240 },
 };
 
 interface UiState {
@@ -47,6 +48,8 @@ interface UiState {
    * `DEFAULT_WRITER_COMMAND`. */
   writerCommand: string;
   showChanges: boolean;
+  /** The terminal panel below the sessions, a shell in the worktree outside its isolation. */
+  showTerminal: boolean;
   /** Whether the changes panel lists uncommitted changes or everything since the base branch. */
   changesScope: ChangesScope;
   panelWidths: Record<Panel, number>;
@@ -74,6 +77,7 @@ interface UiState {
   setAskPrompt: (kind: AskPrompt, text: string | null) => void;
   setWriterCommand: (command: string) => void;
   toggleChanges: () => void;
+  toggleTerminal: () => void;
   setChangesScope: (scope: ChangesScope) => void;
   setPanelWidth: (panel: Panel, width: number) => void;
   setTheme: (theme: Theme) => void;
@@ -102,11 +106,13 @@ export const useUi = create<UiState>()(
       askPrompts: {},
       writerCommand: "",
       showChanges: true,
+      showTerminal: true,
       changesScope: "uncommitted",
       panelWidths: {
         sidebar: PANEL_LIMITS.sidebar.initial,
         diff: PANEL_LIMITS.diff.initial,
         changes: PANEL_LIMITS.changes.initial,
+        terminal: PANEL_LIMITS.terminal.initial,
       },
       theme: "system",
       terminalFontSize: 13,
@@ -135,6 +141,7 @@ export const useUi = create<UiState>()(
         }),
       setWriterCommand: (writerCommand) => set({ writerCommand }),
       toggleChanges: () => set((s) => ({ showChanges: !s.showChanges })),
+      toggleTerminal: () => set((s) => ({ showTerminal: !s.showTerminal })),
       setChangesScope: (changesScope) => set({ changesScope }),
       setPanelWidth: (panel, width) => {
         const { min, max } = PANEL_LIMITS[panel];
@@ -161,6 +168,7 @@ export const useUi = create<UiState>()(
         selectedWorktreePath,
         collapsed,
         showChanges,
+        showTerminal,
         changesScope,
         panelWidths,
         theme,
@@ -182,6 +190,7 @@ export const useUi = create<UiState>()(
         selectedWorktreePath,
         collapsed,
         showChanges,
+        showTerminal,
         changesScope,
         panelWidths,
         theme,
@@ -199,6 +208,10 @@ export const useUi = create<UiState>()(
         askPrompts,
         writerCommand,
       }),
+      merge: (persisted, current) => {
+        const saved = persisted as Partial<UiState>;
+        return { ...current, ...saved, panelWidths: { ...current.panelWidths, ...saved.panelWidths } };
+      },
     },
   ),
 );

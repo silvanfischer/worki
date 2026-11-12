@@ -145,6 +145,7 @@ pub fn run() {
             isolation::delete_secret,
             sessions::list_sessions,
             sessions::spawn_session,
+            sessions::spawn_worktree_shell,
             sessions::spawn_chat_session,
             sessions::send_chat_message,
             sessions::answer_chat_permission,

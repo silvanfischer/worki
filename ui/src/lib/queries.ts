@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { open } from "@tauri-apps/plugin-dialog";
 
-import { api, type Isolation, type Project, type Remote } from "./api";
+import { api, type Isolation, type Project, type Remote, type SessionInfo } from "./api";
 import { useUi } from "./store";
 
 export const keys = {
@@ -114,7 +114,18 @@ export const useSshPasswordSet = (remote: Pick<Remote, "host" | "user" | "port">
 export const useSecretStatus = (scope: string, names: string[]) =>
   useQuery({ queryKey: keys.secretStatus(scope, names), queryFn: () => api.secretStatus(scope, names) });
 
-export const useSessions = () => useQuery({ queryKey: keys.sessions, queryFn: api.listSessions });
+const tabSessions = (all: SessionInfo[]) => all.filter((s) => !s.panel);
+
+/** Sessions shown as tabs; the shells of the terminal panels are left out. */
+export const useSessions = () => useQuery({ queryKey: keys.sessions, queryFn: api.listSessions, select: tabSessions });
+
+/** The shell in a worktree's terminal panel, once it was started. */
+export const useWorktreeShell = (worktreePath: string) =>
+  useQuery({
+    queryKey: keys.sessions,
+    queryFn: api.listSessions,
+    select: (all) => all.find((s) => s.panel && s.worktreePath === worktreePath),
+  });
 
 export const useAgentSettings = () => useQuery({ queryKey: keys.agentSettings, queryFn: api.agentSettings });
 

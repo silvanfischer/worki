@@ -128,6 +128,7 @@ impl SessionHost {
             title: spec.title,
             run_as: spec.run_as,
             resumable: false,
+            panel: false,
             state: SessionState::Running,
             activity: Activity::Idle,
             attention: None,

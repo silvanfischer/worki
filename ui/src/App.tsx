@@ -90,6 +90,11 @@ export function App() {
         setPalette((open) => !open);
         return;
       }
+      if (e.ctrlKey && !e.metaKey && e.key === "`") {
+        e.preventDefault();
+        useUi.getState().toggleTerminal();
+        return;
+      }
       if (e.metaKey && !e.shiftKey && e.key.toLowerCase() === "j") {
         e.preventDefault();
         useUi.getState().toggleChanges();

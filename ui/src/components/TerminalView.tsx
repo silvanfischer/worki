@@ -85,6 +85,7 @@ export function TerminalView({ sessionId, active }: { sessionId: string; active:
     term.loadAddon(new Unicode11Addon());
     term.unicode.activeVersion = "11";
     term.loadAddon(new WebLinksAddon((_e, uri) => openUrl(uri)));
+    term.attachCustomKeyEventHandler((e) => !(e.ctrlKey && e.key === "`"));
     term.open(container.current!);
     try {
       const webgl = new WebglAddon();

@@ -355,6 +355,8 @@ export interface SessionInfo {
   runAs: string | null;
   /** Keeps running on its host when the connection ends; can be reconnected. */
   resumable: boolean;
+  /** The worktree's shell in the terminal panel, not a session tab. */
+  panel: boolean;
   state: SessionState;
   activity: Activity;
   /** Text of the agent's last notification while it waits. */
@@ -463,6 +465,9 @@ export const api = {
     resumeId: string | null = null,
     prompt: string | null = null,
   ) => invoke<SessionInfo>("spawn_session", { projectId, worktreePath, profileId, resumeId, prompt, cols, rows }),
+  /** The user's own shell in the worktree, outside its isolation, for the terminal panel. */
+  spawnWorktreeShell: (projectId: string, worktreePath: string, cols: number, rows: number) =>
+    invoke<SessionInfo>("spawn_worktree_shell", { projectId, worktreePath, cols, rows }),
   attachSession: (id: string, onData: (bytes: Uint8Array) => void) => {
     const channel = new Channel<ArrayBuffer | number[]>();
     channel.onmessage = (data) => onData(new Uint8Array(data));

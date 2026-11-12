@@ -37,6 +37,8 @@ pub struct SpawnSpec {
     pub cwd: Option<PathBuf>,
     /// The session keeps running elsewhere when this process ends and can be attached again.
     pub resumable: bool,
+    /// Shown in the worktree's terminal panel rather than as a session tab.
+    pub panel: bool,
     pub cols: u16,
     pub rows: u16,
 }
@@ -69,6 +71,7 @@ pub struct SessionInfo {
     pub title: String,
     pub run_as: Option<String>,
     pub resumable: bool,
+    pub panel: bool,
     pub state: SessionState,
     /// What the process is doing, while it runs.
     pub activity: Activity,
@@ -168,6 +171,7 @@ impl SessionHost {
             title: spec.title,
             run_as: spec.run_as,
             resumable: spec.resumable,
+            panel: spec.panel,
             state: SessionState::Running,
             activity: Activity::Idle,
             attention: None,
@@ -514,6 +518,7 @@ mod tests {
             run_as: None,
             cwd: None,
             resumable: false,
+            panel: false,
             cols: 80,
             rows: 24,
         }

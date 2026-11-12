@@ -25,6 +25,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
   const select = useUi((s) => s.select);
   const openDialog = useUi((s) => s.openDialog);
   const toggleChanges = useUi((s) => s.toggleChanges);
+  const toggleTerminal = useUi((s) => s.toggleTerminal);
   const theme = useUi((s) => s.theme);
   const setTheme = useUi((s) => s.setTheme);
   const selectedProjectId = useUi((s) => s.selectedProjectId);
@@ -51,6 +52,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
         run: () => runCommand({ kind: "newSession", profileId: null }),
       });
       out.push({ id: "changes", label: "Toggle changes panel", detail: "⌘J", icon: <PanelRight size={14} />, run: toggleChanges });
+      out.push({ id: "terminal", label: "Toggle terminal", detail: "⌃`", icon: <SquareTerminal size={14} />, run: toggleTerminal });
     }
     if (selectedProjectId) {
       out.push({
@@ -86,7 +88,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
       }
     });
     return out;
-  }, [agents, projects, worktreeLists, selectedWorktree, selectedProjectId, theme, toggleChanges, openDialog, setTheme, select]);
+  }, [agents, projects, worktreeLists, selectedWorktree, selectedProjectId, theme, toggleChanges, toggleTerminal, openDialog, setTheme, select]);
 
   const shown = useMemo(() => {
     const words = query.toLowerCase().split(/\s+/).filter(Boolean);
