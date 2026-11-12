@@ -5,7 +5,7 @@ use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::{Emitter, Manager, State};
 use worki_core::launch::{
     chat_history_command, chat_request, continue_command, resumes, session_env, session_request,
-    ChatAgent, CHAT_PROMPT,
+    ChatAgent, ClaudeOptions, CHAT_PROMPT,
 };
 use worki_core::{AgentProfile, Host, Isolation, Project, SavedSession};
 use worki_isolation::ssh::{Ssh, SshTarget};
@@ -70,7 +70,15 @@ pub async fn spawn_worktree_shell(
         Some(_) => state.projects.isolation_for(&project).map_err(err)?,
         None => Isolation::None,
     };
-    let req = session_request(None, &worktree_path, Vec::new(), None, false, None);
+    let req = session_request(
+        None,
+        &worktree_path,
+        Vec::new(),
+        None,
+        false,
+        &ClaudeOptions::default(),
+        None,
+    );
     let backend_isolation = isolation.clone();
     let launch = blocking(move || backend_isolation.backend().launch(&req)).await?;
     state
@@ -115,6 +123,7 @@ async fn start_session(
         title,
         env,
         confined,
+        remote_control,
     } = prepare(
         state,
         &project_id,
@@ -134,6 +143,10 @@ async fn start_session(
         env,
         Some(meta),
         confined,
+        &ClaudeOptions {
+            remote_control,
+            name: session_name(&project, &worktree_path),
+        },
         prompt.as_deref(),
     );
     let backend_isolation = isolation.clone();
@@ -186,6 +199,19 @@ async fn start_session(
 
 /// What starting any session in a worktree needs: the agent, the isolation (checked, with the
 /// agent installed and access granted) and the environment.
+/// `project/worktree`, or the project's name for its main checkout.
+fn session_name(project: &Project, worktree_path: &Path) -> String {
+    let folder = worktree_path
+        .file_name()
+        .map(|f| f.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    if folder.is_empty() || worki_isolation::same_dir(worktree_path, &project.repo_path) {
+        project.name.clone()
+    } else {
+        format!("{}/{folder}", project.name)
+    }
+}
+
 struct Prepared {
     project: Project,
     profile: Option<AgentProfile>,
@@ -194,6 +220,7 @@ struct Prepared {
     title: String,
     env: Vec<(String, String)>,
     confined: bool,
+    remote_control: bool,
 }
 
 /// Names of the events the session start sends; `ui/src/lib/events.ts` has the same.
@@ -329,6 +356,7 @@ async fn prepare(
         title,
         env,
         confined,
+        remote_control: settings.remote_control,
     })
 }
 
@@ -642,10 +670,12 @@ async fn start_chat(
         title,
         env,
         confined,
+        remote_control,
     } = prepare(state, &project_id, &worktree_path, Some(&profile_id), id).await?;
     let profile = profile.ok_or("pick an agent to chat with")?;
-    let (agent, req) =
-        chat_request(&profile, &worktree_path, env, &id, confined).ok_or_else(|| {
+    let name = session_name(&project, &worktree_path);
+    let (agent, req) = chat_request(&profile, &worktree_path, env, &id, confined, &name)
+        .ok_or_else(|| {
             format!(
                 "{} can't run as a chat yet; start it in a terminal",
                 profile.name
@@ -654,7 +684,9 @@ async fn start_chat(
     let backend_isolation = isolation.clone();
     let launch = blocking(move || backend_isolation.backend().launch(&req)).await?;
     let mut protocol: Box<dyn ChatProtocol> = match agent {
-        ChatAgent::Claude => Box::new(ClaudeProtocol::new(id.clone())),
+        ChatAgent::Claude => {
+            Box::new(ClaudeProtocol::new(id.clone()).with_remote_control(remote_control))
+        }
         ChatAgent::Codex => Box::new(CodexProtocol::new(
             id.clone(),
             CodexOptions {

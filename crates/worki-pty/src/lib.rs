@@ -9,7 +9,7 @@ use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-pub use activity::{Activity, AgentState, ModelUsage};
+pub use activity::{Activity, AgentState, ModelUsage, RemoteControl};
 use activity::{Scanner, Signal, Tracker};
 use anyhow::{anyhow, Context, Result};
 use chat::Chat;

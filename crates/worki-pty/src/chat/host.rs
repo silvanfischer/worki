@@ -9,7 +9,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, Context, Result};
 
-use super::{Attachment, ChatEvent, ChatProtocol, ChatSetting, PermissionAnswer};
+use super::{Attachment, ChatEvent, ChatProtocol, ChatSetting, PermissionAnswer, StateUpdate};
 use crate::activity::Tracker;
 use crate::{
     lock, refresh, Activity, AgentState, Io, OnChange, Output, Session, SessionHost, SessionInfo,
@@ -256,6 +256,7 @@ impl SessionHost {
             &[ChatEvent::PermissionResolved {
                 request_id: request_id.into(),
                 allowed,
+                elsewhere: false,
             }],
         );
         chat.send(&lines)
@@ -284,11 +285,14 @@ impl SessionHost {
     ) -> Result<()> {
         let session = self.get(id)?;
         let chat = session.io.chat().context("not a chat session")?;
-        let (lines, events) = {
+        let (lines, events, state) = {
             let mut protocol = lock(&chat.protocol);
             let lines = request(protocol.as_mut())?;
-            (lines, protocol.take_events())
+            (lines, protocol.take_events(), protocol.take_state())
         };
+        if let Some(update) = state {
+            apply_state(&session, &self.on_change, update);
+        }
         emit(&session, &self.on_change, &events);
         chat.send(&lines)
     }
@@ -308,20 +312,24 @@ fn pump_chat(stdout: impl Read, session: &Session, on_change: &OnChange) {
             chat.send(&replies).ok();
         }
         if let Some(update) = state {
-            let info = {
-                let mut info = lock(&session.info);
-                if let Some(agent) = update.agent {
-                    info.agent = agent;
-                }
-                if let Some(usage) = update.usage {
-                    info.usage = usage;
-                }
-                info.clone()
-            };
-            on_change(&info);
+            apply_state(session, on_change, update);
         }
         emit(session, on_change, &events);
     }
+}
+
+fn apply_state(session: &Session, on_change: &OnChange, update: StateUpdate) {
+    let info = {
+        let mut info = lock(&session.info);
+        if let Some(agent) = update.agent {
+            info.agent = agent;
+        }
+        if let Some(usage) = update.usage {
+            info.usage = usage;
+        }
+        info.clone()
+    };
+    on_change(&info);
 }
 
 fn wait_chat(session: &Arc<Session>, sessions: &SessionMap, on_change: &OnChange) {

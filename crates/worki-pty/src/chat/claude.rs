@@ -2,7 +2,7 @@
 //! stream-json --verbose --include-partial-messages --permission-prompt-tool stdio`): one JSON
 //! object per line both ways, with permission requests and interrupts as control messages.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde_json::{json, Value};
 
@@ -14,7 +14,7 @@ use super::{
 /// Claude Code's permission modes worki offers. Skipping all prompts isn't among them: Claude
 /// Code only allows it for sessions started with it.
 const PERMISSION_MODES: [&str; 4] = ["default", "acceptEdits", "plan", "auto"];
-use crate::{AgentState, ModelUsage};
+use crate::{AgentState, ModelUsage, RemoteControl};
 
 #[derive(Default)]
 pub struct ClaudeProtocol {
@@ -29,12 +29,23 @@ pub struct ClaudeProtocol {
     streaming: HashMap<Option<String>, (String, u64)>,
     /// Open permission requests and the tool input they were asked with.
     open: HashMap<String, Value>,
+    /// Messages worki sent that Claude Code hasn't echoed back yet.
+    sent: HashSet<String>,
     replies: Vec<String>,
     state: AgentState,
     /// Tokens the main agent's last request sent, which is what fills its context window.
     context_tokens: Option<u64>,
     changed: bool,
     usage: Option<Vec<ModelUsage>>,
+    remote_control_at_start: bool,
+    remote: Remote,
+}
+
+#[derive(Default)]
+struct Remote {
+    on: bool,
+    state: Option<String>,
+    url: Option<String>,
 }
 
 impl ClaudeProtocol {
@@ -43,6 +54,29 @@ impl ClaudeProtocol {
             session_id: session_id.into(),
             ..Default::default()
         }
+    }
+
+    pub fn with_remote_control(mut self, on: bool) -> Self {
+        self.remote_control_at_start = on;
+        self
+    }
+
+    fn remote_control(&mut self, on: bool) -> String {
+        self.remote.on = on;
+        self.control(json!({ "subtype": "remote_control", "enabled": on }))
+    }
+
+    fn report_remote(&mut self) {
+        let state = if self.remote.on {
+            self.remote.state.as_deref().unwrap_or("connecting")
+        } else {
+            "off"
+        };
+        self.state.remote_control = Some(RemoteControl {
+            state: state.to_owned(),
+            url: self.remote.url.clone().filter(|_| self.remote.on),
+        });
+        self.changed = true;
     }
 
     fn control(&mut self, request: Value) -> String {
@@ -75,6 +109,12 @@ impl ClaudeProtocol {
                 Some("initialize" | "interrupt") | None => return Vec::new(),
                 Some("background_tasks") => "move the command to the background".to_owned(),
                 Some("stop_task") => "stop the background job".to_owned(),
+                Some("remote_control") if request["enabled"] == true => {
+                    self.remote = Remote::default();
+                    self.report_remote();
+                    "turn on Remote Control".to_owned()
+                }
+                Some("remote_control") => "turn off Remote Control".to_owned(),
                 Some(setting) => format!("change the setting ({setting})"),
             };
             return vec![ChatEvent::Notice {
@@ -119,7 +159,7 @@ impl ClaudeProtocol {
                 if let Some(mode) = answer["current_permission_mode"].as_str() {
                     self.state.permission_mode = Some(mode.into());
                 }
-                self.changed = true;
+                self.report_remote();
                 vec![
                     ChatEvent::Options {
                         models,
@@ -148,6 +188,16 @@ impl ClaudeProtocol {
                 self.state.effort = self.effort.clone();
                 self.changed = true;
                 vec![self.session()]
+            }
+            Some("remote_control") if request["enabled"] == true => {
+                self.remote.url = answer["session_url"].as_str().map(str::to_owned);
+                self.report_remote();
+                Vec::new()
+            }
+            Some("remote_control") => {
+                self.remote = Remote::default();
+                self.report_remote();
+                Vec::new()
             }
             _ => Vec::new(),
         }
@@ -350,7 +400,11 @@ impl ClaudeProtocol {
 
 impl ChatProtocol for ClaudeProtocol {
     fn start(&mut self) -> Vec<String> {
-        vec![self.control(json!({ "subtype": "initialize", "hooks": null }))]
+        let mut lines = vec![self.control(json!({ "subtype": "initialize", "hooks": null }))];
+        if self.remote_control_at_start {
+            lines.push(self.remote_control(true));
+        }
+        lines
     }
 
     fn message(&mut self, id: &str, text: &str, attachments: &[Attachment]) -> Vec<String> {
@@ -369,6 +423,7 @@ impl ChatProtocol for ClaudeProtocol {
                 }),
             })
             .collect();
+        self.sent.insert(id.to_owned());
         // The API refuses empty text blocks; a message may be only attachments.
         if !text.trim().is_empty() {
             content.push(json!({ "type": "text", "text": text }));
@@ -430,6 +485,13 @@ impl ChatProtocol for ClaudeProtocol {
             ChatSetting::Effort(level) => {
                 json!({ "subtype": "apply_flag_settings", "settings": { "effortLevel": level } })
             }
+            ChatSetting::RemoteControl(on) => {
+                let line = self.remote_control(*on);
+                if *on {
+                    self.report_remote();
+                }
+                return Some(vec![line]);
+            }
         };
         Some(vec![self.control(request)])
     }
@@ -456,6 +518,13 @@ impl ChatProtocol for ClaudeProtocol {
                 }],
                 _ => Vec::new(),
             },
+            Some("system") if msg["subtype"] == "bridge_state" => {
+                self.remote.state = msg["state"].as_str().map(str::to_owned);
+                if self.remote.on {
+                    self.report_remote();
+                }
+                Vec::new()
+            }
             Some("system") if msg["subtype"] == "background_tasks_changed" => {
                 let field = |t: &Value, key: &str| t[key].as_str().unwrap_or_default().to_owned();
                 let tasks = msg["tasks"].as_array().into_iter().flatten();
@@ -472,8 +541,9 @@ impl ChatProtocol for ClaudeProtocol {
             Some("stream_event") => self.stream_event(&msg, parent),
             Some("assistant") => self.assistant(&msg, parent),
             Some("user") if msg["isReplay"] == true => match msg["uuid"].as_str() {
-                Some(id) => vec![ChatEvent::UserRead { id: id.to_owned() }],
-                None => Vec::new(),
+                Some(id) if self.sent.remove(id) => vec![ChatEvent::UserRead { id: id.to_owned() }],
+                // Sent from elsewhere, such as the Claude app through Remote Control.
+                _ => past_user_message(&msg["message"]["content"]),
             },
             Some("user") => self.user(&msg, parent),
             Some("result") => self.result(&msg),
@@ -485,6 +555,7 @@ impl ChatProtocol for ClaudeProtocol {
                     Some(_) => vec![ChatEvent::PermissionResolved {
                         request_id,
                         allowed: false,
+                        elsewhere: self.remote.on,
                     }],
                     None => Vec::new(),
                 }
@@ -764,10 +835,30 @@ mod tests {
     #[test]
     fn reports_when_a_queued_message_is_read() {
         let mut p = ClaudeProtocol::new("s");
-        let events = p.parse(
-            r#"{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Now run: echo second"}]},"session_id":"s","parent_tool_use_id":null,"uuid":"u1","isReplay":true}"#,
+        p.message("u1", "Now run: echo second", &[]);
+        let replay = |uuid: &str, text: &str| {
+            json!({
+                "type": "user",
+                "message": { "role": "user", "content": [{ "type": "text", "text": text }] },
+                "session_id": "s",
+                "parent_tool_use_id": null,
+                "uuid": uuid,
+                "isReplay": true,
+            })
+            .to_string()
+        };
+        assert_eq!(
+            p.parse(&replay("u1", "Now run: echo second")),
+            [ChatEvent::UserRead { id: "u1".into() }]
         );
-        assert_eq!(events, [ChatEvent::UserRead { id: "u1".into() }]);
+        assert_eq!(
+            p.parse(&replay("phone-1", "run date in the shell")),
+            [ChatEvent::User {
+                id: None,
+                text: "run date in the shell".into(),
+                attachments: Vec::new(),
+            }]
+        );
     }
 
     #[test]
@@ -878,6 +969,18 @@ mod tests {
             [ChatEvent::PermissionResolved {
                 request_id: "r2".into(),
                 allowed: false,
+                elsewhere: false,
+            }]
+        );
+
+        p.set(&ChatSetting::RemoteControl(true));
+        p.parse(&request("r3"));
+        assert_eq!(
+            p.parse(r#"{"type":"control_cancel_request","request_id":"r3"}"#),
+            [ChatEvent::PermissionResolved {
+                request_id: "r3".into(),
+                allowed: false,
+                elsewhere: true,
             }]
         );
     }
@@ -1087,5 +1190,82 @@ mod tests {
         let interrupt: Value = serde_json::from_str(&p.interrupt()[0]).unwrap();
         assert_eq!(interrupt["request"]["subtype"], "interrupt");
         assert_ne!(interrupt["request_id"], start["request_id"]);
+    }
+
+    #[test]
+    fn turns_remote_control_on_and_reports_its_link() {
+        let mut p = ClaudeProtocol::new("s").with_remote_control(true);
+        let start = p.start();
+        let enable: Value = serde_json::from_str(&start[1]).unwrap();
+        assert_eq!(enable["request"]["subtype"], "remote_control");
+        assert_eq!(enable["request"]["enabled"], true);
+
+        let bridge = |state: &str| {
+            json!({ "type": "system", "subtype": "bridge_state", "state": state, "session_id": "s" })
+                .to_string()
+        };
+        let remote = |p: &mut ClaudeProtocol| p.take_state().and_then(|s| s.agent?.remote_control);
+        let expect = |state: &str, url: Option<&str>| {
+            Some(RemoteControl {
+                state: state.into(),
+                url: url.map(Into::into),
+            })
+        };
+        let url = "https://claude.ai/code/session_1";
+        assert!(p.parse(&bridge("ready")).is_empty());
+        assert_eq!(remote(&mut p), expect("ready", None));
+        let answer = json!({
+            "type": "control_response",
+            "response": {
+                "subtype": "success",
+                "request_id": enable["request_id"],
+                "response": { "session_url": url, "bridge_session_id": "cse_1" }
+            }
+        });
+        assert!(p.parse(&answer.to_string()).is_empty());
+        assert_eq!(remote(&mut p), expect("ready", Some(url)));
+        p.parse(&bridge("reconnecting"));
+        assert_eq!(remote(&mut p), expect("reconnecting", Some(url)));
+
+        let disable: Value =
+            serde_json::from_str(&p.set(&ChatSetting::RemoteControl(false)).unwrap()[0]).unwrap();
+        assert_eq!(disable["request"]["enabled"], false);
+        let answer = json!({
+            "type": "control_response",
+            "response": { "subtype": "success", "request_id": disable["request_id"] }
+        });
+        p.parse(&answer.to_string());
+        assert_eq!(remote(&mut p), expect("off", None));
+        p.parse(&bridge("disconnected"));
+        assert!(p.take_state().is_none());
+    }
+
+    #[test]
+    fn says_why_remote_control_did_not_start() {
+        let mut p = ClaudeProtocol::new("s");
+        let line = p.set(&ChatSetting::RemoteControl(true)).unwrap().remove(0);
+        let state = |p: &mut ClaudeProtocol| {
+            p.take_state()
+                .and_then(|s| s.agent?.remote_control)
+                .map(|r| r.state)
+        };
+        assert_eq!(state(&mut p).as_deref(), Some("connecting"));
+        let request: Value = serde_json::from_str(&line).unwrap();
+        let refused = json!({
+            "type": "control_response",
+            "response": {
+                "subtype": "error",
+                "request_id": request["request_id"],
+                "error": "Remote Control is disabled by your organization"
+            }
+        });
+        assert_eq!(
+            p.parse(&refused.to_string()),
+            [ChatEvent::Notice {
+                text: "Couldn't turn on Remote Control: Remote Control is disabled by your organization"
+                    .into()
+            }]
+        );
+        assert_eq!(state(&mut p).as_deref(), Some("off"));
     }
 }

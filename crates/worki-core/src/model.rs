@@ -352,6 +352,10 @@ pub struct AgentSettings {
     /// environment when they first start there.
     #[serde(default)]
     pub environment_setup: BTreeMap<String, EnvironmentSetup>,
+    /// Starts Claude Code sessions with Remote Control, to continue them from claude.ai/code
+    /// or the Claude app.
+    #[serde(default)]
+    pub remote_control: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -395,6 +399,7 @@ impl Default for AgentSettings {
             default_profile: Some("claude".into()),
             secrets: BTreeMap::new(),
             environment_setup: BTreeMap::new(),
+            remote_control: false,
         }
     }
 }

@@ -41,6 +41,18 @@ pub struct AgentState {
     pub cost_usd: Option<f64>,
     pub output_style: Option<String>,
     pub version: Option<String>,
+    /// Only reported by chat agents that can be continued on claude.ai/code.
+    pub remote_control: Option<RemoteControl>,
+}
+
+/// Remote Control, which continues the session from claude.ai/code or the Claude app.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteControl {
+    /// `off`, `connecting`, or the agent's own connection state, such as `ready`, `connected`
+    /// or `reconnecting`.
+    pub state: String,
+    pub url: Option<String>,
 }
 
 /// `key=value` pairs separated by `;`, as printed by worki's status line; empty values are unset.
@@ -380,6 +392,7 @@ mod tests {
                     cost_usd: Some(1.25),
                     output_style: Some("default".into()),
                     version: Some("2.1.319".into()),
+                    remote_control: None,
                 }),
                 Signal::PermissionMode("acceptEdits".into()),
             ]

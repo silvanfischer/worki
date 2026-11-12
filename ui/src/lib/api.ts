@@ -253,6 +253,7 @@ export interface AgentSettings {
   defaultProfile: string | null;
   /** Secret names per isolation scope (see `scopeKey`). */
   secrets: Record<string, string[]>;
+  remoteControl: boolean;
   /** Agent configs copied into every new environment, per isolation scope. */
 }
 
@@ -292,6 +293,9 @@ export interface BackgroundTask {
   description: string;
 }
 
+/** `off`, `connecting`, or the agent's own connection state; others are shown as they come. */
+export type RemoteControlState = "off" | "connecting" | "ready" | "connected" | "reconnecting" | (string & {});
+
 /** Status words the agent reports between tool calls; others are shown as they come. */
 export type AgentStatusKind = "requesting" | "thinking" | "writing" | "tool" | "compacting" | (string & {});
 
@@ -307,7 +311,7 @@ export type ChatEvent = (
   | { type: "toolCall"; id: string; name: string; input: unknown; parent: string | null }
   | { type: "toolResult"; id: string; output: string; isError: boolean; parent: string | null }
   | { type: "permission"; requestId: string; tool: string; input: unknown; questions: ChatQuestion[] }
-  | { type: "permissionResolved"; requestId: string; allowed: boolean }
+  | { type: "permissionResolved"; requestId: string; allowed: boolean; elsewhere: boolean }
   | { type: "notice"; text: string }
   | { type: "status"; status: AgentStatusKind; tool: string | null }
   | { type: "backgroundTasks"; tasks: BackgroundTask[] }
@@ -336,7 +340,8 @@ export type ChatAttachment =
 export type ChatSetting =
   | { kind: "model"; value: string }
   | { kind: "permissionMode"; value: string }
-  | { kind: "effort"; value: string };
+  | { kind: "effort"; value: string }
+  | { kind: "remoteControl"; value: boolean };
 
 export type PermissionAnswer =
   | { kind: "allow" }
@@ -379,6 +384,8 @@ export interface AgentState {
   costUsd: number | null;
   outputStyle: string | null;
   version: string | null;
+  /** Only reported by chat agents that can be continued on claude.ai/code. */
+  remoteControl: { state: RemoteControlState; url: string | null } | null;
 }
 
 export const api = {
@@ -440,6 +447,7 @@ export const api = {
   agentSettings: () => invoke<AgentSettings>("agent_settings"),
   saveAgentProfiles: (profiles: AgentProfile[], defaultProfile: string | null) =>
     invoke<void>("save_agent_profiles", { profiles, defaultProfile }),
+  setRemoteControl: (enabled: boolean) => invoke<void>("set_remote_control", { enabled }),
 
   listSessions: () => invoke<SessionInfo[]>("list_sessions"),
   /** Starts an agent as a chat; `attachSession` then streams one `ChatEvent` as JSON per line. */

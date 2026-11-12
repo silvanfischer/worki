@@ -23,6 +23,14 @@ pub fn session_env(session_id: &str, worktree: &Path) -> Vec<(String, String)> {
     ]
 }
 
+/// What only Claude Code is started with.
+#[derive(Debug, Clone, Default)]
+pub struct ClaudeOptions {
+    pub remote_control: bool,
+    /// The session's name, which Remote Control lists it by on claude.ai/code.
+    pub name: String,
+}
+
 /// An agent profile, or a plain shell for `None`. `exec` hands the PTY to the agent itself.
 /// `prompt` is handed to the agent as its first message.
 pub fn session_request(
@@ -31,12 +39,15 @@ pub fn session_request(
     env: Vec<(String, String)>,
     session: Option<SessionMeta>,
     confined: bool,
+    claude: &ClaudeOptions,
     prompt: Option<&str>,
 ) -> LaunchRequest {
     LaunchRequest {
         cwd: cwd.into(),
-        command: profile
-            .map(|p| agent_command(p, session.as_ref().map(|s| s.id.as_str()), confined, prompt)),
+        command: profile.map(|p| {
+            let id = session.as_ref().map(|s| s.id.as_str());
+            agent_command(p, id, confined, claude, prompt)
+        }),
         interactive: true,
         stdin: false,
         env,
@@ -70,6 +81,7 @@ pub fn chat_request(
     env: Vec<(String, String)>,
     session_id: &str,
     confined: bool,
+    name: &str,
 ) -> Option<(ChatAgent, LaunchRequest)> {
     let agent = ChatAgent::of(profile)?;
     let command = match agent {
@@ -83,10 +95,11 @@ pub fn chat_request(
                 String::new()
             };
             format!(
-                "{} exec {} -p --input-format stream-json --output-format stream-json --verbose \
+                "{} exec {}{} -p --input-format stream-json --output-format stream-json --verbose \
 --include-partial-messages --replay-user-messages --permission-prompt-tool stdio --append-system-prompt {}{sandbox} \"$@\"",
                 claude_conversation(session_id),
                 profile.command,
+                claude_name(name),
                 shell_quote(CHAT_PROMPT),
             )
         }
@@ -231,6 +244,7 @@ fn agent_command(
     profile: &AgentProfile,
     session_id: Option<&str>,
     confined: bool,
+    claude: &ClaudeOptions,
     prompt: Option<&str>,
 ) -> String {
     let prompt = prompt
@@ -238,7 +252,7 @@ fn agent_command(
         .map(|p| format!(" {}", shell_quote(p)))
         .unwrap_or_default();
     match profile.executable() {
-        Some("claude") => claude_command(profile, session_id, confined, &prompt),
+        Some("claude") => claude_command(profile, session_id, confined, claude, &prompt),
         Some("codex") => codex_command(profile, session_id, confined, &prompt),
         _ => format!("exec {}{prompt}", profile.command),
     }
@@ -255,17 +269,27 @@ fn claude_command(
     profile: &AgentProfile,
     session_id: Option<&str>,
     confined: bool,
+    claude: &ClaudeOptions,
     prompt: &str,
 ) -> String {
-    let hooks = shell_quote(&claude_settings(confined));
+    let hooks = shell_quote(&claude_settings(confined, claude.remote_control));
+    let name = claude_name(&claude.name);
     let (conversation, args) = match session_id {
         Some(id) => (format!("{} ", claude_conversation(id)), " \"$@\""),
         None => (String::new(), ""),
     };
     format!(
-        "export WORKI_TTY=\"$(tty)\"; {conversation}exec {} --settings {hooks}{args}{prompt}",
+        "export WORKI_TTY=\"$(tty)\"; {conversation}exec {}{name} --settings {hooks}{args}{prompt}",
         profile.command
     )
+}
+
+fn claude_name(name: &str) -> String {
+    if name.is_empty() {
+        String::new()
+    } else {
+        format!(" --name {}", shell_quote(name))
+    }
 }
 
 fn codex_command(
@@ -349,7 +373,7 @@ fn claude_saved(id: &str) -> String {
 /// where the PTY reader picks it up. Going through the terminal works the same for every
 /// isolation: as the user, as an agent user, inside a sandbox. Inside tmux (kept-alive remote
 /// sessions) the marker is wrapped so tmux passes it through.
-fn claude_settings(confined: bool) -> String {
+fn claude_settings(confined: bool, remote_control: bool) -> String {
     // `$s` holds the state; the marker is wrapped for tmux when the session runs inside it.
     let print = "[ -n \"$WORKI_TTY\" ] && { if [ -n \"$TMUX\" ]; then printf '\\033Ptmux;\\033\\033]777;worki;%s\\007\\033\\\\' \"$s\"; else printf '\\033]777;worki;%s\\007' \"$s\"; fi; } > \"$WORKI_TTY\" 2>/dev/null || true";
     let hook = |command: String| serde_json::json!({ "type": "command", "command": command });
@@ -379,6 +403,9 @@ fn claude_settings(confined: bool) -> String {
     }, "statusLine": { "type": "command", "command": STATUS_LINE }});
     if confined {
         settings["sandbox"] = serde_json::json!({ "enabled": false });
+    }
+    if remote_control {
+        settings["remoteControlAtStartup"] = true.into();
     }
     settings.to_string()
 }
@@ -491,7 +518,8 @@ mod tests {
 
     #[test]
     fn prompt_hook_reports_the_permission_mode() {
-        let settings: serde_json::Value = serde_json::from_str(&claude_settings(false)).unwrap();
+        let settings: serde_json::Value =
+            serde_json::from_str(&claude_settings(false, false)).unwrap();
         let command = settings["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"]
             .as_str()
             .unwrap();
@@ -567,6 +595,7 @@ mod tests {
             session_env("s1", Path::new("/w")),
             None,
             false,
+            &ClaudeOptions::default(),
             None,
         );
         assert_eq!(req.command.as_deref(), Some("exec aider --verbose"));
@@ -576,6 +605,7 @@ mod tests {
             vec![],
             None,
             false,
+            &ClaudeOptions::default(),
             Some("fix it's tests"),
         );
         let out = std::process::Command::new("/bin/sh")
@@ -591,7 +621,16 @@ mod tests {
         assert_eq!(out.stdout, b"--verbose|fix it's tests|");
         assert!(req.env.contains(&("WORKI_SESSION_ID".into(), "s1".into())));
         assert_eq!(
-            session_request(None, Path::new("/w"), vec![], None, false, None).command,
+            session_request(
+                None,
+                Path::new("/w"),
+                vec![],
+                None,
+                false,
+                &ClaudeOptions::default(),
+                None
+            )
+            .command,
             None
         );
     }
@@ -721,7 +760,13 @@ case "$1" in resume) echo "resume $2" ;; *) echo new ;; esac >> "$LOG"
             command: "codex".into(),
             install: None,
         };
-        let command = super::agent_command(&profile, Some("s1"), confined, None);
+        let command = super::agent_command(
+            &profile,
+            Some("s1"),
+            confined,
+            &ClaudeOptions::default(),
+            None,
+        );
         let ok = std::process::Command::new("/bin/sh")
             .args(["-c", &command])
             .env("PATH", format!("{}:/usr/bin:/bin", home.display()))
@@ -766,10 +811,12 @@ case "$1" in resume) echo "resume $2" ;; *) echo new ;; esac >> "$LOG"
             command: "codex --yolo".into(),
             install: None,
         };
-        let (agent, req) = chat_request(&profile, Path::new("/w"), vec![], "s1", false).unwrap();
+        let (agent, req) =
+            chat_request(&profile, Path::new("/w"), vec![], "s1", false, "").unwrap();
         assert_eq!(agent, ChatAgent::Codex);
         assert_eq!(req.command.as_deref(), Some("exec codex app-server"));
-        let (_, confined) = chat_request(&profile, Path::new("/w"), vec![], "s1", true).unwrap();
+        let (_, confined) =
+            chat_request(&profile, Path::new("/w"), vec![], "s1", true, "").unwrap();
         assert!(confined
             .command
             .unwrap()
@@ -813,13 +860,16 @@ case "$1" in resume) echo "resume $2" ;; *) echo new ;; esac >> "$LOG"
             command: command.into(),
             install: None,
         };
-        assert!(chat_request(&profile("aider"), Path::new("/w"), vec![], "abc", false).is_none());
+        assert!(
+            chat_request(&profile("aider"), Path::new("/w"), vec![], "abc", false, "").is_none()
+        );
         let (agent, req) = chat_request(
             &profile("claude --model opus"),
             Path::new("/w"),
             vec![],
             "abc",
             true,
+            "acme/w",
         )
         .unwrap();
         assert_eq!(agent, ChatAgent::Claude);
@@ -838,7 +888,7 @@ case "$1" in resume) echo "resume $2" ;; *) echo new ;; esac >> "$LOG"
             .unwrap();
         assert_eq!(
             String::from_utf8(out.stdout).unwrap(),
-            "--model|opus|-p|--input-format|stream-json|--output-format|stream-json|--verbose|\
+            "--model|opus|--name|acme/w|-p|--input-format|stream-json|--output-format|stream-json|--verbose|\
 --include-partial-messages|--replay-user-messages|--permission-prompt-tool|stdio|--append-system-prompt|PROMPT|\
 --settings|{\"sandbox\":{\"enabled\":false}}|--session-id|abc|"
                 .replace("PROMPT", CHAT_PROMPT)
@@ -858,9 +908,17 @@ case "$1" in resume) echo "resume $2" ;; *) echo new ;; esac >> "$LOG"
             title: "C".into(),
             profile_id: None,
         };
-        let command = session_request(Some(&p), Path::new("/w"), vec![], Some(meta), false, None)
-            .command
-            .unwrap();
+        let command = session_request(
+            Some(&p),
+            Path::new("/w"),
+            vec![],
+            Some(meta),
+            false,
+            &ClaudeOptions::default(),
+            None,
+        )
+        .command
+        .unwrap();
         let run = |home: &Path| {
             let out = std::process::Command::new("/bin/sh")
                 .args([
@@ -889,10 +947,27 @@ case "$1" in resume) echo "resume $2" ;; *) echo new ;; esac >> "$LOG"
             command: "claude".into(),
             install: None,
         };
-        let command = session_request(Some(&p), Path::new("/w"), vec![], None, false, None)
-            .command
-            .unwrap();
+        let command = session_request(
+            Some(&p),
+            Path::new("/w"),
+            vec![],
+            None,
+            false,
+            &ClaudeOptions::default(),
+            None,
+        )
+        .command
+        .unwrap();
         assert!(command.starts_with("export WORKI_TTY=\"$(tty)\"; exec claude --settings '"));
+        let named = ClaudeOptions {
+            remote_control: false,
+            name: "acme/w".into(),
+        };
+        let named = session_request(Some(&p), Path::new("/w"), vec![], None, false, &named, None);
+        assert!(named
+            .command
+            .unwrap()
+            .contains("exec claude --name 'acme/w' --settings '"));
 
         let out = std::process::Command::new("/bin/sh")
             .args([
@@ -904,8 +979,12 @@ case "$1" in resume) echo "resume $2" ;; *) echo new ;; esac >> "$LOG"
         let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
         assert!(json.get("sandbox").is_none());
         let confined: serde_json::Value =
-            serde_json::from_str(&super::claude_settings(true)).unwrap();
+            serde_json::from_str(&super::claude_settings(true, false)).unwrap();
         assert_eq!(confined["sandbox"]["enabled"], false);
+        assert!(json.get("remoteControlAtStartup").is_none());
+        let remote: serde_json::Value =
+            serde_json::from_str(&super::claude_settings(false, true)).unwrap();
+        assert_eq!(remote["remoteControlAtStartup"], true);
         let hook = json["hooks"]["Stop"][0]["hooks"][0]["command"]
             .as_str()
             .unwrap();
@@ -932,7 +1011,7 @@ case "$1" in resume) echo "resume $2" ;; *) echo new ;; esac >> "$LOG"
     fn tool_calls_mark_working_except_questions() {
         use std::io::Write;
         let settings: serde_json::Value =
-            serde_json::from_str(&super::claude_settings(false)).unwrap();
+            serde_json::from_str(&super::claude_settings(false, false)).unwrap();
         let hooks = &settings["hooks"];
         assert!(hooks["PermissionRequest"].is_array() && hooks["PostToolUse"].is_array());
         let hook = hooks["PreToolUse"][0]["hooks"][0]["command"]

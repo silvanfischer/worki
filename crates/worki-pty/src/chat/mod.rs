@@ -80,9 +80,12 @@ pub enum ChatEvent {
         questions: Vec<Question>,
     },
     /// The permission request was answered (here or by the agent giving up on it).
+    /// `elsewhere`: it was withdrawn while the chat is also open elsewhere, where it may have
+    /// been allowed, so `allowed` doesn't say.
     PermissionResolved {
         request_id: String,
         allowed: bool,
+        elsewhere: bool,
     },
     /// Something the agent reports outside the conversation, such as an interruption.
     Notice {
@@ -218,6 +221,7 @@ pub enum ChatSetting {
     Model(String),
     PermissionMode(String),
     Effort(String),
+    RemoteControl(bool),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

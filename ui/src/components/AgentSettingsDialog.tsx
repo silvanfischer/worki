@@ -109,6 +109,27 @@ export function AgentSettingsDialog({ settings, onClose }: { settings: AgentSett
       </Button>
 
       {incomplete && <p className="text-xs text-faint">Agents need a name and a command before they're saved.</p>}
+
+      <Checkbox
+        checked={settings.remoteControl}
+        onChange={async (on) => {
+          try {
+            await api.setRemoteControl(on);
+            setError(null);
+            await qc.invalidateQueries({ queryKey: keys.agentSettings });
+          } catch (e) {
+            setError(errorMessage(e));
+          }
+        }}
+      >
+        <span className="text-[13px]">Remote Control</span>
+        <span className="block text-xs text-faint">
+          Starts Claude Code sessions with Remote Control, so you can continue them from claude.ai/code or the Claude
+          app. Needs a claude.ai login where the agent runs; Docker Sandboxes also need{" "}
+          <span className="font-mono">sbx settings set claude.remoteControl true</span>. Applies to sessions started
+          from now on; a chat can also turn it on below its message box.
+        </span>
+      </Checkbox>
       <ErrorText>{error}</ErrorText>
     </Dialog>
   );

@@ -343,6 +343,7 @@ impl CodexProtocol {
                     Some(_) => vec![ChatEvent::PermissionResolved {
                         request_id: id,
                         allowed: false,
+                        elsewhere: false,
                     }],
                     None => Vec::new(),
                 }
@@ -632,6 +633,7 @@ impl ChatProtocol for CodexProtocol {
                 }
                 self.approval_policy = Some(mode.clone());
             }
+            ChatSetting::RemoteControl(_) => return None,
         }
         self.update_state();
         let session = self.session();
@@ -1184,7 +1186,8 @@ mod tests {
             ),
             vec![ChatEvent::PermissionResolved {
                 request_id: "3".into(),
-                allowed: false
+                allowed: false,
+                elsewhere: false,
             }]
         );
     }

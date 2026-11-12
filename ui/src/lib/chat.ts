@@ -34,7 +34,8 @@ export type ChatItem =
       tool: string;
       input: Record<string, unknown>;
       questions: ChatQuestion[];
-      state: "open" | "allowed" | "denied";
+      /** `elsewhere`: answered on another device through Remote Control, or withdrawn. */
+      state: "open" | "allowed" | "denied" | "elsewhere";
     }
   | { kind: "notice"; key: string; text: string; tone: "info" | "error" };
 
@@ -131,7 +132,8 @@ export class ChatModel {
         break;
       case "permissionResolved": {
         const item = this.byKey.get(event.requestId);
-        if (item?.kind === "permission") this.replace({ ...item, state: event.allowed ? "allowed" : "denied" });
+        if (item?.kind === "permission")
+          this.replace({ ...item, state: event.elsewhere ? "elsewhere" : event.allowed ? "allowed" : "denied" });
         break;
       }
       case "notice":

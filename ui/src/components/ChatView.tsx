@@ -12,6 +12,7 @@ import {
   MessageCircleQuestion,
   Paperclip,
   ShieldQuestion,
+  Smartphone,
   Square,
   SquareTerminal,
   X,
@@ -43,6 +44,7 @@ import {
 import { type Chat, type ChatItem, useChat } from "../lib/chat";
 import { useAsyncAction } from "../lib/useAsyncAction";
 import { PERMISSION_MODES } from "./AgentStatus";
+import { CopyContinue, RemoteControl } from "./SessionActions";
 import { ChatVisual, VISUAL_LANGUAGES } from "./ChatVisual";
 import { Button, ErrorText, Textarea } from "./ui";
 
@@ -109,12 +111,8 @@ const Item = memo(function Item({ item, session }: { item: ChatItem; session: Se
         <PermissionCard request={item} session={session} />
       ) : (
         <div className="flex items-center gap-1.5 fs-chat-xs text-faint">
-          {item.state === "allowed" ? <Check size={11} /> : <X size={11} />}
-          {item.questions.length > 0
-            ? item.state === "allowed"
-              ? "Answered"
-              : "Not answered"
-            : `${item.state === "allowed" ? "Allowed" : "Denied"} ${item.tool}`}
+          {item.state === "elsewhere" ? <Smartphone size={11} /> : item.state === "allowed" ? <Check size={11} /> : <X size={11} />}
+          {resolvedLabel(item)}
         </div>
       );
     case "notice":
@@ -830,7 +828,13 @@ function Settings({ session, chat, onError }: { session: SessionInfo; chat: Chat
     api.changeChatSetting(session.id, setting).catch((e) => onError(errorMessage(e)));
   };
   return (
-    <div className="flex flex-wrap items-center justify-end gap-1">
+    <div className="flex flex-wrap items-center gap-1">
+      <CopyContinue
+        session={session}
+        className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted hover:bg-hover hover:text-fg"
+      />
+      {session.agent.remoteControl && <RemoteControl session={session} remote={session.agent.remoteControl} />}
+      <span className="flex-1" />
       <SettingSelect
         title="Model"
         shown={current ? label(current) : (settings.model ?? "Model")}
@@ -884,6 +888,13 @@ function Settings({ session, chat, onError }: { session: SessionInfo; chat: Chat
 }
 
 /** A select as wide as its current label, which a native select can't be: it's sized to its longest option. */
+function resolvedLabel(item: Permission) {
+  if (item.state === "elsewhere") return "Answered elsewhere";
+  const allowed = item.state === "allowed";
+  if (item.questions.length > 0) return allowed ? "Answered" : "Not answered";
+  return `${allowed ? "Allowed" : "Denied"} ${item.tool}`;
+}
+
 function SettingSelect({ shown, title, ...props }: SelectHTMLAttributes<HTMLSelectElement> & { shown: string }) {
   return (
     <label

@@ -78,6 +78,9 @@ export function TerminalView({ sessionId, active }: { sessionId: string; active:
       scrollback: 10_000,
       theme: initial.current.dark ? darkTheme : lightTheme,
       macOptionClickForcesSelection: true,
+      // Links a program marks itself (OSC 8), such as login links; xterm would ask and then
+      // call window.open, which opens nothing in the app.
+      linkHandler: { activate: (_e, uri) => /^https?:\/\//i.test(uri) && openUrl(uri) },
     });
     termRef.current = term;
     const fit = new FitAddon();

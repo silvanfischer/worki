@@ -427,6 +427,15 @@ pub fn save_agent_profiles(
         .map_err(err)
 }
 
+/// Starts new Claude Code sessions with Remote Control, or without.
+#[tauri::command]
+pub fn set_remote_control(state: State<'_, AppState>, enabled: bool) -> CmdResult<()> {
+    state
+        .projects
+        .update_agent_settings(|s| s.remote_control = enabled)
+        .map_err(err)
+}
+
 /// Puts text on the clipboard natively, for writes that don't come from a click or key press
 /// (the web clipboard refuses those), such as a terminal program copying through OSC 52.
 #[tauri::command]

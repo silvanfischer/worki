@@ -157,6 +157,7 @@ pub fn run() {
             commands::remove_worktree,
             commands::agent_settings,
             commands::save_agent_profiles,
+            commands::set_remote_control,
             isolation::isolation_settings,
             isolation::save_isolation_settings,
             isolation::isolation_doctor,

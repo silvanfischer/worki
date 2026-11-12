@@ -110,7 +110,16 @@ const sessions = [
     kind: "chat",
     attention: scene === "hero" ? null : "Allow Bash?",
     createdAt: now + 1,
-    agent: { model: "Opus 5.5", effort: "high", permissionMode: "default", contextUsed: 34, contextSize: 200_000, costUsd: 1.84, version: "2.1.319" },
+    agent: {
+      model: "Opus 5.5",
+      effort: "high",
+      permissionMode: "default",
+      contextUsed: 34,
+      contextSize: 200_000,
+      costUsd: 1.84,
+      version: "2.1.319",
+      remoteControl: { state: "off", url: null },
+    },
   }),
 ];
 
@@ -331,6 +340,7 @@ function handle(cmd: string, args: Record<string, any>): unknown {
         ],
         defaultProfile: "claude",
         secrets: {},
+        remoteControl: false,
       };
     case "isolation_settings":
       return { default: isolation, stopOnQuit: false };
@@ -474,6 +484,20 @@ function handle(cmd: string, args: Record<string, any>): unknown {
       return null;
     }
     case "change_chat_setting": {
+      if (args.setting.kind === "remoteControl") {
+        const s = sessions.find((s) => s.id === args.id)!;
+        const report = (remoteControl: object) =>
+          import("@tauri-apps/api/event").then(({ emit }) => {
+            s.agent = { ...s.agent, remoteControl } as typeof s.agent;
+            emit("session-changed", s);
+          });
+        if (!args.setting.value) report({ state: "off", url: null });
+        else {
+          report({ state: "connecting", url: null });
+          setTimeout(() => report({ state: "connected", url: "https://claude.ai/code/session_demo" }), 1200);
+        }
+        return null;
+      }
       const resolved: Record<string, string> = { default: "claude-opus-5-5", opus: "claude-opus-5-5", sonnet: "claude-sonnet-5-5", haiku: "claude-haiku-5-5" };
       chatSettings = {
         ...chatSettings,
