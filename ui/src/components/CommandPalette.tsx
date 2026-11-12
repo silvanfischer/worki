@@ -1,6 +1,6 @@
 import { useQueries } from "@tanstack/react-query";
 import clsx from "clsx";
-import { Bot, GitBranch, GitBranchPlus, House, Moon, PanelRight, Search, Settings, SquareTerminal } from "lucide-react";
+import { Bot, GitBranch, GitBranchPlus, GitCompareArrows, House, Moon, Search, Settings, SquareTerminal } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 
 import { api, worktreeLabel } from "../lib/api";
@@ -51,7 +51,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
         icon: <SquareTerminal size={14} />,
         run: () => runCommand({ kind: "newSession", profileId: null }),
       });
-      out.push({ id: "changes", label: "Toggle changes panel", detail: "⌘J", icon: <PanelRight size={14} />, run: toggleChanges });
+      out.push({ id: "changes", label: "Toggle changes panel", detail: "⌘J", icon: <GitCompareArrows size={14} />, run: toggleChanges });
       out.push({ id: "terminal", label: "Toggle terminal", detail: "⌃`", icon: <SquareTerminal size={14} />, run: toggleTerminal });
     }
     if (selectedProjectId) {

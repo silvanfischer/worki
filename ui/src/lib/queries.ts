@@ -1,4 +1,4 @@
-import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { open } from "@tauri-apps/plugin-dialog";
 
 import { api, type Isolation, type Project, type Remote, type SessionInfo } from "./api";
@@ -54,16 +54,14 @@ export const useBranchLog = (worktreePath: string, base: string | null) =>
     refetchInterval: 10_000,
   });
 
-export const pullRequestQuery = (worktreePath: string, enabled: boolean) =>
-  queryOptions({
+export const usePullRequest = (worktreePath: string, enabled: boolean) =>
+  useQuery({
     queryKey: keys.pullRequest(worktreePath),
     queryFn: () => api.pullRequest(worktreePath),
     enabled,
     refetchInterval: 60_000,
     retry: false,
   });
-
-export const usePullRequest = (worktreePath: string, enabled: boolean) => useQuery(pullRequestQuery(worktreePath, enabled));
 
 export const useEnvironmentTemplates = (isolation: Isolation) =>
   useQuery({
@@ -133,14 +131,12 @@ export const useAgentSettings = () => useQuery({ queryKey: keys.agentSettings, q
 
 export const useProjects = () => useQuery({ queryKey: keys.projects, queryFn: api.listProjects });
 
-export const worktreesQuery = (projectId: string) =>
-  queryOptions({
+export const useWorktrees = (projectId: string) =>
+  useQuery({
     queryKey: keys.worktrees(projectId),
     queryFn: () => api.listWorktrees(projectId),
     refetchInterval: 15_000,
   });
-
-export const useWorktrees = (projectId: string) => useQuery(worktreesQuery(projectId));
 
 export const useWorktreeStatus = (path: string | null, refetchInterval = 15_000) =>
   useQuery({

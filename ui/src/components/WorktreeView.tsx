@@ -1,19 +1,20 @@
 import clsx from "clsx";
 import { type KeyboardEvent, useEffect, useRef, useState } from "react";
-import { ArrowDown, ArrowUp, Coins, GitBranch, MoreHorizontal, PanelRight, Send, SquareTerminal } from "lucide-react";
+import { Coins, GitBranch, GitCompareArrows, MoreHorizontal, Send, SquareTerminal, X } from "lucide-react";
 
 import { type ChangedFile, errorMessage, type Project, type Worktree, worktreeLabel } from "../lib/api";
 import { useBranchChanges, useCompareBase, useSessions, useWorktreeStatus } from "../lib/queries";
 import { reviewPrompt, reviewTarget, sendReview, useReview, useWorktreeComments } from "../lib/review";
+import { usePlayful } from "../lib/playful";
 import { useUi } from "../lib/store";
 import { formatTokens, totalUsage, usageDetails } from "../lib/usage";
-import { BranchChip, BranchCommits, BranchStatus, CommitBox, PrSection, Section } from "./BranchPanel";
+import { BranchCommits, BranchStatus, CommitBox, PrSection, Section } from "./BranchPanel";
 import { DiffView } from "./DiffView";
 import { OpenInMenu } from "./OpenInMenu";
 import { ResizeHandle } from "./ResizeHandle";
 import { SessionArea } from "./SessionArea";
 import { TerminalPanel } from "./TerminalPanel";
-import { Button, DiffStat, ErrorText, IconButton, Menu, Select } from "./ui";
+import { Button, DiffStat, ErrorText, Hint, IconButton, Menu, Select } from "./ui";
 import { WorktreeIsolationBadge } from "./WorktreeIsolation";
 import { worktreeActions } from "./worktreeActions";
 
@@ -32,6 +33,7 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
   const base = useCompareBase(worktree.path, worktree.base ?? project.defaultBase);
   const showCommits = useUi((s) => s.showCommits);
   const showPullRequests = useUi((s) => s.showPullRequests);
+  const playful = usePlayful();
   const hasBranchTab = !!base;
   const onBase = !!worktree.branch && base?.replace(/^origin\//, "") === worktree.branch;
   const tab = scope === "branch" && hasBranchTab ? "branch" : "uncommitted";
@@ -43,30 +45,14 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
   return (
     <div className="flex h-full flex-col">
       <header data-tauri-drag-region className="flex h-13 shrink-0 items-center gap-3.5 border-b border-line bg-bar px-5">
-        <GitBranch size={15} className="text-muted" />
+        <Hint title={worktree.branch ? `Branch ${worktree.branch}` : "Detached HEAD: no branch checked out"} className="text-muted">
+          <GitBranch size={15} />
+        </Hint>
         <div data-tauri-drag-region className="flex min-w-0 flex-1 items-baseline gap-2">
           <h1 className="truncate text-[14px] font-semibold">{worktreeLabel(worktree)}</h1>
           <span className="truncate text-xs text-faint">{project.name}</span>
         </div>
-        {status && (status.ahead > 0 || status.behind > 0) && (
-          <span className="flex items-center gap-1.5 font-mono text-xs text-muted" title={`vs ${status.upstream}`}>
-            <ArrowUp size={12} />
-            {status.ahead}
-            <ArrowDown size={12} />
-            {status.behind}
-          </span>
-        )}
         <WorktreeUsage worktreePath={worktree.path} />
-        {base && (showCommits || showPullRequests) && (
-          <BranchChip
-            worktree={worktree}
-            base={base}
-            onOpen={() => {
-              setScope("branch");
-              if (!showChanges) toggleChanges();
-            }}
-          />
-        )}
         <WorktreeIsolationBadge project={project} worktree={worktree} />
         <OpenInMenu path={worktree.path} />
         <Menu
@@ -89,7 +75,7 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
           onClick={toggleChanges}
           className={clsx("relative", showChanges && "text-fg")}
         >
-          <PanelRight size={14} />
+          <GitCompareArrows size={14} />
           {pending > 0 && (
             <span className="absolute -top-0.5 -right-0.5 flex size-3.5 items-center justify-center rounded-full bg-accent text-[9px] font-semibold text-accent-fg">
               {pending}
@@ -147,6 +133,9 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
                     )}
                   </button>
                 ))}
+              <IconButton label="Close (⌘J)" onClick={toggleChanges} className="ml-auto">
+                <X size={14} />
+              </IconButton>
             </div>
 
             <div className="selectable min-h-0 flex-1 overflow-y-auto">
@@ -155,7 +144,7 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
                   <FileList
                     files={status?.changedFiles}
                     error={error}
-                    empty="No uncommitted changes."
+                    empty={playful ? "✨ Clean as a whistle. No uncommitted changes." : "No uncommitted changes."}
                     excluded={showCommits ? excluded : undefined}
                     onExclude={setExcluded}
                     comments={comments}

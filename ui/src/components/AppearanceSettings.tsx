@@ -1,15 +1,20 @@
 import clsx from "clsx";
-import { Monitor, Moon, Sun } from "lucide-react";
+import { Coffee, Monitor, Moon, PartyPopper, Sun } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { FONT_SIZES, type Theme, useUi } from "../lib/store";
 import { Group } from "./GeneralSettings";
 import { Field, Select } from "./ui";
 
-const themes: { id: Theme; label: string; icon: ReactNode }[] = [
-  { id: "system", label: "System", icon: <Monitor size={13} /> },
-  { id: "light", label: "Light", icon: <Sun size={13} /> },
-  { id: "dark", label: "Dark", icon: <Moon size={13} /> },
+const themes: Choice<Theme>[] = [
+  { value: "system", label: "System", icon: <Monitor size={13} /> },
+  { value: "light", label: "Light", icon: <Sun size={13} /> },
+  { value: "dark", label: "Dark", icon: <Moon size={13} /> },
+];
+
+const personalities: Choice<boolean>[] = [
+  { value: false, label: "Calm", icon: <Coffee size={13} /> },
+  { value: true, label: "Playful", icon: <PartyPopper size={13} /> },
 ];
 
 export function AppearanceSettings() {
@@ -19,21 +24,14 @@ export function AppearanceSettings() {
       <h2 className="px-6 pt-5 pb-3 text-[15px] font-semibold">Appearance</h2>
       <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-6 pb-6">
         <Group title="Theme">
-          <div className="flex w-fit rounded-md border border-line p-0.5">
-            {themes.map((t) => (
-              <button
-                key={t.id}
-                onClick={() => ui.setTheme(t.id)}
-                className={clsx(
-                  "flex h-7 items-center gap-1.5 rounded px-3 text-[13px]",
-                  ui.theme === t.id ? "bg-selected font-medium text-fg" : "text-muted hover:text-fg",
-                )}
-              >
-                {t.icon}
-                {t.label}
-              </button>
-            ))}
-          </div>
+          <Segmented choices={themes} value={ui.theme} onChange={ui.setTheme} />
+        </Group>
+
+        <Group title="Personality">
+          <Segmented choices={personalities} value={ui.playful} onChange={ui.setPlayful} />
+          <p className="text-xs text-muted">
+            Playful gives each agent a name and a colour and adds a few friendly touches to empty views.
+          </p>
         </Group>
 
         <Group title="Font sizes">
@@ -59,5 +57,31 @@ function FontSizeField({ label, value, onChange }: { label: string; value: numbe
         ))}
       </Select>
     </Field>
+  );
+}
+
+interface Choice<T> {
+  value: T;
+  label: string;
+  icon: ReactNode;
+}
+
+function Segmented<T>({ choices, value, onChange }: { choices: Choice<T>[]; value: T; onChange: (value: T) => void }) {
+  return (
+    <div className="flex w-fit rounded-md border border-line p-0.5">
+      {choices.map((c) => (
+        <button
+          key={c.label}
+          onClick={() => onChange(c.value)}
+          className={clsx(
+            "flex h-7 items-center gap-1.5 rounded px-3 text-[13px]",
+            value === c.value ? "bg-selected font-medium text-fg" : "text-muted hover:text-fg",
+          )}
+        >
+          {c.icon}
+          {c.label}
+        </button>
+      ))}
+    </div>
   );
 }

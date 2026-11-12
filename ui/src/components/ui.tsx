@@ -1,4 +1,5 @@
 import clsx from "clsx";
+import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import {
   type ButtonHTMLAttributes,
@@ -232,26 +233,83 @@ export function Menu({ trigger, items }: { trigger: (open: () => void) => ReactN
       {trigger(() => setOpen((o) => !o))}
       {isOpen && (
         <div data-overlay className="absolute right-0 z-40 mt-1 min-w-48 rounded-lg border border-line bg-elevated p-1 shadow-xl">
-          {items.map((item) => (
-            <button
-              key={item.label}
-              onClick={(e) => {
-                e.stopPropagation();
-                setOpen(false);
-                item.onSelect();
-              }}
-              className={clsx(
-                "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] hover:bg-accent hover:text-accent-fg",
-                item.danger && "text-removed",
-              )}
-            >
-              <span className="flex w-4 justify-center">{item.icon}</span>
-              {item.label}
-            </button>
-          ))}
+          <MenuItems items={items} onDone={() => setOpen(false)} />
         </div>
       )}
     </div>
+  );
+}
+
+function MenuItems({ items, onDone }: { items: MenuItem[]; onDone: () => void }) {
+  return items.map((item) => (
+    <button
+      key={item.label}
+      onClick={(e) => {
+        e.stopPropagation();
+        onDone();
+        item.onSelect();
+      }}
+      className={clsx(
+        "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] hover:bg-accent hover:text-accent-fg",
+        item.danger && "text-removed",
+      )}
+    >
+      <span className="flex w-4 justify-center">{item.icon}</span>
+      {item.label}
+    </button>
+  ));
+}
+
+/** A menu at the pointer, for right-clicks. */
+export function ContextMenu({ at, items, onClose }: { at: { x: number; y: number }; items: MenuItem[]; onClose: () => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState(at);
+  const close = useRef(onClose);
+  close.current = onClose;
+
+  useLayoutEffect(() => {
+    const r = ref.current?.getBoundingClientRect();
+    if (!r) return;
+    setPos({ x: Math.min(at.x, window.innerWidth - r.width - 4), y: Math.min(at.y, window.innerHeight - r.height - 4) });
+  }, [at]);
+
+  useEffect(() => {
+    const dismiss = () => close.current();
+    const outside = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && dismiss();
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && dismiss();
+    window.addEventListener("mousedown", outside);
+    window.addEventListener("keydown", esc);
+    window.addEventListener("blur", dismiss);
+    window.addEventListener("scroll", dismiss, true);
+    return () => {
+      window.removeEventListener("mousedown", outside);
+      window.removeEventListener("keydown", esc);
+      window.removeEventListener("blur", dismiss);
+      window.removeEventListener("scroll", dismiss, true);
+    };
+  }, []);
+
+  return createPortal(
+    <div
+      ref={ref}
+      data-overlay
+      onClick={(e) => e.stopPropagation()}
+      onContextMenu={(e) => e.preventDefault()}
+      className="fixed z-50 min-w-48 rounded-lg border border-line bg-elevated p-1 shadow-xl"
+      style={{ left: pos.x, top: pos.y }}
+    >
+      <MenuItems items={items} onDone={onClose} />
+    </div>,
+    document.body,
+  );
+}
+
+/** An icon with a hover hint saying what it means. */
+export function Hint({ title, className, children }: { title: string; className?: string; children: ReactNode }) {
+  return (
+    <span className={clsx("flex shrink-0", className)} title={title}>
+      {children}
+    </span>
   );
 }
 

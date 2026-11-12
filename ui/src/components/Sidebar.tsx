@@ -11,7 +11,7 @@ import {
   GitBranch,
   House,
   LoaderCircle,
-  MoreHorizontal,
+  Pencil,
   Plus,
   RefreshCw,
   Server,
@@ -21,16 +21,18 @@ import {
 import { useState } from "react";
 
 import { api, errorMessage, type Project, type PullRequest, type Worktree, worktreeLabel } from "../lib/api";
-import { checksFailed, checksKey, useFailedChecks } from "../lib/pullRequests";
+import { identityOf, isAgent, useJustChanged, usePlayful } from "../lib/playful";
 import { useWorktreeComments } from "../lib/review";
 import { keys, useAddProject, useProjects, usePullRequest, useSessions, useWorktrees, useWorktreeStatus } from "../lib/queries";
 import { useUi } from "../lib/store";
+import { plural } from "../lib/text";
 import { toast } from "../lib/toast";
 import { installUpdate, useUpdates } from "../lib/updates";
 import { ActivityDot, summarize } from "./ActivityDot";
 import { PrStateIcon } from "./BranchPanel";
+import { AgentDot } from "./Playful";
 import { ResizeHandle } from "./ResizeHandle";
-import { DiffStat, ErrorText, IconButton, Menu } from "./ui";
+import { ContextMenu, ErrorText, Hint, IconButton, Menu } from "./ui";
 import { worktreeActions } from "./worktreeActions";
 
 export function Sidebar() {
@@ -40,7 +42,7 @@ export function Sidebar() {
   const width = useUi((s) => s.panelWidths.sidebar);
 
   return (
-    <aside className="fs-sidebar relative flex h-full shrink-0 flex-col" style={{ width }}>
+    <aside className="fs-sidebar relative flex h-full shrink-0 flex-col bg-sidebar" style={{ width }}>
       <ResizeHandle panel="sidebar" edge="right" />
       <div data-tauri-drag-region className="h-13 shrink-0" />
       <div className="flex items-center justify-between px-3 pb-1">
@@ -121,9 +123,13 @@ function ProjectNode({ project }: { project: Project }) {
         <button className="flex min-w-0 flex-1 items-center gap-1" onClick={() => toggle(project.id)}>
           <ChevronRight size={13} className={clsx("shrink-0 text-faint transition-transform", !collapsed && "rotate-90")} />
           {project.remote ? (
-            <Server size={14} className="shrink-0 text-muted" />
+            <Hint title={`Remote repository on ${project.remote.host}`} className="text-muted">
+              <Server size={14} />
+            </Hint>
           ) : (
-            <FolderGit2 size={14} className="shrink-0 text-muted" />
+            <Hint title="Repository on this Mac" className="text-muted">
+              <FolderGit2 size={14} />
+            </Hint>
           )}
           <span className="truncate font-semibold" title={project.remote ? `${project.remote.host}:${project.repoPath}` : project.repoPath}>
             {project.name}
@@ -164,16 +170,20 @@ function WorktreeRow({ project, worktree }: { project: Project; worktree: Worktr
   const selected = useUi((s) => s.selectedWorktreePath === worktree.path);
   const select = useUi((s) => s.select);
   const openDialog = useUi((s) => s.openDialog);
+  const showPullRequests = useUi((s) => s.showPullRequests);
+  const playful = usePlayful();
   const qc = useQueryClient();
   const { data: status } = useWorktreeStatus(worktree.path, 30_000);
   const { data: sessions = [] } = useSessions();
+  const { data: pr } = usePullRequest(worktree.path, showPullRequests && !worktree.isMain && !!worktree.branch);
+  const comments = useWorktreeComments(worktree.path).length;
+  const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null);
+
   const dirty = status?.changedFiles.length ?? 0;
   const mine = sessions.filter((s) => s.worktreePath === worktree.path);
   const activity = summarize(mine);
   const waitingOn = mine.find((s) => s.state.kind === "running" && s.activity === "waiting");
-  const comments = useWorktreeComments(worktree.path).length;
-  const showPullRequests = useUi((s) => s.showPullRequests);
-  const { data: pr } = usePullRequest(worktree.path, showPullRequests && !worktree.isMain && !!worktree.branch);
+  const agents = playful ? mine.filter((s) => isAgent(s) && s.state.kind === "running") : [];
 
   return (
     <div
@@ -181,59 +191,78 @@ function WorktreeRow({ project, worktree }: { project: Project; worktree: Worktr
         select(project.id, worktree.path);
         qc.invalidateQueries({ queryKey: keys.status(worktree.path) });
       }}
-      className={clsx(
-        "group flex h-7 items-center gap-2 rounded-md pr-1 pl-7",
-        selected ? "bg-selected" : "hover:bg-hover",
-      )}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        setMenuAt({ x: e.clientX, y: e.clientY });
+      }}
+      title="Right-click for worktree actions"
+      className={clsx("flex h-7 items-center gap-2 rounded-md pr-1 pl-7", selected ? "bg-selected" : "hover:bg-hover")}
     >
-      {worktree.isMain ? (
-        <House size={13} className="shrink-0 text-faint" />
-      ) : pr ? (
-        <span className="flex shrink-0" title={`Pull request #${pr.number} ${prStateLabel(pr)}: ${pr.title}`}>
-          <PrStateIcon pr={pr} size={13} className="" />
-        </span>
-      ) : (
-        <GitBranch size={13} className="shrink-0 text-faint" />
-      )}
+      <WorktreeIcon worktree={worktree} pr={pr} />
       <span className={clsx("min-w-0 flex-1 truncate", worktree.prunable && "text-faint line-through")}>
         {worktreeLabel(worktree)}
       </span>
-      {pr && checksFailed(pr) && (
-        <CircleX size={12} className="shrink-0 text-removed">
-          <title>{`${pr.checksFailed} check${pr.checksFailed === 1 ? "" : "s"} failed on #${pr.number}`}</title>
-        </CircleX>
+      {dirty > 0 && (
+        <Hint title={plural(dirty, "uncommitted file")} className="text-warn">
+          <Pencil size={11} />
+        </Hint>
       )}
-      {activity && activity !== "exited" && (
-        <ActivityDot
-          state={activity}
-          title={waitingOn ? `${waitingOn.title} is waiting${waitingOn.attention ? `: ${waitingOn.attention}` : ""}` : undefined}
-        />
+      {pr && checksFailed(pr) && (
+        <Hint title={`${plural(pr.checksFailed, "check")} failed on #${pr.number}`} className="text-removed">
+          <CircleX size={12} />
+        </Hint>
+      )}
+      {agents.length > 0 ? (
+        <span className="flex shrink-0 gap-0.5">
+          {agents.slice(0, 3).map((s) => (
+            <AgentDot key={s.id} session={s} />
+          ))}
+        </span>
+      ) : (
+        activity &&
+        activity !== "exited" && (
+          <ActivityDot
+            state={activity}
+            title={waitingOn ? `${waitingOn.title} is waiting${waitingOn.attention ? `: ${waitingOn.attention}` : ""}` : undefined}
+          />
+        )
       )}
       {comments > 0 && (
         <span
-          className="flex items-center gap-0.5 fs-sidebar-xs text-accent group-hover:hidden"
-          title={`${comments} review comment${comments === 1 ? "" : "s"} not sent yet`}
+          className="flex items-center gap-0.5 fs-sidebar-xs text-accent"
+          title={`${plural(comments, "review comment")} not sent yet`}
         >
           <MessageSquare size={11} />
           {comments}
         </span>
       )}
-      {status && (status.insertions > 0 || status.deletions > 0) ? (
-        <DiffStat insertions={status.insertions} deletions={status.deletions} className="group-hover:hidden" />
-      ) : dirty > 0 ? (
-        <span className="size-1.5 rounded-full bg-warn group-hover:hidden" title={`${dirty} changed files`} />
-      ) : null}
-      <div className="hidden group-hover:block" onClick={(e) => e.stopPropagation()}>
-        <Menu
-          trigger={(toggle) => (
-            <IconButton label="Worktree actions" onClick={toggle} className="size-5">
-              <MoreHorizontal size={14} />
-            </IconButton>
-          )}
-          items={worktreeActions(project, worktree, openDialog)}
-        />
-      </div>
+      {menuAt && (
+        <ContextMenu at={menuAt} items={worktreeActions(project, worktree, openDialog)} onClose={() => setMenuAt(null)} />
+      )}
     </div>
+  );
+}
+
+/** The main checkout's house, the pull request's state, or a plain branch. */
+function WorktreeIcon({ worktree, pr }: { worktree: Worktree; pr: PullRequest | null | undefined }) {
+  if (worktree.isMain) {
+    return (
+      <Hint title="Main checkout: the repository folder itself" className="text-faint">
+        <House size={13} />
+      </Hint>
+    );
+  }
+  if (!pr) {
+    return (
+      <Hint title={`Worktree on branch ${worktree.branch ?? "(detached)"}, no pull request yet`} className="text-faint">
+        <GitBranch size={13} />
+      </Hint>
+    );
+  }
+  return (
+    <Hint title={`Pull request #${pr.number} ${prStateLabel(pr)}: ${pr.title}`}>
+      <PrStateIcon pr={pr} size={13} />
+    </Hint>
   );
 }
 
@@ -242,22 +271,31 @@ function NeedsYou({ projects }: { projects: Project[] }) {
   const { data: sessions = [] } = useSessions();
   const select = useUi((s) => s.select);
   const setActive = useUi((s) => s.setActiveSession);
+  const playful = usePlayful();
+
   const waiting = sessions.filter((s) => s.state.kind === "running" && s.activity === "waiting");
-  const failed = useFailedChecks();
-  const dismissChecks = useUi((s) => s.dismissChecks);
-  const setScope = useUi((s) => s.setChangesScope);
-  const showChanges = useUi((s) => s.showChanges);
-  const toggleChanges = useUi((s) => s.toggleChanges);
-  if (waiting.length === 0 && failed.length === 0) return null;
+  const allQuiet = useJustChanged(waiting.length > 0, true, false, 4000);
+
+  if (waiting.length === 0) {
+    if (!playful || !allQuiet) return null;
+    return (
+      <div className="playful-fade mb-2 rounded-lg bg-added/8 px-3 py-2 fs-sidebar-xs text-added">
+        🌿 All quiet. Your agents are on it.
+      </div>
+    );
+  }
   return (
     <div className="mb-2 rounded-lg bg-warn/8 p-1">
-      <div className="flex items-center gap-1.5 px-2 pt-1 pb-1 fs-sidebar-xs font-semibold tracking-wide text-warn uppercase">
+      <div
+        className="flex items-center gap-1.5 px-2 pt-1 pb-1 fs-sidebar-xs font-semibold tracking-wide text-warn uppercase"
+        title="Agents waiting for an answer, across all projects"
+      >
         <BellRing size={11} />
         Needs you
       </div>
       {waiting.map((s) => {
         const project = projects.find((p) => s.worktreePath.startsWith(p.worktreeRoot) || s.worktreePath === p.repoPath);
-        const name = s.worktreePath.split("/").pop();
+        const identity = identityOf(s, playful);
         return (
           <div key={s.id} className="group/need flex items-start rounded-md hover:bg-hover">
             <button
@@ -268,8 +306,11 @@ function NeedsYou({ projects }: { projects: Project[] }) {
               title={s.attention ?? `${s.title} is waiting for you`}
               className="flex min-w-0 flex-1 flex-col px-2 py-1 text-left"
             >
-              <span className="truncate fs-sidebar">
-                {s.title} <span className="text-faint">· {name}</span>
+              <span className="flex min-w-0 items-center gap-1.5 fs-sidebar">
+                {identity && <AgentDot session={s} />}
+                <span className="truncate">
+                  {identity?.name ?? s.title} <span className="text-faint">· {s.worktreePath.split("/").pop()}</span>
+                </span>
               </span>
               {s.attention && <span className="truncate fs-sidebar-xs text-muted">{s.attention}</span>}
             </button>
@@ -283,39 +324,11 @@ function NeedsYou({ projects }: { projects: Project[] }) {
           </div>
         );
       })}
-      {failed.map((f) => (
-        <div key={checksKey(f)} className="group/need flex items-start rounded-md hover:bg-hover">
-          <button
-            onClick={() => {
-              select(f.project.id, f.worktree.path);
-              setScope("branch");
-              if (!showChanges) toggleChanges();
-            }}
-            title={`${f.pr.checksFailed} check${f.pr.checksFailed === 1 ? "" : "s"} failed on #${f.pr.number}`}
-            className="flex min-w-0 flex-1 flex-col px-2 py-1 text-left"
-          >
-            <span className="flex min-w-0 items-center gap-1 fs-sidebar">
-              <CircleX size={12} className="shrink-0 text-removed" />
-              <span className="truncate">
-                Checks failed <span className="text-faint">· {worktreeLabel(f.worktree)}</span>
-              </span>
-            </span>
-            <span className="truncate fs-sidebar-xs text-muted">
-              #{f.pr.number} {f.pr.title}
-            </span>
-          </button>
-          <IconButton
-            label="Skip for now: hides this until the checks pass"
-            onClick={() => dismissChecks(checksKey(f))}
-            className="mt-1 mr-1 size-5 opacity-0 group-hover/need:opacity-100"
-          >
-            <X size={12} />
-          </IconButton>
-        </div>
-      ))}
     </div>
   );
 }
+
+const checksFailed = (pr: PullRequest) => pr.state === "OPEN" && pr.checksFailed > 0;
 
 function prStateLabel(pr: PullRequest) {
   if (pr.state === "MERGED") return "merged";

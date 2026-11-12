@@ -41,6 +41,7 @@ import {
 import { askPrompt } from "../lib/askPrompts";
 import { reviewTarget, sendReview, useReview } from "../lib/review";
 import { useUi } from "../lib/store";
+import { plural } from "../lib/text";
 import { toast } from "../lib/toast";
 import { Button, Checkbox, Dialog, ErrorText, Field, Input, Textarea } from "./ui";
 
@@ -293,7 +294,6 @@ export function BranchStatus({
     }
   }
 
-  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
   return (
     <div className="flex flex-col gap-3 border-b border-line px-5 py-4">
       <div className="flex items-start gap-2">
@@ -449,7 +449,7 @@ export function PrSection({ worktree, base }: { worktree: Worktree; base: string
             className="flex items-start gap-2 text-left fs-panel hover:text-accent"
             title="Open on GitHub"
           >
-            <PrStateIcon pr={pr} />
+            <PrStateIcon pr={pr} className="mt-px" />
             <span className="min-w-0 flex-1">
               <span className="text-muted">#{pr.number}</span> {pr.title}
               <ExternalLink size={10} className="ml-1 inline text-faint" />
@@ -485,7 +485,7 @@ export function PrSection({ worktree, base }: { worktree: Worktree; base: string
   );
 }
 
-export function PrStateIcon({ pr, size = 14, className = "mt-px" }: { pr: PullRequest; size?: number; className?: string }) {
+export function PrStateIcon({ pr, size = 14, className }: { pr: PullRequest; size?: number; className?: string }) {
   if (pr.state === "MERGED") return <GitMerge size={size} className={clsx(className, "shrink-0 text-[#8250df]")} />;
   if (pr.state === "CLOSED") return <GitPullRequest size={size} className={clsx(className, "shrink-0 text-removed")} />;
   return <GitPullRequest size={size} className={clsx(className, "shrink-0", pr.isDraft ? "text-faint" : "text-added")} />;
@@ -497,17 +497,17 @@ function Checks({ pr }: { pr: PullRequest }) {
   return (
     <span className="flex items-center gap-3 fs-panel-sm text-muted">
       {pr.checksFailed > 0 && (
-        <span className="flex items-center gap-1 text-removed">
+        <span className="flex items-center gap-1 text-removed" title="Checks that failed on GitHub">
           <CircleX size={12} /> {pr.checksFailed} failed
         </span>
       )}
       {pr.checksPending > 0 && (
-        <span className="flex items-center gap-1 text-warn">
+        <span className="flex items-center gap-1 text-warn" title="Checks still running on GitHub">
           <CircleDot size={12} /> {pr.checksPending} running
         </span>
       )}
       {pr.checksPassed > 0 && (
-        <span className="flex items-center gap-1 text-added">
+        <span className="flex items-center gap-1 text-added" title="Checks that passed on GitHub">
           <CircleCheck size={12} /> {pr.checksPassed} passed
         </span>
       )}
@@ -634,25 +634,5 @@ function CreatePrDialog({
       </Checkbox>
       <ErrorText>{error}</ErrorText>
     </Dialog>
-  );
-}
-
-/** Compact branch status for the worktree header; opens the branch view. */
-export function BranchChip({ worktree, base, onOpen }: { worktree: Worktree; base: string; onOpen: () => void }) {
-  const { data: commits = [] } = useBranchLog(worktree.path, base);
-  const showPullRequests = useUi((s) => s.showPullRequests);
-  const { data: pr } = usePullRequest(worktree.path, showPullRequests && !!worktree.branch);
-  if (commits.length === 0 && !pr) return null;
-  return (
-    <button
-      onClick={onOpen}
-      title="Show commits and pull request"
-      className="flex h-7 items-center gap-1.5 rounded-md px-2 text-xs text-muted hover:bg-hover hover:text-fg"
-    >
-      {pr ? <PrStateIcon pr={pr} /> : <GitCommitHorizontal size={13} />}
-      {pr ? `#${pr.number}` : `${commits.length} ahead of ${base}`}
-      {pr && pr.checksFailed > 0 && <CircleX size={12} className="text-removed" />}
-      {pr && pr.checksFailed === 0 && pr.checksPending > 0 && <CircleDot size={12} className="text-warn" />}
-    </button>
   );
 }

@@ -118,7 +118,7 @@ worki starts again. The status bar details (model, context, token usage) are Cla
   every file it touched.
 - **Pull requests** through the GitHub CLI: create one, follow its checks, push new commits, and
   pull review comments into worki to send them to the agent. The sidebar shows each worktree's
-  pull request (open, draft, merged or closed), and failed checks land under **Needs you**.
+  pull request (open, draft, merged or closed) and marks failed checks.
 - **Review in place.** Comment on any diff line, expand hidden context, and send the comments to
   the agent as one review.
 
@@ -129,8 +129,8 @@ Commits and pull requests can be turned off under Settings › Git. Pull request
 
 - **Parallel worktrees.** Branch off any existing branch in one step, with an optional setup
   script (`pnpm install`, copying `.env` files) that runs in the same isolation as the agent.
-- **See who needs you.** Agents waiting for an answer, and pull requests whose checks failed, are
-  listed under **Needs you**, across all projects, with a notification and a Dock badge.
+- **See who needs you.** Agents waiting for an answer are listed under **Needs you**, across all
+  projects, the moment they ask, with a notification and a Dock badge.
 - **Real terminals.** Agent and shell sessions in GPU-rendered terminals that keep running when
   you switch worktrees. For Claude Code, the status bar shows model, context and token usage.
   YOLO mode is one checkbox per agent.
@@ -165,15 +165,8 @@ cd worki
 `start_dev.sh` installs the frontend dependencies when needed, compiles the app and starts it with
 hot reload for the UI.
 
-A dev build counts as a new app for macOS after every rebuild, so it asks again for worki's
-Keychain item on each start. Create a signing certificate once, and dev builds are signed with it:
-
-```bash
-scripts/create_dev_certificate.sh
-```
-
-Choose **Always Allow** at the next prompt. To sign with another certificate, such as your Apple
-Development one, set `WORKI_DEV_SIGNING_IDENTITY` to its name.
+Dev builds keep their secrets in `~/Library/Application Support/worki/dev-secrets.json`, readable
+only by you, instead of the Keychain: macOS would ask again for Keychain access after every rebuild.
 
 ### Share setup with your team
 

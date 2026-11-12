@@ -8,6 +8,7 @@ const projects = [
   project("acme-web", "/Users/dev/src/acme-web"),
   project("payments-api", "/Users/dev/src/payments-api"),
   project("infra", "/Users/dev/src/infra"),
+  ...(scene === "playful" ? [project("docs", "/Users/dev/src/docs")] : []),
 ];
 
 function project(name: string, repoPath: string) {
@@ -64,6 +65,10 @@ const commits = [
 ];
 
 const shellPrompt = "\x1b[32mdev@mac\x1b[0m \x1b[34m~/worki/worktrees/acme-web/checkout-redesign\x1b[0m $ pnpm test\r\n\r\n \x1b[32m✓\x1b[0m 128 tests passed (2.4s)\r\n\r\n\x1b[32mdev@mac\x1b[0m \x1b[34m~/worki/worktrees/acme-web/checkout-redesign\x1b[0m $ ";
+
+const started = Date.now();
+/** In the playful scene, whether its timeline has reached `ms`; other scenes are always past it. */
+const playfulAt = (ms: number) => scene !== "playful" || Date.now() - started >= ms;
 
 const isolation = { kind: "dockerSandbox", image: "claude", template: "worki-acme-web:20261109-1430" };
 
@@ -390,9 +395,9 @@ function handle(cmd: string, args: Record<string, any>): unknown {
       if (args.worktreePath === checkout)
         return { number: 42, title: "Redesign the checkout summary", url: "https://github.com/acme/web/pull/42", state: "OPEN", isDraft: false, checksPassed: 3, checksFailed: 0, checksPending: 1 };
       if (args.worktreePath === worktrees["acme-web"][2].path)
-        return { number: 39, title: "Fix the login race", url: "https://github.com/acme/web/pull/39", state: "MERGED", isDraft: false, checksPassed: 3, checksFailed: 0, checksPending: 0 };
+        return { number: 39, title: "Fix the login race", url: "https://github.com/acme/web/pull/39", state: playfulAt(7_000) ? "MERGED" : "OPEN", isDraft: false, checksPassed: 3, checksFailed: 0, checksPending: 0 };
       if (args.worktreePath === worktrees["acme-web"][3].path)
-        return { number: 44, title: "Upgrade to React 19", url: "https://github.com/acme/web/pull/44", state: "OPEN", isDraft: false, checksPassed: 2, checksFailed: 1, checksPending: 0 };
+        return { number: 44, title: "Upgrade to React 19", url: "https://github.com/acme/web/pull/44", state: "OPEN", isDraft: false, checksPassed: playfulAt(11_000) ? 3 : 2, checksFailed: playfulAt(11_000) ? 0 : 1, checksPending: 0 };
       return null;
     case "file_diff":
       return diff;
@@ -519,8 +524,8 @@ mockWindows("main");
 mockIPC((cmd, args) => handle(cmd, (args ?? {}) as Record<string, any>), { shouldMockEvents: true });
 
 const ui = {
-  selectedProjectId: "acme-web",
-  selectedWorktreePath: checkout,
+  selectedProjectId: new URLSearchParams(location.search).get("project") ?? "acme-web",
+  selectedWorktreePath: new URLSearchParams(location.search).has("project") ? null : checkout,
   collapsed: {},
   showChanges: scene !== "terminal",
   showTerminal: scene === "panel",
@@ -532,6 +537,7 @@ const ui = {
   activeSession: { [checkout]: scene === "chat" || scene === "hero" ? "s5" : "s1" },
   showCommits: true,
   showPullRequests: true,
+  playful: scene === "playful",
 };
 localStorage.setItem("worki-ui", JSON.stringify({ state: ui, version: 0 }));
 localStorage.removeItem("worki-review");
@@ -539,6 +545,21 @@ localStorage.removeItem("worki-review");
 await import("../main");
 
 const { useUi } = await import("../lib/store");
+if (scene === "playful") {
+  const { emit } = await import("@tauri-apps/api/event");
+  const update = (id: string, change: object) => {
+    const s = sessions.find((s) => s.id === id)!;
+    Object.assign(s, change);
+    emit("session-changed", s);
+  };
+  const refetch = () => window.dispatchEvent(new Event("visibilitychange"));
+  setTimeout(() => update("s1", { activity: "idle" }), 4_000);
+  setTimeout(refetch, 7_200);
+  setTimeout(() => {
+    for (const id of ["s2", "s4", "s5"]) update(id, { activity: "idle", attention: null });
+    refetch();
+  }, 11_200);
+}
 if (scene === "settings") useUi.getState().openDialog({ kind: "settings", tab: "isolation" });
 if (scene === "git") useUi.getState().openDialog({ kind: "settings", tab: "git" });
 if (scene === "isolation") {
