@@ -770,7 +770,7 @@ function Composer({ session, chat, onSend }: { session: SessionInfo; chat: Chat;
               }
             }}
             placeholder={busy ? "Add to what the agent is doing…" : `Message ${session.title}`}
-            className="flex-1 border-transparent! bg-transparent px-1 font-sans fs-chat outline-none!"
+            className="flex-1 border-transparent! bg-transparent px-1 font-sans fs-chat! outline-none!"
           />
           <div className={lineBox}>
             {busy && !ready ? (
@@ -802,7 +802,7 @@ function Composer({ session, chat, onSend }: { session: SessionInfo; chat: Chat;
 }
 
 /** One line of the prompt field: the same padding, border and line height, so its buttons stay centred on the last line. */
-const lineBox = "box-content flex h-[1lh] shrink-0 items-center border border-transparent py-2 text-[13px] text-xs fs-chat";
+const lineBox = "box-content flex h-[1lh] shrink-0 items-center border border-transparent py-2 text-xs fs-chat";
 
 /** The model, permission mode and effort the agent runs with, switchable mid-conversation. */
 function Settings({ session, chat, onError }: { session: SessionInfo; chat: Chat; onError: (e: string | null) => void }) {
