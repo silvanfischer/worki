@@ -118,7 +118,10 @@ const sessions = [
       contextSize: 200_000,
       costUsd: 1.84,
       version: "2.1.319",
-      remoteControl: { state: "off", url: null },
+      remoteControl:
+        scene === "hero" || scene === "chat"
+          ? { state: "connected", url: "https://claude.ai/code/session_demo" }
+          : { state: "off", url: null },
     },
   }),
 ];

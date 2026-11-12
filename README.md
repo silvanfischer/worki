@@ -93,6 +93,10 @@ Run Claude Code in its terminal, or as a chat that worki draws itself:
   match worki's theme and open full-window. Diagrams and drawings zoom and save as SVG or PNG;
   charts save as HTML.
 - **Picks up where you left off.** Chats reopen with their history when worki starts.
+- **Continue on your phone.** Turn on Remote Control below the message box and carry on in the
+  Claude app or on claude.ai/code; what you send from there shows up in worki. Under Settings ›
+  Agents, new Claude Code sessions, terminals included, start with it. In Docker Sandboxes it
+  needs `sbx settings set claude.remoteControl true` once.
 
 <p align="center">
   <img src="docs/screenshots/terminal.png" alt="Claude Code in its terminal, running the tests in a Docker Sandbox" width="900">
@@ -132,8 +136,9 @@ Commits and pull requests can be turned off under Settings › Git. Pull request
 - **See who needs you.** Agents waiting for an answer are listed under **Needs you**, across all
   projects, the moment they ask, with a notification and a Dock badge.
 - **Real terminals.** Agent and shell sessions in GPU-rendered terminals that keep running when
-  you switch worktrees. For Claude Code, the status bar shows model, context and token usage.
-  YOLO mode is one checkbox per agent.
+  you switch worktrees, a shell of your own below the agent (⌃\`), and links that open in your
+  browser, sign-in links included. For Claude Code, the status bar shows model, context and token
+  usage. YOLO mode is one checkbox per agent.
 - **Remote projects.** Work on repositories on an SSH host, with saved hosts you set up once;
   terminal sessions run in tmux there and survive a dropped connection.
 - **Keyboard first.** ⌘K jumps to any worktree or action, ⌘T starts an agent, ⌘J shows the
