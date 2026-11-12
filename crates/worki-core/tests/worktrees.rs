@@ -296,3 +296,45 @@ fn saved_ssh_hosts_follow_into_projects() {
     let kept = svc.project("linked").unwrap().remote.unwrap();
     assert_eq!((kept.host.as_str(), kept.host_id), ("devbox", None));
 }
+
+#[tokio::test]
+async fn lists_newest_worktree_first_after_the_main_checkout() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("app");
+    std::fs::create_dir(&repo).unwrap();
+    init_repo(&repo);
+    for (name, stamp) in [
+        ("older", "202601010000"),
+        ("newer", "202602010000"),
+        ("oldest", "202501010000"),
+    ] {
+        sh(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                name,
+                &tmp.path().join(name).to_string_lossy(),
+            ],
+        );
+        let status = Command::new("touch")
+            .args(["-t", stamp])
+            .arg(repo.join(".git/worktrees").join(name).join("commondir"))
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
+
+    let svc = ProjectService::new(Store::in_memory().unwrap());
+    let project = svc.add_project(&repo).await.unwrap();
+    let branches: Vec<_> = svc
+        .list_worktrees(&project.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|wt| wt.branch.unwrap())
+        .collect();
+    assert_eq!(branches, ["main", "newer", "older", "oldest"]);
+}

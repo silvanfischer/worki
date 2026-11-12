@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::host::Host;
@@ -24,15 +25,52 @@ pub async fn main_checkout(host: &Host, path: &Path) -> Result<PathBuf> {
 }
 
 pub async fn list_worktrees(host: &Host, repo: &Path) -> Result<Vec<Worktree>> {
-    let (listing, bases) = tokio::join!(
+    let (listing, bases, created) = tokio::join!(
         host.git(repo, ["worktree", "list", "--porcelain"]),
-        branch_bases(host, repo)
+        branch_bases(host, repo),
+        worktree_creation_times(host, repo)
     );
     let mut worktrees = parse_worktree_porcelain(&listing?);
     for wt in &mut worktrees {
         wt.base = wt.branch.as_ref().and_then(|b| bases.get(b).cloned());
     }
+    sort_newest_first(&mut worktrees, &created);
     Ok(worktrees)
+}
+
+/// Keeps the main checkout on top, then the newest worktree first.
+fn sort_newest_first(worktrees: &mut [Worktree], created: &HashMap<PathBuf, i64>) {
+    worktrees.sort_by_key(|wt| {
+        (
+            !wt.is_main,
+            std::cmp::Reverse(created.get(&wt.path).copied().unwrap_or(i64::MIN)),
+        )
+    });
+}
+
+/// When each linked worktree was added, by path. Git writes a worktree's `commondir` file once,
+/// when it's added, so its modification time is the creation time.
+async fn worktree_creation_times(host: &Host, repo: &Path) -> HashMap<PathBuf, i64> {
+    const SCRIPT: &str = r#"common=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir) || exit 1
+for d in "$common"/worktrees/*; do
+  [ -f "$d/commondir" ] && [ -f "$d/gitdir" ] || continue
+  t=$(stat -c %Y "$d/commondir" 2>/dev/null || stat -f %m "$d/commondir") || continue
+  printf '%s\t%s\n' "$t" "$(cat "$d/gitdir")"
+done"#;
+    let Ok(out) = host.sh(SCRIPT, &[&repo.to_string_lossy()]).await else {
+        return HashMap::new();
+    };
+    parse_creation_times(&String::from_utf8_lossy(&out.stdout))
+}
+
+fn parse_creation_times(text: &str) -> HashMap<PathBuf, i64> {
+    text.lines()
+        .filter_map(|line| {
+            let (time, gitdir) = line.split_once('\t')?;
+            let worktree = Path::new(gitdir.trim()).parent()?;
+            Some((worktree.to_path_buf(), time.trim().parse().ok()?))
+        })
+        .collect()
 }
 
 /// Kept in the branch's git config, so it follows the branch when it's renamed and goes away
@@ -55,7 +93,7 @@ pub async fn set_branch_base(host: &Host, repo: &Path, branch: &str, base: &str)
 }
 
 /// What each branch was started from, by branch name.
-async fn branch_bases(host: &Host, repo: &Path) -> std::collections::HashMap<String, String> {
+async fn branch_bases(host: &Host, repo: &Path) -> HashMap<String, String> {
     let pattern = format!(r"^branch\..*\.{BASE_KEY}$");
     let out = host
         .git(repo, ["config", "--local", "--get-regexp", &pattern])
@@ -64,7 +102,7 @@ async fn branch_bases(host: &Host, repo: &Path) -> std::collections::HashMap<Str
     parse_branch_bases(&out)
 }
 
-fn parse_branch_bases(config: &str) -> std::collections::HashMap<String, String> {
+fn parse_branch_bases(config: &str) -> HashMap<String, String> {
     config
         .lines()
         .filter_map(|line| {

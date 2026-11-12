@@ -119,7 +119,7 @@ impl Host {
         }
     }
 
-    async fn sh(&self, script: &str, args: &[&str]) -> Result<Output> {
+    pub(crate) async fn sh(&self, script: &str, args: &[&str]) -> Result<Output> {
         match self {
             Self::Local => {
                 let mut full = vec!["-c".to_owned(), script.to_owned(), "_".to_owned()];
