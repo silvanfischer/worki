@@ -112,8 +112,7 @@ pub fn chat_request(
         // Flags in the profile are for Codex's terminal UI; the app server takes its settings
         // from worki over the protocol.
         ChatAgent::Codex => format!(
-            "{}exec {} app-server",
-            codex_login(confined),
+            "exec {} app-server",
             profile.executable().unwrap_or("codex")
         ),
     };
@@ -259,7 +258,7 @@ fn agent_command(
         .unwrap_or_default();
     match profile.executable() {
         Some("claude") => claude_command(profile, session_id, confined, claude, &prompt),
-        Some("codex") => codex_command(profile, session_id, confined, &prompt),
+        Some("codex") => codex_command(profile, session_id, &prompt),
         _ => format!("exec {}{prompt}", profile.command),
     }
 }
@@ -298,13 +297,7 @@ fn claude_name(name: &str) -> String {
     }
 }
 
-fn codex_command(
-    profile: &AgentProfile,
-    session_id: Option<&str>,
-    confined: bool,
-    prompt: &str,
-) -> String {
-    let login = codex_login(confined);
+fn codex_command(profile: &AgentProfile, session_id: Option<&str>, prompt: &str) -> String {
     let resume = session_id
         .map(|id| {
             format!(
@@ -315,22 +308,9 @@ fn codex_command(
         .unwrap_or_default();
     format!(
         "export WORKI_TTY=\"$(tty)\" WORKI_CODEX_SESSIONS={CODEX_SESSIONS}; \
-{resume}{login}exec {} \"$@\" -c {}{prompt}",
+{resume}exec {} \"$@\" -c {}{prompt}",
         profile.command,
         shell_quote(&codex_notify_setting())
-    )
-}
-
-/// Codex only reads its own login, not a key in the environment: in an isolated environment it is
-/// signed in with the stored key once.
-fn codex_login(confined: bool) -> String {
-    if !confined {
-        return String::new();
-    }
-    let key = crate::agents::CODEX_API_KEY;
-    format!(
-        "if [ -n \"${key}\" ] && ! codex login status >/dev/null 2>&1; then \
-printenv {key} | codex login --with-api-key >/dev/null; fi; "
     )
 }
 
@@ -753,18 +733,13 @@ mod tests {
         );
     }
 
-    /// Stands in for Codex: logs how it was started to `$LOG`, and keeps its login in
-    /// `$LOG.login`.
+    /// Stands in for Codex: logs how it was started to `$LOG`.
     const FAKE_CODEX: &str = r#"#!/bin/sh
-case "$1 $2" in
-  "login status") [ -f "$LOG.login" ]; exit ;;
-  "login --with-api-key") cat > "$LOG.login"; echo login >> "$LOG"; exit ;;
-esac
 case "$1" in resume) echo "resume $2" ;; *) echo new ;; esac >> "$LOG"
 "#;
 
     /// Runs worki's Codex command for session `s1` against [`FAKE_CODEX`] in `home`.
-    fn run_codex(home: &Path, confined: bool) {
+    fn run_codex(home: &Path) {
         use std::os::unix::fs::PermissionsExt;
         let fake = home.join("codex");
         if !fake.exists() {
@@ -777,36 +752,18 @@ case "$1" in resume) echo "resume $2" ;; *) echo new ;; esac >> "$LOG"
             command: "codex".into(),
             install: None,
         };
-        let command = super::agent_command(
-            &profile,
-            Some("s1"),
-            confined,
-            &ClaudeOptions::default(),
-            None,
-        );
+        let command =
+            super::agent_command(&profile, Some("s1"), true, &ClaudeOptions::default(), None);
         let ok = std::process::Command::new("/bin/sh")
             .args(["-c", &command])
             .env("PATH", format!("{}:/usr/bin:/bin", home.display()))
             .env("HOME", home)
             .env_remove("CODEX_HOME")
             .env("LOG", home.join("log"))
-            .env("OPENAI_API_KEY", "sk-test")
             .status()
             .unwrap()
             .success();
         assert!(ok);
-    }
-
-    #[test]
-    fn codex_signs_in_with_the_stored_key_only_when_isolated() {
-        let home = tempfile::tempdir().unwrap();
-        run_codex(home.path(), false);
-        run_codex(home.path(), true);
-        run_codex(home.path(), true);
-        let log = std::fs::read_to_string(home.path().join("log")).unwrap();
-        assert_eq!(log, "new\nlogin\nnew\nnew\n");
-        let key = std::fs::read_to_string(home.path().join("log.login")).unwrap();
-        assert_eq!(key, "sk-test\n");
     }
 
     #[test]
@@ -815,7 +772,7 @@ case "$1" in resume) echo "resume $2" ;; *) echo new ;; esac >> "$LOG"
         let sessions = home.path().join(".codex/worki-sessions");
         std::fs::create_dir_all(&sessions).unwrap();
         std::fs::write(sessions.join("s1"), "01a1cc36").unwrap();
-        run_codex(home.path(), false);
+        run_codex(home.path());
         let log = std::fs::read_to_string(home.path().join("log")).unwrap();
         assert_eq!(log, "resume 01a1cc36\n");
     }
@@ -839,19 +796,6 @@ case "$1" in resume) echo "resume $2" ;; *) echo new ;; esac >> "$LOG"
         .unwrap();
         assert_eq!(agent, ChatAgent::Codex);
         assert_eq!(req.command.as_deref(), Some("exec codex app-server"));
-        let (_, confined) = chat_request(
-            &profile,
-            Path::new("/w"),
-            vec![],
-            "s1",
-            true,
-            &ClaudeOptions::default(),
-        )
-        .unwrap();
-        assert!(confined
-            .command
-            .unwrap()
-            .contains("codex login --with-api-key"));
     }
 
     #[test]

@@ -865,6 +865,14 @@ impl ProjectService {
         github::review_comments(&self.host_for_path(worktree)?, worktree, number).await
     }
 
+    pub async fn github_image(&self, worktree: &Path, url: &str) -> Result<String> {
+        github::attachment_image(&self.host_for_path(worktree)?, worktree, url).await
+    }
+
+    pub async fn pr_failed_checks(&self, worktree: &Path, number: u64) -> Result<Vec<FailedCheck>> {
+        github::failed_checks(&self.host_for_path(worktree)?, worktree, number).await
+    }
+
     /// Has an agent write the pull request's title and description following `instructions`.
     pub async fn draft_pull_request(
         &self,

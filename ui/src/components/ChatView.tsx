@@ -44,7 +44,6 @@ import {
 import { type Chat, type ChatItem, useChat } from "../lib/chat";
 import { useAsyncAction } from "../lib/useAsyncAction";
 import { PERMISSION_MODES } from "./AgentStatus";
-import { CopyContinue, RemoteControl } from "./SessionActions";
 import { ChatVisual, VISUAL_LANGUAGES } from "./ChatVisual";
 import { Button, ErrorText, Textarea } from "./ui";
 
@@ -828,13 +827,7 @@ function Settings({ session, chat, onError }: { session: SessionInfo; chat: Chat
     api.changeChatSetting(session.id, setting).catch((e) => onError(errorMessage(e)));
   };
   return (
-    <div className="flex flex-wrap items-center gap-1">
-      <CopyContinue
-        session={session}
-        className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted hover:bg-hover hover:text-fg"
-      />
-      {session.agent.remoteControl && <RemoteControl session={session} remote={session.agent.remoteControl} />}
-      <span className="flex-1" />
+    <div className="flex flex-wrap items-center justify-end gap-1">
       <SettingSelect
         title="Model"
         shown={current ? label(current) : (settings.model ?? "Model")}

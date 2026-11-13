@@ -34,9 +34,8 @@ pub struct AgentStatus {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthStatus {
-    /// Env var the sign-in token or key is passed as.
+    /// Env var the sign-in token is passed as.
     secret: String,
-    kind: agents::SignInKind,
     /// A token is stored for this isolation.
     set: bool,
 }
@@ -84,7 +83,6 @@ pub async fn agent_statuses(
                     auth: kit.and_then(|k| k.sign_in).map(|sign_in| AuthStatus {
                         set: secrets::is_set(&scope, sign_in.secret),
                         secret: sign_in.secret.to_owned(),
-                        kind: sign_in.kind,
                     }),
                     profile_id: p.id,
                     name: p.name,
@@ -143,11 +141,8 @@ pub async fn sign_in_agent(
 ) -> CmdResult<()> {
     let secret = agents::kit(&executable)
         .and_then(|k| k.sign_in)
-        .filter(|s| s.kind == agents::SignInKind::SetupToken)
         .map(|s| s.secret)
-        .ok_or_else(|| {
-            format!("worki can't sign in {executable}; add its API key as a secret instead")
-        })?;
+        .ok_or_else(|| format!("worki can't sign in {executable}"))?;
     let log = move |line: LogLine| {
         on_log.send(line).ok();
     };
@@ -212,19 +207,15 @@ struct SignInEnded {
     worktree_path: PathBuf,
 }
 
-/// Signs Codex in where `worktree`'s agents run, when it isn't yet and no API key is stored for
-/// the isolation: Codex's device-code sign-in, whose link and code the worktree shows until it's
-/// approved in the browser. The login stays in that environment.
+/// Signs Codex in where `worktree`'s agents run, when it isn't yet: Codex's device-code sign-in,
+/// whose link and code the worktree shows until it's approved in the browser. The login stays in
+/// that environment.
 pub async fn sign_in_codex(
     state: &AppState,
     instance: Arc<dyn Backend>,
     worktree: &Path,
-    isolation: &Isolation,
     agent: &str,
 ) -> CmdResult<()> {
-    if secrets::is_set(&isolation.scope_key(), agents::CODEX_API_KEY) {
-        return Ok(());
-    }
     let request = |command: &str, interactive: bool| LaunchRequest {
         cwd: worktree.to_owned(),
         command: Some(command.into()),

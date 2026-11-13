@@ -226,7 +226,8 @@ function ReviewBar({ worktreePath, onOpen }: { worktreePath: string; onOpen: (fi
 
   const agents = sessions.filter((s) => s.worktreePath === worktreePath && s.profileId && s.state.kind === "running");
   const target = agents.find((s) => s.id === picked) ?? reviewTarget(agents, activeId);
-  const files = [...new Set(comments.map((c) => c.file))];
+  const files = [...new Set(comments.filter((c) => !c.check).map((c) => c.file))];
+  const checks = [...new Set(comments.flatMap((c) => (c.check ? [c.check] : [])))];
 
   async function send() {
     if (!target) return;
@@ -255,6 +256,11 @@ function ReviewBar({ worktreePath, onOpen }: { worktreePath: string; onOpen: (fi
           <button key={f} onClick={() => onOpen(f)} className="truncate text-left font-mono fs-panel-sm text-muted hover:text-fg">
             {f}
           </button>
+        ))}
+        {checks.map((name) => (
+          <span key={name} className="truncate fs-panel-sm text-muted">
+            Failed check: {name}
+          </span>
         ))}
       </div>
       {agents.length > 1 && target && (

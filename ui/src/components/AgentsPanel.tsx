@@ -12,7 +12,7 @@ import {
   scopeKey,
 } from "../lib/api";
 import { keys, useAgentStatuses, useRefreshSecrets } from "../lib/queries";
-import { Button, ErrorText, IconButton, Input, LogView } from "./ui";
+import { Button, ErrorText, IconButton, LogView } from "./ui";
 
 type Action = "share" | "config" | "token" | "removeToken";
 
@@ -22,7 +22,6 @@ export function AgentsPanel({ isolation }: { isolation: Isolation }) {
   const { data: agents, isFetching, error, refetch } = useAgentStatuses(isolation);
   const [running, setRunning] = useState<{ exe: string; action: Action } | null>(null);
   const [result, setResult] = useState<{ exe: string; lines: LogLine[]; error?: string } | null>(null);
-  const [keyEntry, setKeyEntry] = useState<{ exe: string; key: string } | null>(null);
   const refreshSecrets = useRefreshSecrets();
   const sandbox = isolation.kind === "dockerSandbox" || isolation.kind === "docker" || isolation.kind === "podman";
   const envNoun = isolation.kind === "dockerSandbox" ? "sandbox" : "container";
@@ -30,7 +29,7 @@ export function AgentsPanel({ isolation }: { isolation: Isolation }) {
   const user = isolation.kind === "macUser" ? isolation.user : isolation.kind === "ssh" ? isolation.host : "the sandbox";
   const where = isolation.kind === "ssh" ? `on ${isolation.host}` : `for ${user}`;
 
-  async function run(agent: AgentStatus, action: Action, key?: string) {
+  async function run(agent: AgentStatus, action: Action) {
     const exe = agent.executable;
     setRunning({ exe, action });
     const lines: LogLine[] = [];
@@ -48,9 +47,7 @@ export function AgentsPanel({ isolation }: { isolation: Isolation }) {
           push({ stream: "info", line: `Skipped: ${skipped.join("; ")}` });
       }
       if (action === "token" && agent.auth) {
-        if (agent.auth.kind === "setupToken") await api.signInAgent(isolation, exe, push);
-        else await api.setSecret(scopeKey(isolation), agent.auth.secret, key ?? "");
-        setKeyEntry(null);
+        await api.signInAgent(isolation, exe, push);
         push({ stream: "info", line: `Saved ${agent.auth.secret} in your Keychain for agents running as ${user}.` });
         await refreshSecrets();
       }
@@ -83,8 +80,6 @@ export function AgentsPanel({ isolation }: { isolation: Isolation }) {
       {error && <ErrorText>{String(error)}</ErrorText>}
       {agents?.map((a) => {
         const busy = running?.exe === a.executable ? running.action : null;
-        const apiKey = a.auth?.kind === "apiKey";
-        const entry = keyEntry?.exe === a.executable ? keyEntry : null;
         const btn = (action: Action, label: string, show: boolean, primary = false) =>
           show && (
             <Button
@@ -126,11 +121,7 @@ export function AgentsPanel({ isolation }: { isolation: Isolation }) {
                 {a.auth && (
                   <div className="mt-0.5 flex items-center gap-1 text-[11px] text-faint">
                     <KeyRound size={11} className={a.auth.set ? "text-added" : ""} />
-                    {!a.auth.set
-                      ? "Not signed in"
-                      : apiKey
-                        ? `Signs in with your API key (${a.auth.secret})`
-                        : `Signed in with a token (${a.auth.secret})`}
+                    {a.auth.set ? `Signed in with a token (${a.auth.secret})` : "Not signed in"}
                   </div>
                 )}
               </div>
@@ -138,38 +129,9 @@ export function AgentsPanel({ isolation }: { isolation: Isolation }) {
             <div className="ml-6 flex flex-wrap gap-1.5">
               {btn("share", "Use my installation", a.canShare && !a.envPath && !!a.hostPath, true)}
               {btn("config", "Copy my config", a.hasConfig)}
-              {!apiKey && btn("token", a.auth?.set ? "Sign in again" : "Sign in", !!a.auth)}
-              {apiKey && !entry && (
-                <Button onClick={() => setKeyEntry({ exe: a.executable, key: "" })} disabled={running !== null}>
-                  {a.auth?.set ? "Change API key" : "Add API key"}
-                </Button>
-              )}
-              {btn("removeToken", apiKey ? "Remove key" : "Remove token", !!a.auth?.set)}
+              {btn("token", a.auth?.set ? "Sign in again" : "Sign in", !!a.auth)}
+              {btn("removeToken", "Remove token", !!a.auth?.set)}
             </div>
-            {entry && a.auth && (
-              <form
-                className="ml-6 flex items-center gap-1.5"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  run(a, "token", entry.key.trim());
-                }}
-              >
-                <Input
-                  type="password"
-                  autoFocus
-                  value={entry.key}
-                  onChange={(e) => setKeyEntry({ ...entry, key: e.target.value })}
-                  placeholder={`${a.auth.secret}, e.g. sk-…`}
-                  className="min-w-0 flex-1 font-mono text-xs"
-                />
-                <Button type="submit" variant="primary" disabled={!entry.key.trim() || running !== null}>
-                  Save
-                </Button>
-                <Button type="button" onClick={() => setKeyEntry(null)}>
-                  Cancel
-                </Button>
-              </form>
-            )}
             {result?.exe === a.executable && (result.lines.length > 0 || result.error) && (
               <ResultLog lines={result.lines} error={result.error} />
             )}
@@ -185,7 +147,7 @@ export function AgentsPanel({ isolation }: { isolation: Isolation }) {
       <p className="px-1 pt-1 text-xs leading-relaxed text-faint">
         Sign in runs <span className="font-mono">claude setup-token</span> as you and approves in your browser. The
         token uses your subscription and is passed to {user}'s sessions; your own login stays untouched. Codex
-        signs in with an OpenAI API key, kept in your Keychain.
+        signs in per environment with a code you approve in the browser the first time it starts there.
       </p>
     </div>
   );

@@ -397,20 +397,44 @@ export function PrSection({ worktree, base }: { worktree: Worktree; base: string
   async function importComments(p: PullRequest) {
     setBusy(true);
     try {
-      const comments = await api.prReviewComments(worktree.path, p.number);
-      for (const c of comments) {
-        addComment(worktree.path, {
+      const [comments, failed] = await Promise.all([
+        api.prReviewComments(worktree.path, p.number),
+        p.checksFailed > 0 ? api.prFailedChecks(worktree.path, p.number) : Promise.resolve([]),
+      ]);
+      const current = useReview.getState().comments[worktree.path] ?? [];
+      const key = (c: { file: string; side: string; line: number; text: string }) =>
+        `${c.file}\0${c.side}\0${c.line}\0${c.text}`;
+      const known = new Set(current.map(key));
+      const newComments = comments
+        .map((c) => ({
           file: c.path,
           side: c.side,
           line: c.line ?? 0,
           code: "",
           text: c.author ? `${c.author}: ${c.body}` : c.body,
+        }))
+        .filter((c) => !known.has(key(c)));
+      for (const c of newComments) addComment(worktree.path, c);
+      const knownChecks = new Set(current.map((c) => c.check));
+      const added = failed.filter((f) => !knownChecks.has(f.name));
+      for (const f of added) {
+        addComment(worktree.path, {
+          file: "",
+          side: "new",
+          line: 0,
+          code: "",
+          text: f.log ?? ([f.description, f.url].filter(Boolean).join("\n") || "No details from GitHub."),
+          check: f.name,
         });
       }
+      const counts = [
+        newComments.length > 0 && `${newComments.length} review comment${newComments.length === 1 ? "" : "s"}`,
+        added.length > 0 && `${added.length} failed check${added.length === 1 ? "" : "s"}`,
+      ].filter(Boolean);
       toast(
-        comments.length === 0
-          ? "The pull request has no review comments."
-          : `Added ${comments.length} review comment${comments.length === 1 ? "" : "s"}; send them to the agent below.`,
+        counts.length === 0
+          ? "No new review comments or failed checks."
+          : `Added ${counts.join(" and ")}; send them to the agent below.`,
         "info",
       );
     } catch (e) {
@@ -464,9 +488,13 @@ export function PrSection({ worktree, base }: { worktree: Worktree; base: string
               </Button>
             )}
             {pr.state === "OPEN" && (
-              <Button onClick={() => importComments(pr)} disabled={busy} title="Add the PR's review comments to this worktree's review">
+              <Button
+                onClick={() => importComments(pr)}
+                disabled={busy}
+                title="Add the PR's review comments, and the errors of its failed checks, to this worktree's review"
+              >
                 <MessageSquare size={13} />
-                Get review comments
+                {pr.checksFailed > 0 ? "Get review comments and failures" : "Get review comments"}
               </Button>
             )}
           </div>

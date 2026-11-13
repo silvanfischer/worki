@@ -254,6 +254,16 @@ pub struct PullRequest {
     pub checks_pending: u32,
 }
 
+/// A check that failed on a pull request, with the end of its log where GitHub Actions ran it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FailedCheck {
+    pub name: String,
+    pub url: String,
+    pub description: String,
+    pub log: Option<String>,
+}
+
 /// A review comment on a pull request's diff.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]

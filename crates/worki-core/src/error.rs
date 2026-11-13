@@ -28,6 +28,8 @@ pub enum Error {
     NoInstaller(String),
     #[error("{0}")]
     Isolation(String),
+    #[error("{0}")]
+    GitHub(String),
     #[error("invalid .worki.toml: {0}")]
     Config(#[from] toml::de::Error),
     #[error(transparent)]

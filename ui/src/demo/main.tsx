@@ -405,6 +405,17 @@ function handle(cmd: string, args: Record<string, any>): unknown {
           1200,
         ),
       );
+    case "pr_review_comments":
+      return [];
+    case "pr_failed_checks":
+      return [
+        {
+          name: "build",
+          url: "https://github.com/acme/web/actions/runs/1/job/2",
+          description: "",
+          log: "> Task :web:test\n\nCartSummary > renders the total in the user's currency FAILED\n    AssertionError: expected '$12.00' to equal 'CHF 12.00'\n\n1 failed, 214 passed\nProcess completed with exit code 1.",
+        },
+      ];
     case "pull_request":
       if (args.worktreePath === checkout)
         return { number: 42, title: "Redesign the checkout summary", url: "https://github.com/acme/web/pull/42", state: "OPEN", isDraft: false, checksPassed: 3, checksFailed: 0, checksPending: 1 };
@@ -425,7 +436,7 @@ function handle(cmd: string, args: Record<string, any>): unknown {
       ];
     case "agent_statuses":
       return [
-        { profileId: "claude", name: "Claude Code", executable: "claude", envPath: "/usr/local/bin/claude", hostPath: "/opt/homebrew/bin/claude", canShare: false, hasConfig: true, inBaseImage: true, auth: { secret: "CLAUDE_CODE_OAUTH_TOKEN", set: true, kind: "setupToken" } },
+        { profileId: "claude", name: "Claude Code", executable: "claude", envPath: "/usr/local/bin/claude", hostPath: "/opt/homebrew/bin/claude", canShare: false, hasConfig: true, inBaseImage: true, auth: { secret: "CLAUDE_CODE_OAUTH_TOKEN", set: true } },
         { profileId: "codex", name: "Codex", executable: "codex", envPath: null, hostPath: "/opt/homebrew/bin/codex", canShare: false, hasConfig: false, inBaseImage: false, auth: null },
       ];
     case "secret_status":

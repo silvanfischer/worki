@@ -4,7 +4,7 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 
 import type { SessionInfo } from "../lib/api";
 import { formatTokens, totalUsage } from "../lib/usage";
-import { CopyContinue } from "./SessionActions";
+import { CopyContinue, RemoteControl } from "./SessionActions";
 
 export const PERMISSION_MODES: Record<string, string> = {
   default: "Ask before edits",
@@ -64,12 +64,8 @@ export function AgentStatus({ session }: { session: SessionInfo }) {
         {a.costUsd !== null && <span className="hidden @md:inline">${a.costUsd.toFixed(2)}</span>}
         {context !== null && <ContextMeter percent={context} />}
       </button>
-      {session.kind !== "chat" && (
-        <CopyContinue
-          session={session}
-          className="flex h-6 w-7 shrink-0 items-center justify-center border-l border-line text-muted hover:bg-hover hover:text-fg"
-        />
-      )}
+      <RemoteControl session={session} />
+      <CopyContinue session={session} />
       {open && (
         <div data-overlay className="absolute top-full right-2 z-40 mt-1 w-64 rounded-lg border border-line bg-elevated p-3 text-xs shadow-xl">
           <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5">

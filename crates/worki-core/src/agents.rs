@@ -29,23 +29,13 @@ pub struct Trust {
     pub apply: fn(&str, &Path) -> Result<Option<String>>,
 }
 
+/// A token worki creates with `claude setup-token` (approved in the browser, bound to the
+/// subscription) and passes to the agent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SignIn {
-    /// Env var the token or key is stored and passed as.
+    /// Env var the token is stored and passed as.
     pub secret: &'static str,
-    pub kind: SignInKind,
 }
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub enum SignInKind {
-    /// `claude setup-token`, approved in the browser, bound to the subscription.
-    SetupToken,
-    /// An API key the user pastes.
-    ApiKey,
-}
-
-pub const CODEX_API_KEY: &str = "OPENAI_API_KEY";
 
 const KITS: &[Kit] = &[
     Kit {
@@ -63,7 +53,6 @@ const KITS: &[Kit] = &[
         strip_keys: Some((".claude/settings.json", &["hooks", "statusLine"])),
         sign_in: Some(SignIn {
             secret: "CLAUDE_CODE_OAUTH_TOKEN",
-            kind: SignInKind::SetupToken,
         }),
         trust: Some(Trust {
             file: ".claude.json",
@@ -75,10 +64,7 @@ const KITS: &[Kit] = &[
         config: &[".codex/config.toml", ".codex/AGENTS.md", ".codex/prompts"],
         rewrite_paths: &[".codex/config.toml"],
         strip_keys: None,
-        sign_in: Some(SignIn {
-            secret: CODEX_API_KEY,
-            kind: SignInKind::ApiKey,
-        }),
+        sign_in: None,
         trust: Some(Trust {
             file: ".codex/config.toml",
             apply: trusted_codex_config,
@@ -380,11 +366,9 @@ mod tests {
 
     #[test]
     fn known_kits() {
-        let sign_in = |exe| kit(exe).unwrap().sign_in.unwrap();
-        assert_eq!(sign_in("claude").secret, "CLAUDE_CODE_OAUTH_TOKEN");
-        assert_eq!(sign_in("claude").kind, SignInKind::SetupToken);
-        assert_eq!(sign_in("codex").secret, "OPENAI_API_KEY");
-        assert_eq!(sign_in("codex").kind, SignInKind::ApiKey);
+        let sign_in = |exe| kit(exe).unwrap().sign_in;
+        assert_eq!(sign_in("claude").unwrap().secret, "CLAUDE_CODE_OAUTH_TOKEN");
+        assert!(sign_in("codex").is_none());
         assert!(kit("aider").is_none());
         assert!(kit("claude")
             .unwrap()

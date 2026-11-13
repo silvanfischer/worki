@@ -11,6 +11,9 @@ export interface ReviewComment {
   line: number;
   code: string;
   text: string;
+  /** Set for a pull request check that failed: its name, with the error in `text` instead of a
+   * comment on a diff line. */
+  check?: string;
 }
 
 interface ReviewState {
@@ -49,14 +52,21 @@ export const useWorktreeComments = (worktree: string) => useReview((s) => s.comm
 
 export function reviewPrompt(comments: ReviewComment[]): string {
   const byFile = new Map<string, ReviewComment[]>();
-  for (const c of comments) byFile.set(c.file, [...(byFile.get(c.file) ?? []), c]);
-  const parts = ["Address these review comments on your changes:"];
+  const checks: ReviewComment[] = [];
+  for (const c of comments) {
+    if (c.check) checks.push(c);
+    else byFile.set(c.file, [...(byFile.get(c.file) ?? []), c]);
+  }
+  const parts: string[] = [];
+  if (byFile.size > 0) parts.push("Address these review comments on your changes:");
   for (const [file, list] of byFile) {
     for (const c of [...list].sort((a, b) => a.line - b.line)) {
       const where = c.side === "old" ? `${file}, removed line ${c.line}` : `${file}:${c.line}`;
       parts.push(`${where}\n> ${c.code.trim()}\n${c.text.trim()}`);
     }
   }
+  if (checks.length > 0) parts.push("These checks failed on the pull request. Find the cause and fix it:");
+  for (const c of checks) parts.push(`Check "${c.check}" failed:\n\`\`\`\n${c.text.trim()}\n\`\`\``);
   return parts.join("\n\n");
 }
 

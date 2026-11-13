@@ -78,7 +78,7 @@ export interface AgentStatus {
   canShare: boolean;
   hasConfig: boolean;
   inBaseImage: boolean;
-  auth: { secret: string; set: boolean; kind: "setupToken" | "apiKey" } | null;
+  auth: { secret: string; set: boolean } | null;
 }
 
 export function isolationLabel(i: Isolation): string {
@@ -183,6 +183,14 @@ export interface PullRequest {
   checksPassed: number;
   checksFailed: number;
   checksPending: number;
+}
+
+export interface FailedCheck {
+  name: string;
+  url: string;
+  description: string;
+  /** The end of the failed GitHub Actions job's log, around its error. */
+  log: string | null;
 }
 
 export interface PrComment {
@@ -424,6 +432,9 @@ export const api = {
   pushBranch: (worktreePath: string) => invoke<void>("push_branch", { worktreePath }),
   prReviewComments: (worktreePath: string, number: number) =>
     invoke<PrComment[]>("pr_review_comments", { worktreePath, number }),
+  githubImage: (worktreePath: string, url: string) => invoke<string>("github_image", { worktreePath, url }),
+  prFailedChecks: (worktreePath: string, number: number) =>
+    invoke<FailedCheck[]>("pr_failed_checks", { worktreePath, number }),
   environmentTemplates: (isolation: Isolation) => invoke<string[]>("environment_templates", { isolation }),
   snapshots: () => invoke<Snapshot[]>("snapshots"),
   writeClipboard: (text: string) => invoke<void>("write_clipboard", { text }),

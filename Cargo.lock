@@ -5464,6 +5464,7 @@ name = "worki-core"
 version = "0.4.3"
 dependencies = [
  "anyhow",
+ "base64 0.23.1",
  "dirs 6.0.0",
  "rusqlite",
  "serde",

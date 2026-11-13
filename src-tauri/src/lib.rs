@@ -211,6 +211,8 @@ pub fn run() {
             commands::fetch_remote,
             commands::compare_base,
             commands::pr_review_comments,
+            commands::pr_failed_checks,
+            commands::github_image,
         ])
         .build(tauri::generate_context!())
         .expect("error while building worki");

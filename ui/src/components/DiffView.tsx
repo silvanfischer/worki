@@ -1,9 +1,25 @@
 import clsx from "clsx";
-import { ChevronDown, ChevronsUpDown, ChevronUp, MessageSquarePlus, Send, Trash2, X } from "lucide-react";
-import { Fragment, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import {
+  ChevronDown,
+  ChevronsUpDown,
+  ChevronUp,
+  Image as ImageIcon,
+  LoaderCircle,
+  MessageSquare,
+  MessageSquarePlus,
+  Pencil,
+  Send,
+  Trash2,
+  X,
+} from "lucide-react";
+import { Fragment, type MouseEvent, type ReactNode, useMemo, useState } from "react";
+import Markdown, { type Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import { type DiffLine, diffRows, type GapReveal, parseDiff } from "../lib/diff";
-import { errorMessage } from "../lib/api";
+import { api, errorMessage } from "../lib/api";
 import { useFileDiff, useSessions } from "../lib/queries";
 import {
   type ReviewComment,
@@ -18,6 +34,11 @@ import { Button, DiffStat, ErrorText, IconButton, Textarea } from "./ui";
 
 /** Keeps comment rows in view while the code beside them scrolls sideways. */
 const PINNED = "sticky left-0 w-[100cqw] px-3";
+/** A comment card, starting where the code starts, after the two line number columns. */
+const CARD = "my-1.5 max-w-3xl overflow-hidden rounded-xl border bg-elevated shadow-sm";
+const INSET = "mr-3 ml-[9em]";
+
+const lineLabel = (side: "new" | "old", line: number) => (side === "old" ? `removed line ${line}` : `line ${line}`);
 
 const REVEAL_STEP = 20;
 
@@ -156,10 +177,11 @@ export function DiffView({
                     ))}
                     {drafting === key && (
                       <tr>
-                        <td colSpan={3} className="border-y border-line bg-panel py-2 font-sans">
+                        <td colSpan={3} className="font-sans">
                           <div className={PINNED}>
                             <CommentEditor
                               initial=""
+                              where={lineLabel(at.side, at.line)}
                               submitLabel="Add comment"
                               sendTo={target?.title}
                               onSend={async (text) => {
@@ -233,17 +255,29 @@ function GapRow({
   );
 }
 
-function CommentRow({ worktreePath, comment }: { worktreePath: string; comment: ReviewComment }) {
+function CommentRow({
+  worktreePath,
+  comment,
+  inset = true,
+}: {
+  worktreePath: string;
+  comment: ReviewComment;
+  /** Lines the card up with the code, past the line number columns. */
+  inset?: boolean;
+}) {
   const update = useReview((s) => s.update);
   const remove = useReview((s) => s.remove);
   const [editing, setEditing] = useState(false);
+  const where = lineLabel(comment.side, comment.line);
   return (
     <tr>
-      <td colSpan={3} className="border-y border-line bg-panel py-2 font-sans">
+      <td colSpan={3} className="font-sans">
         <div className={PINNED}>
           {editing ? (
             <CommentEditor
               initial={comment.text}
+              where={where}
+              inset={inset}
               submitLabel="Save"
               onCancel={() => setEditing(false)}
               onSubmit={(text) => {
@@ -252,13 +286,20 @@ function CommentRow({ worktreePath, comment }: { worktreePath: string; comment: 
               }}
             />
           ) : (
-            <div className="flex items-start gap-2">
-              <p className="flex-1 cursor-text fs-diff whitespace-pre-wrap" onClick={() => setEditing(true)}>
-                {comment.text}
-              </p>
-              <IconButton label="Delete comment" onClick={() => remove(worktreePath, comment.id)}>
-                <Trash2 size={12} />
-              </IconButton>
+            <div className={clsx(CARD, inset && INSET, "group/comment border-line")}>
+              <CommentHeader where={where}>
+                <div className="flex items-center opacity-0 transition-opacity group-hover/comment:opacity-100">
+                  <IconButton label="Edit comment" onClick={() => setEditing(true)}>
+                    <Pencil size={12} />
+                  </IconButton>
+                  <IconButton label="Delete comment" onClick={() => remove(worktreePath, comment.id)}>
+                    <Trash2 size={12} />
+                  </IconButton>
+                </div>
+              </CommentHeader>
+              <div className="cursor-text px-3 pt-0.5 pb-3" onClick={() => setEditing(true)}>
+                <CommentText worktreePath={worktreePath} text={comment.text} />
+              </div>
             </div>
           )}
         </div>
@@ -297,7 +338,7 @@ function OrphanComments({
                   {c.line}: {c.code.trim()}
                 </td>
               </tr>
-              <CommentRow worktreePath={worktreePath} comment={c} />
+              <CommentRow worktreePath={worktreePath} comment={c} inset={false} />
             </Fragment>
           ))}
         </tbody>
@@ -306,8 +347,118 @@ function OrphanComments({
   );
 }
 
+/** GitHub writes attached images as HTML `<img>` tags; Markdown reads them as images. */
+function imgTagsToMarkdown(text: string) {
+  return text.replace(/<img\b[^>]*>/gi, (tag) => {
+    const attr = (name: string) => tag.match(new RegExp(`\\b${name}\\s*=\\s*["']([^"']*)["']`, "i"))?.[1];
+    const src = attr("src");
+    return src ? `![${attr("alt") ?? "image"}](${src})` : tag;
+  });
+}
+
+const commentMarkdown = (worktreePath: string): Components => ({
+  a: ({ href, children }) => (
+    <a
+      href={href}
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (href) openUrl(href).catch(() => {});
+      }}
+      className="text-accent hover:underline"
+    >
+      {children}
+    </a>
+  ),
+  img: ({ src, alt }) => (
+    <CommentImage worktreePath={worktreePath} src={typeof src === "string" ? src : ""} alt={alt ?? ""} />
+  ),
+  p: ({ children }) => <p className="my-1.5 first:mt-0 last:mb-0">{children}</p>,
+  ul: ({ children }) => <ul className="my-1.5 list-disc pl-5">{children}</ul>,
+  ol: ({ children }) => <ol className="my-1.5 list-decimal pl-5">{children}</ol>,
+  pre: ({ children }) => (
+    <pre className="my-2 overflow-x-auto rounded-md bg-hover px-3 py-2 font-mono fs-diff-sm [&_code]:bg-transparent [&_code]:p-0">
+      {children}
+    </pre>
+  ),
+  code: ({ children }) => <code className="rounded bg-hover px-1 py-0.5 font-mono fs-diff-sm">{children}</code>,
+  blockquote: ({ children }) => <blockquote className="my-1.5 border-l-2 border-line pl-3 text-muted">{children}</blockquote>,
+});
+
+function CommentText({ worktreePath, text }: { worktreePath: string; text: string }) {
+  const components = useMemo(() => commentMarkdown(worktreePath), [worktreePath]);
+  return (
+    <div className="fs-diff leading-relaxed break-words text-fg">
+      <Markdown remarkPlugins={[remarkGfm]} components={components}>
+        {imgTagsToMarkdown(text)}
+      </Markdown>
+    </div>
+  );
+}
+
+const GITHUB_ATTACHMENT = /^https:\/\/github\.com\/(user-attachments|[^/]+\/[^/]+)\/assets\//;
+
+/** GitHub attachments only load for signed-in users, so worki fetches them with the GitHub CLI's
+ * login. An image that can't be loaded becomes a link to it. */
+function CommentImage({ worktreePath, src, alt }: { worktreePath: string; src: string; alt: string }) {
+  const attachment = GITHUB_ATTACHMENT.test(src);
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ["githubImage", src],
+    queryFn: () => api.githubImage(worktreePath, src),
+    enabled: attachment,
+    staleTime: Infinity,
+    gcTime: 10 * 60_000,
+    retry: false,
+  });
+  const [failed, setFailed] = useState(false);
+  const open = (e: MouseEvent) => {
+    e.stopPropagation();
+    openUrl(src).catch(() => {});
+  };
+  if (attachment && isLoading)
+    return (
+      <span className="my-1.5 inline-flex items-center gap-1.5 fs-diff-sm text-faint">
+        <LoaderCircle size={12} className="animate-spin" />
+        Loading image…
+      </span>
+    );
+  if (failed || !src || isError)
+    return (
+      <button onClick={open} className="inline-flex items-center gap-1 text-accent hover:underline">
+        <ImageIcon size={12} />
+        {alt || "image"}
+      </button>
+    );
+  return (
+    <img
+      src={attachment ? data : src}
+      alt={alt}
+      loading="lazy"
+      onError={() => setFailed(true)}
+      onClick={open}
+      className="my-1.5 max-h-80 max-w-full cursor-zoom-in rounded-lg border border-line"
+    />
+  );
+}
+
+function CommentHeader({ where, children }: { where: string; children?: ReactNode }) {
+  return (
+    <div className="flex h-8 items-center gap-2 pr-1 pl-3 fs-diff-sm text-faint">
+      <span className="flex size-5 items-center justify-center rounded-full bg-accent/15 text-accent">
+        <MessageSquare size={11} />
+      </span>
+      <span className="font-medium text-muted">Comment</span>
+      <span>· {where}</span>
+      <span className="flex-1" />
+      {children}
+    </div>
+  );
+}
+
 function CommentEditor({
   initial,
+  where,
+  inset = true,
   submitLabel,
   sendTo,
   onSubmit,
@@ -315,6 +466,8 @@ function CommentEditor({
   onCancel,
 }: {
   initial: string;
+  where: string;
+  inset?: boolean;
   submitLabel: string;
   sendTo?: string;
   onSubmit: (text: string) => void;
@@ -331,14 +484,15 @@ function CommentEditor({
     onSend(text.trim()).catch((e) => setError(errorMessage(e)));
   };
   return (
-    <div className="flex flex-col gap-2">
+    <div className={clsx(CARD, inset && INSET, "border-accent/60 ring-3 ring-accent/12")}>
+      <CommentHeader where={where} />
       <Textarea
         autoFocus
         rows={3}
         value={text}
         onChange={(e) => setText(e.target.value)}
         placeholder="What should the agent change here?"
-        className="font-sans fs-diff"
+        className="block resize-none rounded-none border-transparent! bg-transparent! px-3 pt-0.5 font-sans fs-diff leading-relaxed outline-none!"
         onKeyDown={(e) => {
           if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
             e.preventDefault();
@@ -348,7 +502,10 @@ function CommentEditor({
           if (e.key === "Escape") onCancel();
         }}
       />
-      <div className="flex justify-end gap-2">
+      <div className="flex flex-wrap items-center justify-end gap-2 border-t border-line bg-panel/60 px-3 py-2 [&_button]:whitespace-nowrap">
+        <span className="mr-auto hidden fs-diff-sm text-faint @2xl:inline">
+          {canSend ? "↩ sends now · ⌘↩ adds to the review" : "↩ adds to the review"} · Esc cancels
+        </span>
         <Button variant="ghost" onClick={onCancel}>
           Cancel
         </Button>
@@ -372,7 +529,11 @@ function CommentEditor({
           </Button>
         )}
       </div>
-      <ErrorText>{error}</ErrorText>
+      {error && (
+        <div className="px-3 pb-2">
+          <ErrorText>{error}</ErrorText>
+        </div>
+      )}
     </div>
   );
 }

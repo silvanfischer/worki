@@ -350,6 +350,33 @@ pub async fn push_branch(state: State<'_, AppState>, worktree_path: PathBuf) -> 
     state.projects.push(&worktree_path).await.map_err(err)
 }
 
+/// A GitHub attachment from a review comment, as a `data:` URL.
+#[tauri::command]
+pub async fn github_image(
+    state: State<'_, AppState>,
+    worktree_path: PathBuf,
+    url: String,
+) -> CmdResult<String> {
+    state
+        .projects
+        .github_image(&worktree_path, &url)
+        .await
+        .map_err(err)
+}
+
+#[tauri::command]
+pub async fn pr_failed_checks(
+    state: State<'_, AppState>,
+    worktree_path: PathBuf,
+    number: u64,
+) -> CmdResult<Vec<FailedCheck>> {
+    state
+        .projects
+        .pr_failed_checks(&worktree_path, number)
+        .await
+        .map_err(err)
+}
+
 #[tauri::command]
 pub async fn pr_review_comments(
     state: State<'_, AppState>,

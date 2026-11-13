@@ -212,16 +212,7 @@ interface MenuItem {
   onSelect: () => void;
 }
 
-export function Menu({
-  trigger,
-  items,
-  above = false,
-}: {
-  trigger: (open: () => void) => ReactNode;
-  items: MenuItem[];
-  /** Opens above the trigger, starting at its left edge, for triggers at the bottom left. */
-  above?: boolean;
-}) {
+export function Menu({ trigger, items }: { trigger: (open: () => void) => ReactNode; items: MenuItem[] }) {
   const [isOpen, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -241,13 +232,7 @@ export function Menu({
     <div ref={ref} className="relative">
       {trigger(() => setOpen((o) => !o))}
       {isOpen && (
-        <div
-          data-overlay
-          className={clsx(
-            "absolute z-40 min-w-48 rounded-lg border border-line bg-elevated p-1 shadow-xl",
-            above ? "bottom-full left-0 mb-1" : "right-0 mt-1",
-          )}
-        >
+        <div data-overlay className="absolute right-0 z-40 mt-1 min-w-48 rounded-lg border border-line bg-elevated p-1 shadow-xl">
           <MenuItems items={items} onDone={() => setOpen(false)} />
         </div>
       )}

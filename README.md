@@ -59,8 +59,8 @@ checks it and cleans it up again.
   worktree's environment the first time you start it there, and the agent trusts the worktree
   without asking. Copy your agent configuration (settings, `CLAUDE.md`, agents, commands, skills)
   into every environment, and sign in with a token that uses your subscription, while your own
-  login stays untouched. Codex signs in with an API key, or per environment with a code you
-  approve in the browser.
+  login stays untouched. Codex signs in per environment with a code you approve in the
+  browser.
 - **Secrets stay in your Keychain.** Tokens are stored per isolation and passed to sessions as
   environment variables.
 - **Snapshots.** Install what a project needs (a JDK, system packages) once, save the worktree's
@@ -105,7 +105,7 @@ Run Claude Code or Codex in its terminal, or as a chat that worki draws itself:
 Choose the default under Settings › General; the **+** menu offers both.
 
 **Codex** runs as a chat or in a terminal, in any isolation. worki installs it with OpenAI's
-installer, signs it in with an OpenAI API key from your Keychain, lists it under
+installer, signs it in per environment with a code you approve in the browser, lists it under
 **Needs you** when it asks for approval or finishes a turn, and resumes its conversation when
 worki starts again. The status bar details (model, context, token usage) are Claude Code only.
 

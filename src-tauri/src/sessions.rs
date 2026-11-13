@@ -295,7 +295,7 @@ async fn ready_agent(
             .await
             .map_err(err)?;
         if ChatAgent::of(profile) == Some(ChatAgent::Codex) {
-            crate::agents::sign_in_codex(state, instance, worktree, isolation, &agent).await?;
+            crate::agents::sign_in_codex(state, instance, worktree, &agent).await?;
         }
     }
     Ok(())
