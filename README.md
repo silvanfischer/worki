@@ -80,7 +80,7 @@ checks it and cleans it up again.
   <img src="docs/screenshots/chat.png" alt="Claude Code as a chat: a diagram, a chart and a permission request" width="900">
 </p>
 
-Run Claude Code in its terminal, or as a chat that worki draws itself:
+Run Claude Code or Codex in its terminal, or as a chat that worki draws itself:
 
 - **The conversation, readable.** Answers stream in as Markdown, tool calls fold into one line
   each and open to show the command, the diff or the output.
