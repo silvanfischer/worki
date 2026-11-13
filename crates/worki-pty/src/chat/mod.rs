@@ -101,6 +101,10 @@ pub enum ChatEvent {
     BackgroundTasks {
         tasks: Vec<BackgroundTask>,
     },
+    /// What the user might send next, predicted by the agent after a turn.
+    Suggestion {
+        text: String,
+    },
     TurnEnded {
         ok: bool,
         interrupted: bool,

@@ -4,7 +4,7 @@ import { Coins, GitBranch, GitCompareArrows, MoreHorizontal, Send, SquareTermina
 
 import { type ChangedFile, errorMessage, type Project, type Worktree, worktreeLabel } from "../lib/api";
 import { useBranchChanges, useCompareBase, useSessions, useWorktreeStatus } from "../lib/queries";
-import { reviewPrompt, reviewTarget, sendReview, useReview, useWorktreeComments } from "../lib/review";
+import { type ReviewComment, reviewPrompt, reviewTarget, sendReview, useReview, useWorktreeComments } from "../lib/review";
 import { usePlayful } from "../lib/playful";
 import { useUi } from "../lib/store";
 import { formatTokens, totalUsage, usageDetails } from "../lib/usage";
@@ -26,6 +26,15 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
   const toggleTerminal = useUi((s) => s.toggleTerminal);
   const { data: status, error } = useWorktreeStatus(worktree.path, 5_000);
   const [diffFile, setDiffFile] = useState<string | null>(null);
+  const [focus, setFocus] = useState<{ id: string } | null>(null);
+  const openFile = (file: string | null) => {
+    setDiffFile(file);
+    setFocus(null);
+  };
+  const openComment = (c: ReviewComment) => {
+    setDiffFile(c.file);
+    setFocus({ id: c.id });
+  };
   const widths = useUi((s) => s.panelWidths);
   const comments = useWorktreeComments(worktree.path);
   const scope = useUi((s) => s.changesScope);
@@ -99,6 +108,7 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
               worktreePath={worktree.path}
               file={diffFile}
               base={branchScope ? base : null}
+              focus={focus}
               onClose={() => setDiffFile(null)}
             />
           </section>
@@ -148,7 +158,7 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
                     onExclude={setExcluded}
                     comments={comments}
                     diffFile={diffFile}
-                    onOpen={setDiffFile}
+                    onOpen={openFile}
                   />
                   {showCommits && !!status?.changedFiles.length && (
                     <CommitBox
@@ -183,14 +193,14 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
                       inSection
                       comments={comments}
                       diffFile={diffFile}
-                      onOpen={setDiffFile}
+                      onOpen={openFile}
                     />
                   </Section>
                   {showPullRequests && worktree.branch && !onBase && <PrSection worktree={worktree} base={base} />}
                 </>
               )}
             </div>
-            <ReviewBar worktreePath={worktree.path} onOpen={setDiffFile} />
+            <ReviewBar worktreePath={worktree.path} onOpen={openComment} />
           </aside>
         )}
       </div>
@@ -214,7 +224,7 @@ function WorktreeUsage({ worktreePath }: { worktreePath: string }) {
   );
 }
 
-function ReviewBar({ worktreePath, onOpen }: { worktreePath: string; onOpen: (file: string) => void }) {
+function ReviewBar({ worktreePath, onOpen }: { worktreePath: string; onOpen: (comment: ReviewComment) => void }) {
   const comments = useWorktreeComments(worktreePath);
   const clear = useReview((s) => s.clear);
   const { data: sessions = [] } = useSessions();
@@ -226,7 +236,7 @@ function ReviewBar({ worktreePath, onOpen }: { worktreePath: string; onOpen: (fi
 
   const agents = sessions.filter((s) => s.worktreePath === worktreePath && s.profileId && s.state.kind === "running");
   const target = agents.find((s) => s.id === picked) ?? reviewTarget(agents, activeId);
-  const files = [...new Set(comments.filter((c) => !c.check).map((c) => c.file))];
+  const onLines = comments.filter((c) => !c.check);
   const checks = [...new Set(comments.flatMap((c) => (c.check ? [c.check] : [])))];
 
   async function send() {
@@ -252,9 +262,17 @@ function ReviewBar({ worktreePath, onOpen }: { worktreePath: string; onOpen: (fi
         </button>
       </div>
       <div className="flex flex-col">
-        {files.map((f) => (
-          <button key={f} onClick={() => onOpen(f)} className="truncate text-left font-mono fs-panel-sm text-muted hover:text-fg">
-            {f}
+        {onLines.map((c) => (
+          <button
+            key={c.id}
+            onClick={() => onOpen(c)}
+            title={c.text}
+            className="flex min-w-0 items-baseline gap-2 rounded px-1 py-0.5 text-left fs-panel-sm text-muted -mx-1 hover:bg-hover hover:text-fg"
+          >
+            <span className="shrink-0 font-mono">
+              {c.file.split("/").pop()}:{c.line}
+            </span>
+            <span className="min-w-0 truncate text-faint">{c.text}</span>
           </button>
         ))}
         {checks.map((name) => (

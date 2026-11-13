@@ -400,7 +400,8 @@ impl ClaudeProtocol {
 
 impl ChatProtocol for ClaudeProtocol {
     fn start(&mut self) -> Vec<String> {
-        let mut lines = vec![self.control(json!({ "subtype": "initialize", "hooks": null }))];
+        let mut lines = vec![self
+            .control(json!({ "subtype": "initialize", "hooks": null, "promptSuggestions": true }))];
         if self.remote_control_at_start {
             lines.push(self.remote_control(true));
         }
@@ -538,6 +539,12 @@ impl ChatProtocol for ClaudeProtocol {
                         .collect(),
                 }]
             }
+            Some("prompt_suggestion") => match msg["suggestion"].as_str() {
+                Some(text) if !text.trim().is_empty() => vec![ChatEvent::Suggestion {
+                    text: text.to_owned(),
+                }],
+                _ => Vec::new(),
+            },
             Some("stream_event") => self.stream_event(&msg, parent),
             Some("assistant") => self.assistant(&msg, parent),
             Some("user") if msg["isReplay"] == true => match msg["uuid"].as_str() {
@@ -1159,10 +1166,29 @@ mod tests {
     }
 
     #[test]
+    fn reads_prompt_suggestions() {
+        let mut p = ClaudeProtocol::new("s");
+        let events = parse_all(
+            &mut p,
+            &[
+                r#"{"type":"prompt_suggestion","suggestion":"Run the tests","uuid":"u1","session_id":"s"}"#,
+                r#"{"type":"prompt_suggestion","suggestion":"  ","uuid":"u2","session_id":"s"}"#,
+            ],
+        );
+        assert_eq!(
+            events,
+            vec![ChatEvent::Suggestion {
+                text: "Run the tests".into()
+            }]
+        );
+    }
+
+    #[test]
     fn writes_messages_and_interrupts() {
         let mut p = ClaudeProtocol::new("s");
         let start: Value = serde_json::from_str(&p.start()[0]).unwrap();
         assert_eq!(start["request"]["subtype"], "initialize");
+        assert_eq!(start["request"]["promptSuggestions"], true);
         let message: Value = serde_json::from_str(&p.message("m1", "hi", &[])[0]).unwrap();
         assert_eq!(message["type"], "user");
         assert_eq!(message["message"]["content"][0]["text"], "hi");

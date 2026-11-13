@@ -57,6 +57,8 @@ export interface Chat {
   /** When the current turn started, in ms. */
   turnStarted: number | null;
   background: (BackgroundTask & { started: number })[];
+  /** What the user might send next, as the agent predicted it after its last turn. */
+  suggestion: string | null;
 }
 
 /** Builds the conversation from chat events. A changed item is replaced by a new object, so
@@ -72,6 +74,7 @@ export class ChatModel {
   private status: Chat["status"] = null;
   private turnStarted: number | null = null;
   private background: Chat["background"] = [];
+  private suggestion: string | null = null;
   /** Item keys of the messages the agent hasn't read yet, by message id. */
   private unread = new Map<string, string>();
   private seq = 0;
@@ -80,6 +83,7 @@ export class ChatModel {
     const at = event.at ?? Date.now();
     switch (event.type) {
       case "user": {
+        this.suggestion = null;
         const key = `u${this.seq++}`;
         const queued = !!event.id && this.turnStarted !== null;
         if (event.id) this.unread.set(event.id, key);
@@ -142,6 +146,9 @@ export class ChatModel {
       case "status":
         this.status = { status: event.status, tool: event.tool };
         break;
+      case "suggestion":
+        this.suggestion = event.text;
+        break;
       case "backgroundTasks": {
         const seen = new Map(this.background.map((t) => [t.id, t.started]));
         this.background = event.tasks.map((t) => ({ ...t, started: seen.get(t.id) ?? at }));
@@ -155,6 +162,7 @@ export class ChatModel {
       case "exited":
         this.endTurn();
         this.background = [];
+        this.suggestion = null;
         for (const key of this.unread.values()) this.markRead(key);
         this.unread.clear();
         this.exited = { code: event.code, error: event.error };
@@ -181,6 +189,7 @@ export class ChatModel {
       status: this.status,
       turnStarted: this.turnStarted,
       background: this.background,
+      suggestion: this.suggestion,
     };
   }
 

@@ -184,3 +184,20 @@ button {
 }
 
 .playful-fade { animation: playful-fade 4s ease-in forwards; }
+
+@keyframes shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+
+.shimmer {
+  background: linear-gradient(90deg, var(--muted) 35%, var(--fg) 50%, var(--muted) 65%) 0 0 / 200% 100%;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer 2.2s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shimmer { animation: none; color: var(--muted); background: none; }
+  .chat-spinner * { animation-play-state: paused !important; }
+}

@@ -14,7 +14,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { Fragment, type MouseEvent, type ReactNode, useMemo, useState } from "react";
+import { Fragment, type MouseEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -52,11 +52,14 @@ export function DiffView({
   worktreePath,
   file,
   base,
+  focus,
   onClose,
 }: {
   worktreePath: string;
   file: string;
   base: string | null;
+  /** The comment to scroll to; a new object scrolls to it again. */
+  focus?: { id: string } | null;
   onClose: () => void;
 }) {
   const { data, error, isLoading } = useFileDiff(worktreePath, file, base);
@@ -87,20 +90,33 @@ export function DiffView({
       const cur = r[id] ?? { head: 0, tail: 0 };
       return { ...r, [id]: { head: cur.head + (patch.head ?? 0), tail: cur.tail + (patch.tail ?? 0) } };
     });
+  const scroller = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!focus || !parsed) return;
+    const card = scroller.current?.querySelector(`[data-comment="${CSS.escape(focus.id)}"]`)?.firstElementChild;
+    if (!card) return;
+    card.scrollIntoView({ block: "center", behavior: "smooth" });
+    card.animate(
+      [{ boxShadow: "0 0 0 2px var(--accent)" }, { boxShadow: "0 0 0 2px var(--accent)", offset: 0.6 }, { boxShadow: "0 0 0 2px transparent" }],
+      { duration: 1600 },
+    );
+  }, [focus, parsed]);
   const added = parsed?.lines.filter((l) => l.kind === "add").length ?? 0;
   const removed = parsed?.lines.filter((l) => l.kind === "del").length ?? 0;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex h-13 shrink-0 items-center gap-2 border-b border-line px-3">
-        <span className="selectable min-w-0 flex-1 truncate pl-1 font-mono fs-diff">{file}</span>
+        <span dir="rtl" title={file} className="selectable min-w-0 flex-1 truncate pl-1 text-left font-mono fs-diff">
+          <bdi>{file}</bdi>
+        </span>
         {base && <span className="fs-diff-sm text-faint">vs {base}</span>}
         {parsed && <DiffStat insertions={added} deletions={removed} />}
         <IconButton label="Close diff" onClick={onClose}>
           <X size={14} />
         </IconButton>
       </div>
-      <div className="selectable @container min-h-0 flex-1 overflow-auto font-mono fs-diff leading-[1.6]">
+      <div ref={scroller} className="selectable @container min-h-0 flex-1 overflow-auto font-mono fs-diff leading-[1.6]">
         {isLoading && <p className="p-3 text-faint">Loading diff…</p>}
         {error && (
           <div className="p-3">
@@ -272,7 +288,7 @@ function CommentRow({
   return (
     <tr>
       <td colSpan={3} className="font-sans">
-        <div className={PINNED}>
+        <div className={PINNED} data-comment={comment.id}>
           {editing ? (
             <CommentEditor
               initial={comment.text}

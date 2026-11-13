@@ -1,5 +1,23 @@
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { Bouncy, ChaoticOrbit, DotPulse, DotStream, DotWave, Helix, Mirage, Orbit, Ping, Pulsar, Quantum, Ripples, Squircle, TailChase, Tailspin, Trio, Waveform } from "ldrs/react";
+import "ldrs/react/Bouncy.css";
+import "ldrs/react/ChaoticOrbit.css";
+import "ldrs/react/DotPulse.css";
+import "ldrs/react/DotStream.css";
+import "ldrs/react/DotWave.css";
+import "ldrs/react/Helix.css";
+import "ldrs/react/Mirage.css";
+import "ldrs/react/Orbit.css";
+import "ldrs/react/Ping.css";
+import "ldrs/react/Pulsar.css";
+import "ldrs/react/Quantum.css";
+import "ldrs/react/Ripples.css";
+import "ldrs/react/Squircle.css";
+import "ldrs/react/TailChase.css";
+import "ldrs/react/Tailspin.css";
+import "ldrs/react/Trio.css";
+import "ldrs/react/Waveform.css";
 import clsx from "clsx";
 import {
   ArrowUp,
@@ -192,7 +210,7 @@ function UserMessage({ item, session }: { item: UserItem; session: SessionInfo }
   return (
     <div
       className={clsx(
-        "flex max-w-[85%] flex-col gap-1.5 self-end rounded-lg px-3 py-2 fs-chat whitespace-pre-wrap wrap-anywhere",
+        "my-10 flex max-w-[85%] flex-col gap-1.5 self-end rounded-lg px-3 py-2 fs-chat first:mt-0 whitespace-pre-wrap wrap-anywhere",
         item.queued ? "border border-dashed border-line bg-hover" : "bg-selected",
       )}
     >
@@ -291,10 +309,38 @@ function Activity({ chat, root }: { chat: Chat; root: string }) {
   const now = useNow(true);
   return (
     <div className="flex min-w-0 items-center gap-2 fs-chat-xs text-muted">
-      <LoaderCircle size={12} className="shrink-0 animate-spin" />
-      <span className="min-w-0 truncate">{activityLabel(chat, root)}…</span>
+      <Spinner seed={chat.turnStarted ?? 0} />
+      <span className="shimmer min-w-0 truncate">{activityLabel(chat, root)}…</span>
       {chat.turnStarted && <span className="shrink-0 text-faint tabular-nums">{elapsed(chat.turnStarted, now)}</span>}
     </div>
+  );
+}
+
+const SPINNERS: ReactNode[] = [
+  <DotPulse size="22" color="var(--accent)" />,
+  <DotWave size="22" color="var(--accent)" />,
+  <DotStream size="22" color="var(--accent)" />,
+  <Bouncy size="22" color="var(--accent)" />,
+  <ChaoticOrbit size="14" color="var(--accent)" />,
+  <Orbit size="14" color="var(--accent)" />,
+  <Ping size="14" color="var(--accent)" />,
+  <Quantum size="14" color="var(--accent)" />,
+  <Ripples size="14" color="var(--accent)" />,
+  <Pulsar size="14" color="var(--accent)" />,
+  <Helix size="14" color="var(--accent)" />,
+  <Trio size="14" color="var(--accent)" />,
+  <Mirage size="22" color="var(--accent)" />,
+  <TailChase size="14" color="var(--accent)" />,
+  <Waveform size="14" stroke="2" color="var(--accent)" />,
+  <Tailspin size="14" stroke="2" color="var(--accent)" />,
+  <Squircle size="14" stroke="2" color="var(--accent)" />,
+];
+
+function Spinner({ seed }: { seed: number }) {
+  return (
+    <span aria-hidden className="chat-spinner flex h-4 shrink-0 items-center">
+      {SPINNERS[seed % SPINNERS.length]}
+    </span>
   );
 }
 
@@ -652,6 +698,7 @@ function Composer({ session, chat, onSend }: { session: SessionInfo; chat: Chat;
   useEffect(() => input.current?.focus(), [session.id]);
   const ready = !!text.trim() || attached.length > 0;
   const busy = session.activity !== "idle";
+  const suggestion = !busy && !text && attached.length === 0 ? chat.suggestion : null;
 
   async function send() {
     if (!ready || sending) return;
@@ -761,14 +808,29 @@ function Composer({ session, chat, onSend }: { session: SessionInfo; chat: Chat;
             onChange={(e) => setText(e.target.value)}
             onPaste={paste}
             onKeyDown={(e) => {
+              if (suggestion && (e.key === "Tab" || e.key === "ArrowRight") && !e.shiftKey) {
+                e.preventDefault();
+                setText(suggestion);
+                return;
+              }
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
                 send();
               }
             }}
-            placeholder={busy ? "Add to what the agent is doing…" : `Message ${session.title}`}
+            placeholder={suggestion ?? (busy ? "Add to what the agent is doing…" : `Message ${session.title}`)}
             className="flex-1 border-transparent! bg-transparent px-1 font-sans fs-chat! outline-none!"
           />
+          {suggestion && (
+            <div className={lineBox}>
+              <kbd
+                title="Press Tab to use the suggested prompt"
+                className="rounded border border-line px-1 font-sans fs-chat-xs text-faint"
+              >
+                Tab
+              </kbd>
+            </div>
+          )}
           <div className={lineBox}>
             {busy && !ready ? (
               <button

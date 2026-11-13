@@ -323,6 +323,7 @@ export type ChatEvent = (
   | { type: "notice"; text: string }
   | { type: "status"; status: AgentStatusKind; tool: string | null }
   | { type: "backgroundTasks"; tasks: BackgroundTask[] }
+  | { type: "suggestion"; text: string }
   | { type: "turnEnded"; ok: boolean; interrupted: boolean; error: string | null }
   | { type: "exited"; code: number; error: string | null }
 ) & {

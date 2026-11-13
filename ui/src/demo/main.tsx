@@ -484,15 +484,26 @@ function handle(cmd: string, args: Record<string, any>): unknown {
         { type: "user", id, text: args.text, attachments: (args.attachments ?? []).map((a: { path?: string; name?: string }) => a.name ?? a.path?.split("/").pop()) },
         { type: "userRead", id },
       );
+      const s = sessions.find((s) => s.id === args.id);
+      const setActivity = (activity: string) =>
+        s &&
+        import("@tauri-apps/api/event").then(({ emit }) => {
+          Object.assign(s, { activity, attention: null });
+          emit("session-changed", s);
+        });
+      setActivity("working");
       let i = 0;
       const words = "Sure — I'll take care of that next.".split(" ");
       const tick = () => {
         if (i < words.length) {
           sendChat({ type: "textDelta", id: `r${now}`, parent: null, text: (i ? " " : "") + words[i++] });
           setTimeout(tick, 120);
-        } else sendChat({ type: "turnEnded", ok: true, interrupted: false, error: null });
+        } else {
+          sendChat({ type: "turnEnded", ok: true, interrupted: false, error: null });
+          setActivity("idle");
+        }
       };
-      setTimeout(tick, 300);
+      setTimeout(tick, 2500);
       return null;
     }
     case "answer_chat_permission": {
@@ -504,7 +515,14 @@ function handle(cmd: string, args: Record<string, any>): unknown {
           { type: "toolResult", id: "t3", parent: null, isError: false, output: " ✓ src/checkout/Summary.test.tsx (10 tests) 431ms\n Test Files  1 passed (1)" },
           { type: "text", id: "m3:0", parent: null, text: "All 10 checkout tests pass." },
           { type: "turnEnded", ok: true, interrupted: false, error: null },
+          { type: "suggestion", text: "Commit the empty cart fix" },
         );
+      const s = sessions.find((s) => s.id === args.id);
+      if (allowed && s)
+        import("@tauri-apps/api/event").then(({ emit }) => {
+          Object.assign(s, { activity: "idle", attention: null });
+          emit("session-changed", s);
+        });
       return null;
     }
     case "change_chat_setting": {
