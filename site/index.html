@@ -35,7 +35,7 @@
       </p>
       <ul class="backends" aria-label="Isolation backends">
         <li>User Isolation</li>
-        <li>Docker Sandboxes</li>
+        <li>Docker Sandbox (sbx)</li>
         <li>Docker</li>
         <li>Podman</li>
       </ul>
@@ -95,7 +95,7 @@
       </div>
       <div class="cards">
         <article><h3>User Isolation</h3><p>A hidden macOS user that can only reach the worktrees it was given. Your home folder stays unreadable.</p><span>Built in</span></article>
-        <article><h3>Docker Sandboxes</h3><p>Its own Linux microVM for every worktree.</p><span>Docker Sandboxes</span></article>
+        <article><h3>Docker Sandbox (sbx)</h3><p>Its own Linux microVM for every worktree.</p><span>Docker Sandboxes</span></article>
         <article><h3>Docker</h3><p>Its own container per worktree, from a small image worki builds for you.</p><span>Docker Desktop</span></article>
         <article><h3>Podman</h3><p>The same containers, on a Podman machine.</p><span>Podman</span></article>
         <article><h3>None</h3><p>Runs as you, for work you trust.</p><span>Nothing</span></article>
@@ -128,7 +128,7 @@
         </figure>
         <figure class="shot">
           <img src="screenshots/terminal.png" width="3200" height="2000" loading="lazy"
-               alt="Claude Code in its terminal, running the tests in a Docker Sandbox">
+               alt="Claude Code in its terminal, running the tests in a Docker Sandbox (sbx)">
           <figcaption>Real, GPU-rendered terminals that keep running while you switch worktrees.</figcaption>
         </figure>
       </div>
@@ -189,7 +189,7 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0-5-5m5 5 5-5M5 21h14"/></svg>
         Download for macOS
       </a>
-      <p class="fine">For container isolation, install Docker Sandboxes, Docker Desktop or Podman. User Isolation needs nothing extra.</p>
+      <p class="fine">For container isolation, install Docker Sandbox (sbx), Docker Desktop or Podman. User Isolation needs nothing extra.</p>
       <details>
         <summary>Build from source</summary>
         <p>You need Rust, Node 20 or later, pnpm and the Xcode command line tools.</p>
