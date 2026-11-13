@@ -246,15 +246,28 @@ function ago(seconds: number): string {
   return `${Math.floor(s / 86400)}d`;
 }
 
-/** A titled block of the changes panel. */
-export function Section({ title, aside, children }: { title: ReactNode; aside?: ReactNode; children: ReactNode }) {
+/** A titled block of the changes panel. With `scroll`, its content scrolls below the title
+ * when the section has less room than it needs. */
+export function Section({
+  title,
+  aside,
+  scroll,
+  className,
+  children,
+}: {
+  title: ReactNode;
+  aside?: ReactNode;
+  scroll?: boolean;
+  className?: string;
+  children: ReactNode;
+}) {
   return (
-    <section className="flex flex-col gap-2.5 border-b border-line px-5 py-4">
-      <div className="flex items-center justify-between gap-2">
+    <section className={clsx("flex flex-col gap-2.5 border-b border-line px-5 py-4", scroll && "min-h-0", className)}>
+      <div className="flex shrink-0 items-center justify-between gap-2">
         <h3 className="truncate fs-panel-sm font-semibold tracking-wide text-faint uppercase">{title}</h3>
         {aside}
       </div>
-      {children}
+      {scroll ? <div className="-mx-5 min-h-0 overflow-y-auto px-5">{children}</div> : children}
     </section>
   );
 }
@@ -346,7 +359,7 @@ export function BranchStatus({
 
 function CommitRows({ commits }: { commits: CommitInfo[] }) {
   return (
-    <div className="flex max-h-48 flex-col overflow-y-auto">
+    <div className="flex flex-col">
       {commits.map((c) => (
         <div key={c.sha} className="flex h-7 items-center gap-2 fs-panel" title={`${c.sha.slice(0, 8)} · ${c.author}`}>
           <GitCommitHorizontal size={12} className="shrink-0 text-faint" />
@@ -362,7 +375,7 @@ function CommitRows({ commits }: { commits: CommitInfo[] }) {
 export function BranchCommits({ worktreePath, base }: { worktreePath: string; base: string }) {
   const { data: commits = [] } = useBranchLog(worktreePath, base);
   return (
-    <Section title={`Commits${commits.length ? ` (${commits.length})` : ""}`}>
+    <Section title={`Commits${commits.length ? ` (${commits.length})` : ""}`} scroll className="max-h-[30%]">
       {commits.length === 0 ? (
         <p className="fs-panel text-faint">None yet. Commit your work in the Changes tab.</p>
       ) : (
@@ -445,7 +458,7 @@ export function PrSection({ worktree, base }: { worktree: Worktree; base: string
   }
 
   return (
-    <Section title="Pull request">
+    <Section title="Pull request" scroll className="mt-auto max-h-[40%] border-t border-b-0">
       {isLoading && <p className="fs-panel text-faint">Checking GitHub…</p>}
       {error && <p className="fs-panel text-removed">{errorMessage(error)}</p>}
       {!isLoading && !error && !pr && (

@@ -147,7 +147,7 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
               </IconButton>
             </div>
 
-            <div className="selectable min-h-0 flex-1 overflow-y-auto">
+            <div className={clsx("selectable flex min-h-0 flex-1 flex-col", tab === "uncommitted" && "overflow-y-auto")}>
               {tab === "uncommitted" && (
                 <>
                   <FileList
@@ -183,6 +183,8 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
                   )}
                   {showCommits && <BranchCommits worktreePath={worktree.path} base={base} />}
                   <Section
+                    scroll
+                    className="min-h-24 flex-1"
                     title={`Files changed vs ${base}${branch.data ? ` (${branch.data.files.length})` : ""}`}
                     aside={branch.data && <DiffStat insertions={branch.data.insertions} deletions={branch.data.deletions} />}
                   >
