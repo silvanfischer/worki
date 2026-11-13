@@ -254,6 +254,7 @@ type DemoChannel = { onmessage?: (data: number[]) => void };
 let chatSettings: Record<string, string> = { model: "claude-opus-5-5", permissionMode: "default", effort: "high" };
 let chatChannel: DemoChannel | null = null;
 let sentMessages = 0;
+let shellCount = 0;
 const sendTo = (channel: DemoChannel | null, events: object[]) =>
   channel?.onmessage?.(Array.from(new TextEncoder().encode(events.map((e) => JSON.stringify(e) + "\n").join(""))));
 const sendChat = (...events: object[]) => sendTo(chatChannel, events);
@@ -433,18 +434,27 @@ function handle(cmd: string, args: Record<string, any>): unknown {
       return [];
     case "setup_scripts":
       return { project: null, repoFile: "pnpm install" };
-    case "spawn_worktree_shell":
-      return {
-        ...session("panel-shell", args.worktreePath, "idle"),
+    case "spawn_worktree_shell": {
+      const shell = {
+        ...session(`panel-shell-${++shellCount}`, args.worktreePath, "idle"),
         profileId: null,
         title: "Terminal",
         runAs: null,
         panel: true,
         usage: [],
+        createdAt: Date.now(),
       };
+      sessions.push(shell as unknown as (typeof sessions)[number]);
+      return shell;
+    }
+    case "close_session": {
+      const i = sessions.findIndex((s) => s.id === args.id);
+      if (i >= 0) sessions.splice(i, 1);
+      return null;
+    }
     case "attach_session": {
       const channel = args.onData;
-      if (args.id === "panel-shell")
+      if (args.id.startsWith("panel-shell"))
         setTimeout(() => channel.onmessage?.(Array.from(new TextEncoder().encode(shellPrompt))), 50);
       if (args.id === "s1") setTimeout(() => channel.onmessage?.(Array.from(new TextEncoder().encode(terminal))), 50);
       if (args.id === "s5") {

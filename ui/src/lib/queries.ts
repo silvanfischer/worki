@@ -120,11 +120,12 @@ const tabSessions = (all: SessionInfo[]) => all.filter((s) => !s.panel);
 export const useSessions = () => useQuery({ queryKey: keys.sessions, queryFn: api.listSessions, select: tabSessions });
 
 /** The shell in a worktree's terminal panel, once it was started. */
-export const useWorktreeShell = (worktreePath: string) =>
+export const useWorktreeShells = (worktreePath: string) =>
   useQuery({
     queryKey: keys.sessions,
     queryFn: api.listSessions,
-    select: (all) => all.find((s) => s.panel && s.worktreePath === worktreePath),
+    select: (all) =>
+      all.filter((s) => s.panel && s.worktreePath === worktreePath).sort((a, b) => a.createdAt - b.createdAt),
   });
 
 export const useAgentSettings = () => useQuery({ queryKey: keys.agentSettings, queryFn: api.agentSettings });

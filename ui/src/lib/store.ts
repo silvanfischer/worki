@@ -40,6 +40,8 @@ interface UiState {
   collapsed: Record<string, boolean>;
   /** Last focused session per worktree path. */
   activeSession: Record<string, string>;
+  /** The selected terminal panel tab per worktree path. */
+  activeTerminal: Record<string, string>;
   /** Pull request title and description an agent wrote, per worktree path, until the PR is created. */
   prDrafts: Record<string, PrDraft>;
   /** Changed "Ask agent" prompts; missing ones use the defaults in askPrompts.ts. */
@@ -75,6 +77,7 @@ interface UiState {
   select: (projectId: string, worktreePath: string | null) => void;
   toggleCollapsed: (projectId: string) => void;
   setActiveSession: (worktreePath: string, sessionId: string) => void;
+  setActiveTerminal: (worktreePath: string, sessionId: string) => void;
   setPrDraft: (worktreePath: string, draft: PrDraft | null) => void;
   setAskPrompt: (kind: AskPrompt, text: string | null) => void;
   setWriterCommand: (command: string) => void;
@@ -105,6 +108,7 @@ export const useUi = create<UiState>()(
       selectedWorktreePath: null,
       collapsed: {},
       activeSession: {},
+      activeTerminal: {},
       prDrafts: {},
       askPrompts: {},
       writerCommand: "",
@@ -133,6 +137,7 @@ export const useUi = create<UiState>()(
       select: (selectedProjectId, selectedWorktreePath) => set({ selectedProjectId, selectedWorktreePath }),
       toggleCollapsed: (id) => set((s) => ({ collapsed: { ...s.collapsed, [id]: !s.collapsed[id] } })),
       setActiveSession: (path, id) => set((s) => ({ activeSession: { ...s.activeSession, [path]: id } })),
+      setActiveTerminal: (path, id) => set((s) => ({ activeTerminal: { ...s.activeTerminal, [path]: id } })),
       setPrDraft: (path, draft) =>
         set((s) => {
           const { [path]: _, ...rest } = s.prDrafts;

@@ -89,7 +89,6 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
           <div className="min-h-0 flex-1">
             <SessionArea project={project} worktree={worktree} />
           </div>
-          {showTerminal && <TerminalPanel project={project} worktree={worktree} />}
         </section>
 
         {showChanges && diffFile && (
@@ -195,6 +194,7 @@ export function WorktreeView({ project, worktree }: { project: Project; worktree
           </aside>
         )}
       </div>
+      {showTerminal && <TerminalPanel project={project} worktree={worktree} />}
     </div>
   );
 }
