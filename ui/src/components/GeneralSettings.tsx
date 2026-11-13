@@ -39,7 +39,7 @@ export function GeneralSettings() {
         <Group title="Agents">
           <Field
             label="Open agents as"
-            hint="⌘T and the start buttons use this. The + menu offers both. Claude Code and Codex (experimental) can run as a chat; other agents always open in a terminal."
+            hint="⌘T and the start buttons use this. The + menu offers both. Claude Code and Codex can run as a chat; other agents always open in a terminal."
           >
             <div className="flex w-fit rounded-md border border-line p-0.5">
               {(

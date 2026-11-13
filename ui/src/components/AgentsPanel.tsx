@@ -185,7 +185,7 @@ export function AgentsPanel({ isolation }: { isolation: Isolation }) {
       <p className="px-1 pt-1 text-xs leading-relaxed text-faint">
         Sign in runs <span className="font-mono">claude setup-token</span> as you and approves in your browser. The
         token uses your subscription and is passed to {user}'s sessions; your own login stays untouched. Codex
-        (experimental) signs in with an OpenAI API key, kept in your Keychain.
+        signs in with an OpenAI API key, kept in your Keychain.
       </p>
     </div>
   );
