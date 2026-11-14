@@ -357,22 +357,28 @@ pub struct AgentSettings {
     /// stored one global list; it is read into [`LEGACY_SCOPE`] and moved on load.
     #[serde(default, deserialize_with = "scoped_secrets")]
     pub secrets: BTreeMap<String, Vec<String>>,
-    /// Per isolation scope, agent setup to repeat in every new environment (e.g. each new
-    /// sandbox): whose config to copy, by executable. Agents themselves are installed in an
-    /// environment when they first start there.
-    #[serde(default)]
-    pub environment_setup: BTreeMap<String, EnvironmentSetup>,
     /// Starts Claude Code sessions with Remote Control, to continue them from claude.ai/code
     /// or the Claude app.
     #[serde(default)]
     pub remote_control: bool,
+    /// Claude Code settings passed to sessions in isolated environments, on top of the
+    /// environment's own (`--settings`).
+    #[serde(default = "default_claude_settings")]
+    pub claude_settings: JsonObject,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct EnvironmentSetup {
-    #[serde(default)]
-    pub copy_config: Vec<String>,
+pub type JsonObject = serde_json::Map<String, serde_json::Value>;
+
+pub fn default_claude_settings() -> JsonObject {
+    JsonObject::from_iter([(
+        "sandbox".to_owned(),
+        serde_json::json!({
+            "enabled": false,
+            "allowUnsandboxedCommands": true,
+            "network": { "allowAllUnixSockets": true },
+            "filesystem": { "allowWrite": ["/"] },
+        }),
+    )])
 }
 
 pub const LEGACY_SCOPE: &str = "legacy";
@@ -408,8 +414,8 @@ impl Default for AgentSettings {
             ],
             default_profile: Some("claude".into()),
             secrets: BTreeMap::new(),
-            environment_setup: BTreeMap::new(),
             remote_control: false,
+            claude_settings: default_claude_settings(),
         }
     }
 }
@@ -429,18 +435,6 @@ impl AgentSettings {
         }
     }
 
-    /// Remembers that new environments in `scope` should get `executable`'s config copied.
-    pub fn remember_config_copy(&mut self, scope: &str, executable: &str) {
-        let list = &mut self
-            .environment_setup
-            .entry(scope.to_owned())
-            .or_default()
-            .copy_config;
-        if !list.iter().any(|e| e == executable) {
-            list.push(executable.to_owned());
-        }
-    }
-
     pub fn remove_secret(&mut self, scope: &str, name: &str) {
         if let Some(names) = self.secrets.get_mut(scope) {
             names.retain(|n| n != name);
@@ -455,6 +449,17 @@ impl AgentSettings {
                 p.install = p.executable().and_then(known_installer).map(Into::into);
             }
         }
+        self
+    }
+
+    /// Claude Code and Codex, which are always offered: added back in front when missing.
+    pub fn with_built_in_agents(mut self) -> Self {
+        let built_ins = Self::default().profiles;
+        let missing: Vec<AgentProfile> = built_ins
+            .into_iter()
+            .filter(|b| !self.profiles.iter().any(|p| p.id == b.id))
+            .collect();
+        self.profiles.splice(0..0, missing);
         self
     }
 
@@ -501,6 +506,28 @@ mod tests {
         assert_eq!(
             own.profiles[0].install.as_deref(),
             Some("brew install codex")
+        );
+    }
+
+    #[test]
+    fn adds_missing_built_in_agents_in_front() {
+        let saved: AgentSettings = serde_json::from_str(
+            r#"{"profiles":[{"id":"codex","name":"Codex","command":"codex --yolo"},{"id":"a","name":"Aider","command":"aider"}],"defaultProfile":"a"}"#,
+        )
+        .unwrap();
+        let agents: Vec<_> = saved
+            .with_built_in_agents()
+            .profiles
+            .into_iter()
+            .map(|p| (p.id, p.command))
+            .collect();
+        assert_eq!(
+            agents,
+            [
+                ("claude".into(), "claude".into()),
+                ("codex".into(), "codex --yolo".into()),
+                ("a".into(), "aider".into())
+            ]
         );
     }
 

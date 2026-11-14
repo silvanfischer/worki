@@ -6,7 +6,7 @@ use worki_core::service::{CreatedWorktree, SetupScripts};
 use worki_core::*;
 use worki_isolation::ssh;
 
-use crate::{err, err_chain, AppState, CmdResult};
+use crate::{blocking, err, err_chain, AppState, CmdResult};
 
 #[tauri::command]
 pub fn list_projects(state: State<'_, AppState>) -> CmdResult<Vec<Project>> {
@@ -461,6 +461,27 @@ pub fn set_remote_control(state: State<'_, AppState>, enabled: bool) -> CmdResul
         .projects
         .update_agent_settings(|s| s.remote_control = enabled)
         .map_err(err)
+}
+
+/// The Claude Code settings passed to sessions in isolated environments.
+#[tauri::command]
+pub fn set_claude_settings(state: State<'_, AppState>, settings: JsonObject) -> CmdResult<()> {
+    state
+        .projects
+        .update_agent_settings(|s| s.claude_settings = settings)
+        .map_err(err)
+}
+
+/// What isolated Claude sessions get until the user changes it.
+#[tauri::command]
+pub fn default_claude_settings() -> JsonObject {
+    worki_core::default_claude_settings()
+}
+
+/// The human's own Claude Code settings, to start isolated sessions' settings from.
+#[tauri::command]
+pub async fn host_claude_settings() -> CmdResult<JsonObject> {
+    blocking(worki_core::agents::host_claude_settings).await
 }
 
 /// Puts text on the clipboard natively, for writes that don't come from a click or key press

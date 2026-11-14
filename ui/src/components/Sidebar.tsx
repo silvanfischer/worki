@@ -4,6 +4,7 @@ import {
   ArrowDownToLine,
   BellRing,
   CircleX,
+  Coffee,
   ChevronRight,
   X,
   MessageSquare,
@@ -88,6 +89,7 @@ export function Sidebar() {
           <Settings size={14} />
           Settings
         </button>
+        <KeepAwakeButton />
         <UpdateButton />
       </div>
     </aside>
@@ -360,6 +362,24 @@ function UpdateButton() {
         : error
           ? "Retry update"
           : `Update to ${available.version}`}
+    </button>
+  );
+}
+
+function KeepAwakeButton() {
+  const on = useUi((s) => s.keepAwake);
+  const setOn = useUi((s) => s.setKeepAwake);
+  return (
+    <button
+      onClick={() => setOn(!on)}
+      aria-pressed={on}
+      title={on ? "Keeping the Mac awake while agents work. Click to allow sleep." : "Keep the Mac awake while agents work"}
+      className={clsx(
+        "flex size-7 items-center justify-center rounded-md hover:bg-hover",
+        on ? "text-accent" : "text-faint hover:text-fg",
+      )}
+    >
+      <Coffee size={14} />
     </button>
   );
 }

@@ -8,14 +8,10 @@ use anyhow::{Context, Result};
 use serde_json::Value;
 use worki_isolation::{host_which, Backend};
 
+use crate::model::JsonObject;
+
 pub struct Kit {
     pub executable: &'static str,
-    /// Config to copy, relative to the home directory. Never credentials, history or caches.
-    pub config: &'static [&'static str],
-    /// Copied text files whose absolute home paths are rewritten to the environment's home.
-    pub rewrite_paths: &'static [&'static str],
-    /// JSON settings file and the keys dropped from it because they run the human's own scripts.
-    pub strip_keys: Option<(&'static str, &'static [&'static str])>,
     /// How agents sign in without the human's own login, if worki can set that up.
     pub sign_in: Option<SignIn>,
     /// Where the agent records that it trusts a folder, so worki can answer its question.
@@ -40,17 +36,6 @@ pub struct SignIn {
 const KITS: &[Kit] = &[
     Kit {
         executable: "claude",
-        config: &[
-            ".claude/settings.json",
-            ".claude/CLAUDE.md",
-            ".claude/agents",
-            ".claude/commands",
-            ".claude/skills",
-            ".claude/output-styles",
-            ".claude/keybindings.json",
-        ],
-        rewrite_paths: &[".claude/settings.json"],
-        strip_keys: Some((".claude/settings.json", &["hooks", "statusLine"])),
         sign_in: Some(SignIn {
             secret: "CLAUDE_CODE_OAUTH_TOKEN",
         }),
@@ -61,9 +46,6 @@ const KITS: &[Kit] = &[
     },
     Kit {
         executable: "codex",
-        config: &[".codex/config.toml", ".codex/AGENTS.md", ".codex/prompts"],
-        rewrite_paths: &[".codex/config.toml"],
-        strip_keys: None,
         sign_in: None,
         trust: Some(Trust {
             file: ".codex/config.toml",
@@ -78,15 +60,6 @@ pub fn kit(executable: &str) -> Option<&'static Kit> {
 
 fn home() -> Result<PathBuf> {
     dirs::home_dir().context("no home directory")
-}
-
-pub fn host_config_paths(kit: &Kit) -> Vec<PathBuf> {
-    let Ok(home) = home() else { return Vec::new() };
-    kit.config
-        .iter()
-        .map(PathBuf::from)
-        .filter(|p| home.join(p).exists())
-        .collect()
 }
 
 /// Makes the human's installation of `executable` usable inside the environment. Node-based
@@ -116,105 +89,44 @@ fn needs_node(path: &Path) -> bool {
     head.starts_with("#!") && head.lines().next().is_some_and(|l| l.contains("node"))
 }
 
-#[derive(Debug, Default, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CopiedConfig {
-    pub copied: Vec<String>,
-    /// Settings left out, e.g. `hooks` from `.claude/settings.json`.
-    pub skipped: Vec<String>,
-}
+/// Settings left out of the host's when importing them: they run scripts from the host's home
+/// folder, or restrict the agent where the isolation already confines it.
+const NOT_IMPORTED: &[&str] = &[
+    "hooks",
+    "statusLine",
+    "sandbox",
+    "permissions.deny",
+    "permissions.ask",
+];
 
-/// Copies the agent's user config into the environment.
-pub fn copy_config(backend: &dyn Backend, kit: &Kit) -> Result<CopiedConfig> {
-    let home = home()?;
-    let target_home = backend
-        .home()
-        .context("could not determine the environment's home")?;
-    let found = host_config_paths(kit);
-    let read_only = backend.read_only_home_paths(&found);
-    let paths: Vec<PathBuf> = found
-        .into_iter()
-        .filter(|p| !read_only.contains(p))
-        .collect();
-    backend.copy_home_files(&home, &paths)?;
-
-    let mut skipped: Vec<String> = read_only
-        .iter()
-        .map(|p| format!("{} (the environment provides it, read-only)", p.display()))
-        .collect();
-    for rel in kit
-        .rewrite_paths
-        .iter()
-        .map(Path::new)
-        .filter(|p| paths.iter().any(|c| c == p))
-    {
-        let mut text = std::fs::read_to_string(home.join(rel))?;
-        if let Some((file, keys)) = kit.strip_keys.filter(|(f, _)| Path::new(f) == rel) {
-            let (stripped, removed) = strip_json_keys(&text, keys)?;
-            skipped.extend(
-                removed
-                    .into_iter()
-                    .map(|k| format!("{k} from {file} (runs scripts from your home folder)")),
-            );
-            text = stripped;
-        }
-        backend.write_home_file(rel, rewrite_home(&text, &home, &target_home).as_bytes())?;
-    }
-
-    let mut copied: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
-    if kit.executable == "claude" {
-        merge_claude_json(backend, &home, &target_home)?;
-        copied.push(".claude.json (MCP servers, account info, onboarding)".into());
-    }
-    Ok(CopiedConfig { copied, skipped })
-}
-
-fn strip_json_keys(text: &str, keys: &[&str]) -> Result<(String, Vec<String>)> {
-    let mut value: Value = serde_json::from_str(text).context("settings file is not valid JSON")?;
-    let Some(obj) = value.as_object_mut() else {
-        return Ok((text.to_owned(), Vec::new()));
+/// The host's own Claude Code settings (`~/.claude/settings.json`), without [`NOT_IMPORTED`].
+pub fn host_claude_settings() -> Result<JsonObject> {
+    let path = home()?.join(".claude/settings.json");
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(JsonObject::new()),
+        Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
     };
-    let removed: Vec<String> = keys
-        .iter()
-        .filter(|k| obj.remove(**k).is_some())
-        .map(|k| k.to_string())
-        .collect();
-    if removed.is_empty() {
-        return Ok((text.to_owned(), removed));
+    let mut settings: JsonObject =
+        serde_json::from_str(&text).context("~/.claude/settings.json is not a JSON object")?;
+    for path in NOT_IMPORTED {
+        remove_path(&mut settings, path);
     }
-    Ok((serde_json::to_string_pretty(&value)?, removed))
+    Ok(settings)
 }
 
-fn rewrite_home(text: &str, from: &Path, to: &Path) -> String {
-    text.replace(
-        &format!("{}/", from.display()),
-        &format!("{}/", to.display()),
-    )
-}
-
-/// `~/.claude.json` mixes config with history and account state, so only MCP servers and the
-/// account description (`oauthAccount`: email, organization, plan; no tokens, which Claude Code
-/// shows to tell subscription use from API use) are taken over, and onboarding is marked done.
-fn merge_claude_json(backend: &dyn Backend, home: &Path, target_home: &Path) -> Result<()> {
-    let rel = Path::new(".claude.json");
-    let mut target: Value = backend
-        .read_home_file(rel)?
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .filter(Value::is_object)
-        .unwrap_or_else(|| Value::Object(Default::default()));
-    target["hasCompletedOnboarding"] = Value::Bool(true);
-
-    if let Ok(text) = std::fs::read_to_string(home.join(rel)) {
-        let mine: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
-        if let Some(servers) = mine.get("mcpServers") {
-            let servers = rewrite_home(&servers.to_string(), home, target_home);
-            target["mcpServers"] = serde_json::from_str(&servers)?;
-        }
-        if let Some(account) = mine.get("oauthAccount") {
-            target["oauthAccount"] = account.clone();
-        }
+/// Removes a dotted key path such as `permissions.deny`, if it's there.
+fn remove_path(settings: &mut JsonObject, path: &str) {
+    let (parents, key) = path.rsplit_once('.').unwrap_or(("", path));
+    let mut object = Some(settings);
+    for part in parents.split('.').filter(|p| !p.is_empty()) {
+        object = object
+            .and_then(|o| o.get_mut(part))
+            .and_then(Value::as_object_mut);
     }
-    backend.write_home_file(rel, serde_json::to_string_pretty(&target)?.as_bytes())
+    if let Some(object) = object {
+        object.remove(key);
+    }
 }
 
 /// Marks `worktree` as trusted in the agent's own config inside an isolated environment, where
@@ -241,11 +153,14 @@ fn trusted_claude_json(current: &str, worktree: &Path) -> Result<Option<String>>
         .ok()
         .filter(Value::is_object)
         .unwrap_or_else(|| Value::Object(Default::default()));
-    let project = &mut json["projects"][worktree.to_string_lossy().as_ref()];
-    if project["hasTrustDialogAccepted"] == true {
+    let key = worktree.to_string_lossy();
+    if json["hasCompletedOnboarding"] == true
+        && json["projects"][key.as_ref()]["hasTrustDialogAccepted"] == true
+    {
         return Ok(None);
     }
-    project["hasTrustDialogAccepted"] = Value::Bool(true);
+    json["hasCompletedOnboarding"] = Value::Bool(true);
+    json["projects"][key.as_ref()]["hasTrustDialogAccepted"] = Value::Bool(true);
     Ok(Some(serde_json::to_string_pretty(&json)?))
 }
 
@@ -310,12 +225,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn strips_hooks_and_status_line() {
-        let text = r#"{"model":"opus","hooks":{"Stop":[]},"statusLine":{"command":"x"}}"#;
-        let (out, removed) = strip_json_keys(text, &["hooks", "statusLine"]).unwrap();
-        assert_eq!(removed, ["hooks", "statusLine"]);
-        let v: Value = serde_json::from_str(&out).unwrap();
-        assert_eq!(v, serde_json::json!({"model": "opus"}));
+    fn leaves_scripts_and_restrictions_out_of_the_import() {
+        let mut settings: JsonObject = serde_json::from_str(
+            r#"{"model":"opus","hooks":{"Stop":[]},"statusLine":{"command":"x"},
+            "sandbox":{"allowUnsandboxedCommands":false},
+            "permissions":{"defaultMode":"auto","allow":["Bash(ls)"],"deny":["Read(.env)"]}}"#,
+        )
+        .unwrap();
+        for path in NOT_IMPORTED {
+            remove_path(&mut settings, path);
+        }
+        assert_eq!(
+            Value::from(settings),
+            serde_json::json!({
+                "model": "opus",
+                "permissions": {"defaultMode": "auto", "allow": ["Bash(ls)"]}
+            })
+        );
     }
 
     #[test]
@@ -326,16 +252,6 @@ mod tests {
             Some("sk-ant-oat01-AbC_d-123456789012345678")
         );
         assert_eq!(find_claude_token("no token here"), None);
-    }
-
-    #[test]
-    fn rewrites_home_prefix_only() {
-        let text = r#"{"command": "/Users/me/.claude/hooks/x.sh", "other": "/Users/meow/y"}"#;
-        let out = rewrite_home(text, Path::new("/Users/me"), Path::new("/Users/_worki"));
-        assert_eq!(
-            out,
-            r#"{"command": "/Users/_worki/.claude/hooks/x.sh", "other": "/Users/meow/y"}"#
-        );
     }
 
     #[test]
@@ -370,10 +286,5 @@ mod tests {
         assert_eq!(sign_in("claude").unwrap().secret, "CLAUDE_CODE_OAUTH_TOKEN");
         assert!(sign_in("codex").is_none());
         assert!(kit("aider").is_none());
-        assert!(kit("claude")
-            .unwrap()
-            .config
-            .iter()
-            .all(|p| !p.contains("credentials")));
     }
 }

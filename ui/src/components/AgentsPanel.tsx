@@ -14,9 +14,9 @@ import {
 import { keys, useAgentStatuses, useRefreshSecrets } from "../lib/queries";
 import { Button, ErrorText, IconButton, LogView } from "./ui";
 
-type Action = "share" | "config" | "token" | "removeToken";
+type Action = "share" | "token" | "removeToken";
 
-/** Per-agent setup inside an isolated environment: reuse your installation, copy config, sign in. */
+/** Per-agent setup inside an isolated environment: reuse your installation, sign in. */
 export function AgentsPanel({ isolation }: { isolation: Isolation }) {
   const qc = useQueryClient();
   const { data: agents, isFetching, error, refetch } = useAgentStatuses(isolation);
@@ -40,12 +40,6 @@ export function AgentsPanel({ isolation }: { isolation: Isolation }) {
     setResult({ exe, lines: [] });
     try {
       if (action === "share") push({ stream: "info", line: `Linked ${await api.shareAgent(isolation, exe)}` });
-      if (action === "config") {
-        const { copied, skipped } = await api.copyAgentConfig(isolation, exe);
-        push({ stream: "info", line: copied.length ? `Copied: ${copied.join(", ")}` : "Nothing to copy." });
-        if (skipped.length)
-          push({ stream: "info", line: `Skipped: ${skipped.join("; ")}` });
-      }
       if (action === "token" && agent.auth) {
         await api.signInAgent(isolation, exe, push);
         push({ stream: "info", line: `Saved ${agent.auth.secret} in your Keychain for agents running as ${user}.` });
@@ -128,7 +122,6 @@ export function AgentsPanel({ isolation }: { isolation: Isolation }) {
             </div>
             <div className="ml-6 flex flex-wrap gap-1.5">
               {btn("share", "Use my installation", a.canShare && !a.envPath && !!a.hostPath, true)}
-              {btn("config", "Copy my config", a.hasConfig)}
               {btn("token", a.auth?.set ? "Sign in again" : "Sign in", !!a.auth)}
               {btn("removeToken", "Remove token", !!a.auth?.set)}
             </div>
@@ -141,7 +134,7 @@ export function AgentsPanel({ isolation }: { isolation: Isolation }) {
       {sandbox && (
         <p className="px-1 pt-1 text-xs leading-relaxed text-faint">
           An agent is installed in a worktree's {envNoun} the first time you start it there, or a new {envNoun} gets it
-          from a snapshot of one that has it. Copy my config applies to every {envNoun}, new ones included.
+          from a snapshot of one that has it.
         </p>
       )}
       <p className="px-1 pt-1 text-xs leading-relaxed text-faint">

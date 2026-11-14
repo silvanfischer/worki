@@ -4,6 +4,26 @@ const scene = new URLSearchParams(location.search).get("scene") ?? "main";
 const ROOT = "/Users/dev/worki/worktrees";
 const now = Math.floor(Date.now() / 1000);
 
+const DEFAULT_CLAUDE_SETTINGS = {
+  sandbox: {
+    enabled: false,
+    allowUnsandboxedCommands: true,
+    network: { allowAllUnixSockets: true },
+    filesystem: { allowWrite: ["/"] },
+  },
+};
+
+let agentSettings = {
+  profiles: [
+    { id: "claude", name: "Claude Code", command: "claude", install: null },
+    { id: "codex", name: "Codex", command: "codex", install: null },
+  ],
+  defaultProfile: "claude",
+  secrets: {},
+  remoteControl: false,
+  claudeSettings: DEFAULT_CLAUDE_SETTINGS,
+};
+
 const projects = [
   project("acme-web", "/Users/dev/src/acme-web"),
   project("payments-api", "/Users/dev/src/payments-api"),
@@ -337,14 +357,24 @@ function handle(cmd: string, args: Record<string, any>): unknown {
     case "list_sessions":
       return sessions;
     case "agent_settings":
+      return agentSettings;
+    case "save_agent_profiles":
+      agentSettings = { ...agentSettings, profiles: args.profiles, defaultProfile: args.defaultProfile };
+      return null;
+    case "set_remote_control":
+      agentSettings = { ...agentSettings, remoteControl: args.enabled };
+      return null;
+    case "set_claude_settings":
+      agentSettings = { ...agentSettings, claudeSettings: args.settings };
+      return null;
+    case "default_claude_settings":
+      return DEFAULT_CLAUDE_SETTINGS;
+    case "host_claude_settings":
       return {
-        profiles: [
-          { id: "claude", name: "Claude Code", command: "claude", install: null },
-          { id: "codex", name: "Codex", command: "codex", install: null },
-        ],
-        defaultProfile: "claude",
-        secrets: {},
-        remoteControl: false,
+        model: "sonnet",
+        theme: "auto",
+        enabledPlugins: { "egm@egm": true },
+        permissions: { defaultMode: "auto" },
       };
     case "isolation_settings":
       return { default: isolation, stopOnQuit: false };
@@ -436,8 +466,8 @@ function handle(cmd: string, args: Record<string, any>): unknown {
       ];
     case "agent_statuses":
       return [
-        { profileId: "claude", name: "Claude Code", executable: "claude", envPath: "/usr/local/bin/claude", hostPath: "/opt/homebrew/bin/claude", canShare: false, hasConfig: true, inBaseImage: true, auth: { secret: "CLAUDE_CODE_OAUTH_TOKEN", set: true } },
-        { profileId: "codex", name: "Codex", executable: "codex", envPath: null, hostPath: "/opt/homebrew/bin/codex", canShare: false, hasConfig: false, inBaseImage: false, auth: null },
+        { profileId: "claude", name: "Claude Code", executable: "claude", envPath: "/usr/local/bin/claude", hostPath: "/opt/homebrew/bin/claude", canShare: false, inBaseImage: true, auth: { secret: "CLAUDE_CODE_OAUTH_TOKEN", set: true } },
+        { profileId: "codex", name: "Codex", executable: "codex", envPath: null, hostPath: "/opt/homebrew/bin/codex", canShare: false, inBaseImage: false, auth: null },
       ];
     case "secret_status":
       return (args.names as string[]).map((n) => [n, true]);

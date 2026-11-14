@@ -205,6 +205,23 @@ export function Dialog({
   );
 }
 
+/** A dialog on top of the settings window: Escape closes only this one. */
+export function NestedDialog(props: ComponentProps<typeof Dialog>) {
+  return (
+    <EmbeddedDialog.Provider value={false}>
+      <div
+        onKeyDown={(e) => {
+          if (e.key !== "Escape") return;
+          e.stopPropagation();
+          props.onClose();
+        }}
+      >
+        <Dialog {...props} />
+      </div>
+    </EmbeddedDialog.Provider>
+  );
+}
+
 interface MenuItem {
   label: string;
   icon?: ReactNode;

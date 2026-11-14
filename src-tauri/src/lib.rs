@@ -1,4 +1,5 @@
 mod agents;
+mod awake;
 mod commands;
 mod isolation;
 mod openers;
@@ -158,6 +159,10 @@ pub fn run() {
             commands::agent_settings,
             commands::save_agent_profiles,
             commands::set_remote_control,
+            awake::keep_awake,
+            commands::set_claude_settings,
+            commands::host_claude_settings,
+            commands::default_claude_settings,
             isolation::isolation_settings,
             isolation::save_isolation_settings,
             isolation::isolation_doctor,
@@ -168,7 +173,6 @@ pub fn run() {
             isolation::set_worktree_isolation,
             agents::agent_statuses,
             agents::share_agent,
-            agents::copy_agent_config,
             agents::sign_in_agent,
             isolation::secret_status,
             isolation::set_secret,

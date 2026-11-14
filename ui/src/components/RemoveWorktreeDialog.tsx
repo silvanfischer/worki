@@ -35,8 +35,8 @@ function RemoveWorktreeForm({
   const { data: status } = useWorktreeStatus(worktree.path);
   const dirty = status?.changedFiles.length ?? 0;
 
-  const [deleteBranch, setDeleteBranch] = useState(false);
-  const [force, setForce] = useState(false);
+  const [deleteBranch, setDeleteBranch] = useState(true);
+  const [force, setForce] = useState(true);
   const { busy, error, run } = useAsyncAction();
 
   const remove = () =>

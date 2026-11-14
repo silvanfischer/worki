@@ -18,6 +18,7 @@ import { Button } from "./components/ui";
 import { WorktreeView } from "./components/WorktreeView";
 import { api, errorMessage, isolationLabel, type SessionInfo } from "./lib/api";
 import { notify, useAttention } from "./lib/attention";
+import { useKeepAwake } from "./lib/awake";
 import { keys, useAddProject, useIsolationSettings, useProjects, useWorktrees } from "./lib/queries";
 import { usePlayful } from "./lib/playful";
 import { useUi } from "./lib/store";
@@ -48,6 +49,7 @@ export function App() {
     }
   });
   useAttention();
+  useKeepAwake();
 
   useFollowSignIns();
 

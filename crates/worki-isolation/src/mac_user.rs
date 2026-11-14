@@ -394,7 +394,6 @@ impl Backend for MacUser {
         Capabilities {
             share_host_install: true,
             install: true,
-            copy_config: true,
         }
     }
 

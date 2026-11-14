@@ -217,7 +217,7 @@ impl ProjectService {
             }
             self.save_agent_settings(&settings)?;
         }
-        Ok(settings.with_known_installers())
+        Ok(settings.with_built_in_agents().with_known_installers())
     }
 
     /// The environment `worktree`'s agents run in (call after `grant_access`).
@@ -720,42 +720,9 @@ impl ProjectService {
         if isolation != Isolation::None {
             let backend = isolation.backend();
             let ws = Self::workspace(project, worktree);
-            let created = blocking(move || {
-                let existed = backend.instance_exists(&ws);
-                backend.grant_access(&ws)?;
-                Ok((!existed).then(|| backend.instance_for(&ws)).flatten())
-            })
-            .await?;
-            if let Some(instance) = created {
-                self.set_up_new_instance(&isolation, instance).await;
-            }
+            blocking(move || backend.grant_access(&ws)).await?;
         }
         Ok(isolation)
-    }
-
-    /// Repeats the remembered agent setup (installs, config copies) in a just-created environment.
-    /// Failures are logged, not fatal: the session can still start and the user can retry.
-    async fn set_up_new_instance(&self, isolation: &Isolation, instance: Box<dyn Backend>) {
-        let Ok(settings) = self.agent_settings() else {
-            return;
-        };
-        let setup = settings
-            .environment_setup
-            .get(&isolation.scope_key())
-            .cloned()
-            .unwrap_or_default();
-        let instance: Arc<dyn Backend> = instance.into();
-        for executable in setup.copy_config {
-            let Some(kit) = crate::agents::kit(&executable) else {
-                continue;
-            };
-            let instance = instance.clone();
-            if let Err(e) =
-                blocking(move || crate::agents::copy_config(instance.as_ref(), kit)).await
-            {
-                tracing::warn!("copying {executable} config into a new environment: {e}");
-            }
-        }
     }
 
     /// Every distinct isolation in use: the global default, project defaults and worktree choices.

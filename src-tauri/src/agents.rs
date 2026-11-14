@@ -26,8 +26,6 @@ pub struct AgentStatus {
     in_base_image: bool,
     /// The human's own installation can be reused inside.
     can_share: bool,
-    /// worki knows this agent's config layout and the human has some config to copy.
-    has_config: bool,
     auth: Option<AuthStatus>,
 }
 
@@ -78,8 +76,6 @@ pub async fn agent_statuses(
                     host_path: host_which(&executable),
                     in_base_image: isolation.image_ships(&executable),
                     can_share: caps.share_host_install,
-                    has_config: caps.copy_config
-                        && kit.is_some_and(|k| !agents::host_config_paths(k).is_empty()),
                     auth: kit.and_then(|k| k.sign_in).map(|sign_in| AuthStatus {
                         set: secrets::is_set(&scope, sign_in.secret),
                         secret: sign_in.secret.to_owned(),
@@ -99,34 +95,6 @@ pub async fn agent_statuses(
 pub async fn share_agent(isolation: Isolation, executable: String) -> CmdResult<String> {
     isolation.validate().map_err(err)?;
     blocking(move || agents::share_install(isolation.backend().as_ref(), &executable)).await
-}
-
-/// Copies the human's config for `executable` into every environment of `isolation` and
-/// remembers it for environments created later; returns what was copied.
-#[tauri::command]
-pub async fn copy_agent_config(
-    state: State<'_, AppState>,
-    isolation: Isolation,
-    executable: String,
-) -> CmdResult<agents::CopiedConfig> {
-    isolation.validate().map_err(err)?;
-    let scope = isolation.scope_key();
-    let exe = executable.clone();
-    let copied = blocking(move || {
-        let kit = agents::kit(&exe)
-            .ok_or_else(|| anyhow::anyhow!("worki doesn't know {exe}'s config"))?;
-        let mut result = agents::CopiedConfig::default();
-        for instance in isolation.backend().instances()? {
-            result = agents::copy_config(instance.as_ref(), kit)?;
-        }
-        Ok(result)
-    })
-    .await?;
-    state
-        .projects
-        .update_agent_settings(|s| s.remember_config_copy(&scope, &executable))
-        .map_err(err)?;
-    Ok(copied)
 }
 
 /// Creates a sign-in token for agents without sharing the human's own login: `claude setup-token`

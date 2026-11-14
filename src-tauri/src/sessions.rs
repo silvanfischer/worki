@@ -7,7 +7,7 @@ use worki_core::launch::{
     chat_history_command, chat_request, continue_command, resumes, session_env, session_request,
     ChatAgent, ClaudeOptions, CHAT_PROMPT,
 };
-use worki_core::{AgentProfile, Host, Isolation, Project, SavedSession};
+use worki_core::{AgentProfile, Host, Isolation, JsonObject, Project, SavedSession};
 use worki_isolation::ssh::{Ssh, SshTarget};
 use worki_isolation::SessionMeta;
 use worki_pty::chat::{
@@ -75,7 +75,6 @@ pub async fn spawn_worktree_shell(
         &worktree_path,
         Vec::new(),
         None,
-        false,
         &ClaudeOptions::default(),
         None,
     );
@@ -122,8 +121,9 @@ async fn start_session(
         id,
         title,
         env,
-        confined,
         remote_control,
+        claude_settings,
+        ..
     } = prepare(
         state,
         &project_id,
@@ -142,11 +142,10 @@ async fn start_session(
         &worktree_path,
         env,
         Some(meta),
-        confined,
         &ClaudeOptions {
             remote_control,
             name: session_name(&project, &worktree_path),
-            container: isolation.is_container(),
+            settings: claude_settings,
         },
         prompt.as_deref(),
     );
@@ -222,6 +221,8 @@ struct Prepared {
     env: Vec<(String, String)>,
     confined: bool,
     remote_control: bool,
+    /// Claude Code settings for the session: the user's in isolated environments, else none.
+    claude_settings: JsonObject,
 }
 
 /// Names of the events the session start sends; `ui/src/lib/events.ts` has the same.
@@ -358,6 +359,11 @@ async fn prepare(
         env,
         confined,
         remote_control: settings.remote_control,
+        claude_settings: if confined {
+            settings.claude_settings
+        } else {
+            JsonObject::new()
+        },
     })
 }
 
@@ -672,15 +678,16 @@ async fn start_chat(
         env,
         confined,
         remote_control,
+        claude_settings,
     } = prepare(state, &project_id, &worktree_path, Some(&profile_id), id).await?;
     let profile = profile.ok_or("pick an agent to chat with")?;
     let claude = ClaudeOptions {
         remote_control,
         name: session_name(&project, &worktree_path),
-        container: isolation.is_container(),
+        settings: claude_settings,
     };
-    let (agent, req) = chat_request(&profile, &worktree_path, env, &id, confined, &claude)
-        .ok_or_else(|| {
+    let (agent, req) =
+        chat_request(&profile, &worktree_path, env, &id, &claude).ok_or_else(|| {
             format!(
                 "{} can't run as a chat yet; start it in a terminal",
                 profile.name

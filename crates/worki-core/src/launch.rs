@@ -3,7 +3,7 @@ use std::path::Path;
 use worki_isolation::ssh::shell_quote;
 use worki_isolation::{Isolation, LaunchRequest, SessionMeta};
 
-use crate::model::AgentProfile;
+use crate::model::{AgentProfile, JsonObject};
 
 /// Environment every session gets, regardless of isolation.
 pub fn session_env(session_id: &str, worktree: &Path) -> Vec<(String, String)> {
@@ -30,8 +30,8 @@ pub struct ClaudeOptions {
     pub remote_control: bool,
     /// The session's name, which Remote Control lists it by on claude.ai/code.
     pub name: String,
-    /// Runs in a container or sandbox of its own, whose filesystem Claude may write.
-    pub container: bool,
+    /// Settings passed as given, under worki's own: the user's for isolated sessions.
+    pub settings: JsonObject,
 }
 
 /// An agent profile, or a plain shell for `None`. `exec` hands the PTY to the agent itself.
@@ -41,7 +41,6 @@ pub fn session_request(
     cwd: &Path,
     env: Vec<(String, String)>,
     session: Option<SessionMeta>,
-    confined: bool,
     claude: &ClaudeOptions,
     prompt: Option<&str>,
 ) -> LaunchRequest {
@@ -49,7 +48,7 @@ pub fn session_request(
         cwd: cwd.into(),
         command: profile.map(|p| {
             let id = session.as_ref().map(|s| s.id.as_str());
-            agent_command(p, id, confined, claude, prompt)
+            agent_command(p, id, claude, prompt)
         }),
         interactive: true,
         stdin: false,
@@ -83,26 +82,22 @@ pub fn chat_request(
     cwd: &Path,
     env: Vec<(String, String)>,
     session_id: &str,
-    confined: bool,
     claude: &ClaudeOptions,
 ) -> Option<(ChatAgent, LaunchRequest)> {
     let agent = ChatAgent::of(profile)?;
     let command = match agent {
         ChatAgent::Claude => {
-            let sandbox = if confined {
+            let settings = if claude.settings.is_empty() {
+                String::new()
+            } else {
                 format!(
                     " --settings {}",
-                    shell_quote(
-                        &serde_json::json!({ "sandbox": confined_sandbox(claude.container) })
-                            .to_string(),
-                    )
+                    shell_quote(&serde_json::Value::from(claude.settings.clone()).to_string())
                 )
-            } else {
-                String::new()
             };
             format!(
                 "{} exec {}{} -p --input-format stream-json --output-format stream-json --verbose \
---include-partial-messages --replay-user-messages --permission-prompt-tool stdio --append-system-prompt {}{sandbox} \"$@\"",
+--include-partial-messages --replay-user-messages --permission-prompt-tool stdio --append-system-prompt {}{settings} \"$@\"",
                 claude_conversation(session_id),
                 profile.command,
                 claude_name(&claude.name),
@@ -243,12 +238,9 @@ pub fn writer_command(template: &str, fork: Option<&str>) -> String {
     format!("{prelude} exec {command}")
 }
 
-/// `confined`: worki's isolation already keeps the agent in its worktree, so Claude Code's own
-/// sandbox is turned off; it only got in the way there (e.g. it hides the system CA bundle).
 fn agent_command(
     profile: &AgentProfile,
     session_id: Option<&str>,
-    confined: bool,
     claude: &ClaudeOptions,
     prompt: Option<&str>,
 ) -> String {
@@ -257,7 +249,7 @@ fn agent_command(
         .map(|p| format!(" {}", shell_quote(p)))
         .unwrap_or_default();
     match profile.executable() {
-        Some("claude") => claude_command(profile, session_id, confined, claude, &prompt),
+        Some("claude") => claude_command(profile, session_id, claude, &prompt),
         Some("codex") => codex_command(profile, session_id, &prompt),
         _ => format!("exec {}{prompt}", profile.command),
     }
@@ -273,11 +265,10 @@ pub fn resumes(profile: &AgentProfile) -> bool {
 fn claude_command(
     profile: &AgentProfile,
     session_id: Option<&str>,
-    confined: bool,
     claude: &ClaudeOptions,
     prompt: &str,
 ) -> String {
-    let hooks = shell_quote(&claude_settings(confined, claude));
+    let hooks = shell_quote(&claude_settings(claude));
     let name = claude_name(&claude.name);
     let (conversation, args) = match session_id {
         Some(id) => (format!("{} ", claude_conversation(id)), " \"$@\""),
@@ -354,23 +345,23 @@ fn claude_saved(id: &str) -> String {
     format!("ls \"${{CLAUDE_CONFIG_DIR:-$HOME/.claude}}\"/projects/*/{id}.jsonl >/dev/null 2>&1")
 }
 
+fn merge_json(base: &mut serde_json::Value, over: serde_json::Value) {
+    match (base, over) {
+        (serde_json::Value::Object(base), serde_json::Value::Object(over)) => {
+            for (key, value) in over {
+                merge_json(base.entry(key).or_insert(serde_json::Value::Null), value);
+            }
+        }
+        (base, over) => *base = over,
+    }
+}
+
 /// Extra Claude Code settings (passed with `--settings`, so the user's own settings files stay
 /// untouched) whose hooks print worki's status marker to the session's terminal (`$WORKI_TTY`),
 /// where the PTY reader picks it up. Going through the terminal works the same for every
 /// isolation: as the user, as an agent user, inside a sandbox. Inside tmux (kept-alive remote
 /// sessions) the marker is wrapped so tmux passes it through.
-/// Organization policy can force Claude Code's sandbox on even here, so in a container it may write
-/// the whole filesystem, which belongs to the container; worki's mounts keep their own read-only
-/// parts, such as the repository's hooks and config.
-fn confined_sandbox(container: bool) -> serde_json::Value {
-    if container {
-        serde_json::json!({ "enabled": false, "filesystem": { "allowWrite": ["/"] } })
-    } else {
-        serde_json::json!({ "enabled": false })
-    }
-}
-
-fn claude_settings(confined: bool, claude: &ClaudeOptions) -> String {
+fn claude_settings(claude: &ClaudeOptions) -> String {
     // `$s` holds the state; the marker is wrapped for tmux when the session runs inside it.
     let print = "[ -n \"$WORKI_TTY\" ] && { if [ -n \"$TMUX\" ]; then printf '\\033Ptmux;\\033\\033]777;worki;%s\\007\\033\\\\' \"$s\"; else printf '\\033]777;worki;%s\\007' \"$s\"; fi; } > \"$WORKI_TTY\" 2>/dev/null || true";
     let hook = |command: String| serde_json::json!({ "type": "command", "command": command });
@@ -389,7 +380,10 @@ fn claude_settings(confined: bool, claude: &ClaudeOptions) -> String {
     let with_mode = serde_json::json!([{ "hooks": [hook(format!(
         "m=$(sed -n 's/.*\"permission_mode\" *: *\"\\([^\"]*\\)\".*/\\1/p' | head -n 1); [ -n \"$m\" ] && s=\"mode;$m\" && {{ {print}; }}; s=working; {print}"
     ))] }]);
-    let mut settings = serde_json::json!({ "hooks": {
+    let mut settings = serde_json::Value::from(claude.settings.clone());
+    merge_json(
+        &mut settings,
+        serde_json::json!({ "hooks": {
         "UserPromptSubmit": with_mode.clone(),
         "PreToolUse": before_tool,
         // Fires as the permission prompt appears; Notification only follows about 6 s later.
@@ -397,10 +391,8 @@ fn claude_settings(confined: bool, claude: &ClaudeOptions) -> String {
         "PostToolUse": with_mode,
         "Stop": stop,
         "Notification": marker("waiting"),
-    }, "statusLine": { "type": "command", "command": STATUS_LINE }});
-    if confined {
-        settings["sandbox"] = confined_sandbox(claude.container);
-    }
+    }, "statusLine": { "type": "command", "command": STATUS_LINE }}),
+    );
     if claude.remote_control {
         settings["remoteControlAtStartup"] = true.into();
     }
@@ -516,7 +508,7 @@ mod tests {
     #[test]
     fn prompt_hook_reports_the_permission_mode() {
         let settings: serde_json::Value =
-            serde_json::from_str(&claude_settings(false, &ClaudeOptions::default())).unwrap();
+            serde_json::from_str(&claude_settings(&ClaudeOptions::default())).unwrap();
         let command = settings["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"]
             .as_str()
             .unwrap();
@@ -591,7 +583,6 @@ mod tests {
             Path::new("/w"),
             session_env("s1", Path::new("/w")),
             None,
-            false,
             &ClaudeOptions::default(),
             None,
         );
@@ -601,7 +592,6 @@ mod tests {
             Path::new("/w"),
             vec![],
             None,
-            false,
             &ClaudeOptions::default(),
             Some("fix it's tests"),
         );
@@ -623,7 +613,6 @@ mod tests {
                 Path::new("/w"),
                 vec![],
                 None,
-                false,
                 &ClaudeOptions::default(),
                 None
             )
@@ -752,8 +741,7 @@ case "$1" in resume) echo "resume $2" ;; *) echo new ;; esac >> "$LOG"
             command: "codex".into(),
             install: None,
         };
-        let command =
-            super::agent_command(&profile, Some("s1"), true, &ClaudeOptions::default(), None);
+        let command = super::agent_command(&profile, Some("s1"), &ClaudeOptions::default(), None);
         let ok = std::process::Command::new("/bin/sh")
             .args(["-c", &command])
             .env("PATH", format!("{}:/usr/bin:/bin", home.display()))
@@ -790,7 +778,6 @@ case "$1" in resume) echo "resume $2" ;; *) echo new ;; esac >> "$LOG"
             Path::new("/w"),
             vec![],
             "s1",
-            false,
             &ClaudeOptions::default(),
         )
         .unwrap();
@@ -840,7 +827,6 @@ case "$1" in resume) echo "resume $2" ;; *) echo new ;; esac >> "$LOG"
             Path::new("/w"),
             vec![],
             "abc",
-            false,
             &ClaudeOptions::default()
         )
         .is_none());
@@ -849,10 +835,9 @@ case "$1" in resume) echo "resume $2" ;; *) echo new ;; esac >> "$LOG"
             Path::new("/w"),
             vec![],
             "abc",
-            true,
             &ClaudeOptions {
                 name: "acme/w".into(),
-                container: true,
+                settings: crate::model::default_claude_settings(),
                 ..ClaudeOptions::default()
             },
         )
@@ -875,7 +860,7 @@ case "$1" in resume) echo "resume $2" ;; *) echo new ;; esac >> "$LOG"
             String::from_utf8(out.stdout).unwrap(),
             "--model|opus|--name|acme/w|-p|--input-format|stream-json|--output-format|stream-json|--verbose|\
 --include-partial-messages|--replay-user-messages|--permission-prompt-tool|stdio|--append-system-prompt|PROMPT|\
---settings|{\"sandbox\":{\"enabled\":false,\"filesystem\":{\"allowWrite\":[\"/\"]}}}|--session-id|abc|"
+--settings|{\"sandbox\":{\"allowUnsandboxedCommands\":true,\"enabled\":false,\"filesystem\":{\"allowWrite\":[\"/\"]},\"network\":{\"allowAllUnixSockets\":true}}}|--session-id|abc|"
                 .replace("PROMPT", CHAT_PROMPT)
         );
     }
@@ -898,7 +883,6 @@ case "$1" in resume) echo "resume $2" ;; *) echo new ;; esac >> "$LOG"
             Path::new("/w"),
             vec![],
             Some(meta),
-            false,
             &ClaudeOptions::default(),
             None,
         )
@@ -937,7 +921,6 @@ case "$1" in resume) echo "resume $2" ;; *) echo new ;; esac >> "$LOG"
             Path::new("/w"),
             vec![],
             None,
-            false,
             &ClaudeOptions::default(),
             None,
         )
@@ -948,7 +931,7 @@ case "$1" in resume) echo "resume $2" ;; *) echo new ;; esac >> "$LOG"
             name: "acme/w".into(),
             ..ClaudeOptions::default()
         };
-        let named = session_request(Some(&p), Path::new("/w"), vec![], None, false, &named, None);
+        let named = session_request(Some(&p), Path::new("/w"), vec![], None, &named, None);
         assert!(named
             .command
             .unwrap()
@@ -963,30 +946,24 @@ case "$1" in resume) echo "resume $2" ;; *) echo new ;; esac >> "$LOG"
             .unwrap();
         let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
         assert!(json.get("sandbox").is_none());
-        let settings = |container: bool| -> serde_json::Value {
-            let claude = ClaudeOptions {
-                container,
+        let isolated: serde_json::Value =
+            serde_json::from_str(&super::claude_settings(&ClaudeOptions {
+                settings: crate::model::default_claude_settings(),
                 ..ClaudeOptions::default()
-            };
-            serde_json::from_str(&super::claude_settings(true, &claude)).unwrap()
-        };
+            }))
+            .unwrap();
         assert_eq!(
-            settings(false)["sandbox"],
-            serde_json::json!({ "enabled": false })
+            isolated["sandbox"],
+            crate::model::default_claude_settings()["sandbox"]
         );
-        assert_eq!(
-            settings(true)["sandbox"]["filesystem"]["allowWrite"],
-            serde_json::json!(["/"])
-        );
+        assert!(isolated["hooks"]["Stop"].is_array());
         assert!(json.get("remoteControlAtStartup").is_none());
-        let remote: serde_json::Value = serde_json::from_str(&super::claude_settings(
-            false,
-            &ClaudeOptions {
+        let remote: serde_json::Value =
+            serde_json::from_str(&super::claude_settings(&ClaudeOptions {
                 remote_control: true,
                 ..ClaudeOptions::default()
-            },
-        ))
-        .unwrap();
+            }))
+            .unwrap();
         assert_eq!(remote["remoteControlAtStartup"], true);
         let hook = json["hooks"]["Stop"][0]["hooks"][0]["command"]
             .as_str()
@@ -1014,8 +991,7 @@ case "$1" in resume) echo "resume $2" ;; *) echo new ;; esac >> "$LOG"
     fn tool_calls_mark_working_except_questions() {
         use std::io::Write;
         let settings: serde_json::Value =
-            serde_json::from_str(&super::claude_settings(false, &ClaudeOptions::default()))
-                .unwrap();
+            serde_json::from_str(&super::claude_settings(&ClaudeOptions::default())).unwrap();
         let hooks = &settings["hooks"];
         assert!(hooks["PermissionRequest"].is_array() && hooks["PostToolUse"].is_array());
         let hook = hooks["PreToolUse"][0]["hooks"][0]["command"]

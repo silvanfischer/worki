@@ -67,6 +67,8 @@ interface UiState {
   agentView: SessionKind;
   /** Look for new worki releases on start and every few hours. */
   autoUpdate: boolean;
+  /** Keep the Mac from sleeping while an agent works. */
+  keepAwake: boolean;
   /** Commit box, commit list and rebasing in the changes panel. */
   showCommits: boolean;
   /** Pull request section and status, which ask GitHub through `gh`. */
@@ -95,6 +97,7 @@ interface UiState {
   setReopenSessions: (on: boolean) => void;
   setAgentView: (view: SessionKind) => void;
   setAutoUpdate: (on: boolean) => void;
+  setKeepAwake: (on: boolean) => void;
   setShowCommits: (on: boolean) => void;
   setShowPullRequests: (on: boolean) => void;
   openDialog: (dialog: DialogState) => void;
@@ -130,6 +133,7 @@ export const useUi = create<UiState>()(
       reopenSessions: true,
       agentView: "terminal",
       autoUpdate: true,
+      keepAwake: false,
       showCommits: true,
       showPullRequests: true,
       playful: false,
@@ -166,6 +170,7 @@ export const useUi = create<UiState>()(
       setReopenSessions: (reopenSessions) => set({ reopenSessions }),
       setAgentView: (agentView) => set({ agentView }),
       setAutoUpdate: (autoUpdate) => set({ autoUpdate }),
+      setKeepAwake: (keepAwake) => set({ keepAwake }),
       setShowCommits: (showCommits) => set({ showCommits }),
       setShowPullRequests: (showPullRequests) => set({ showPullRequests }),
       openDialog: (dialog) => set({ dialog }),
@@ -190,6 +195,7 @@ export const useUi = create<UiState>()(
         reopenSessions,
         agentView,
         autoUpdate,
+        keepAwake,
         showCommits,
         showPullRequests,
         playful,
@@ -213,6 +219,7 @@ export const useUi = create<UiState>()(
         reopenSessions,
         agentView,
         autoUpdate,
+        keepAwake,
         showCommits,
         showPullRequests,
         playful,

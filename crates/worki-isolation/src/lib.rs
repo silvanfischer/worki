@@ -310,8 +310,6 @@ pub struct Capabilities {
     pub share_host_install: bool,
     /// An agent's install command can run inside.
     pub install: bool,
-    /// The human's agent config can be copied in.
-    pub copy_config: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -400,7 +398,6 @@ pub trait Backend: Send + Sync {
         Capabilities {
             share_host_install: false,
             install: true,
-            copy_config: true,
         }
     }
 

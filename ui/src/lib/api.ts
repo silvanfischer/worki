@@ -76,7 +76,6 @@ export interface AgentStatus {
   envPath: string | null;
   hostPath: string | null;
   canShare: boolean;
-  hasConfig: boolean;
   inBaseImage: boolean;
   auth: { secret: string; set: boolean } | null;
 }
@@ -262,8 +261,11 @@ export interface AgentSettings {
   /** Secret names per isolation scope (see `scopeKey`). */
   secrets: Record<string, string[]>;
   remoteControl: boolean;
-  /** Agent configs copied into every new environment, per isolation scope. */
+  /** Claude Code settings passed to sessions in isolated environments. */
+  claudeSettings: JsonObject;
 }
+
+export type JsonObject = { [key: string]: unknown };
 
 export function scopeKey(i: Isolation): string {
   if (i.kind === "none") return "none";
@@ -460,6 +462,10 @@ export const api = {
   saveAgentProfiles: (profiles: AgentProfile[], defaultProfile: string | null) =>
     invoke<void>("save_agent_profiles", { profiles, defaultProfile }),
   setRemoteControl: (enabled: boolean) => invoke<void>("set_remote_control", { enabled }),
+  keepAwake: (on: boolean) => invoke<void>("keep_awake", { on }),
+  setClaudeSettings: (settings: JsonObject) => invoke<void>("set_claude_settings", { settings }),
+  hostClaudeSettings: () => invoke<JsonObject>("host_claude_settings"),
+  defaultClaudeSettings: () => invoke<JsonObject>("default_claude_settings"),
 
   listSessions: () => invoke<SessionInfo[]>("list_sessions"),
   /** Starts an agent as a chat; `attachSession` then streams one `ChatEvent` as JSON per line. */
@@ -517,8 +523,6 @@ export const api = {
   removeIsolation: (isolation: Isolation) => invoke<void>("isolation_remove", { isolation }),
   agentStatuses: (isolation: Isolation) => invoke<AgentStatus[]>("agent_statuses", { isolation }),
   shareAgent: (isolation: Isolation, executable: string) => invoke<string>("share_agent", { isolation, executable }),
-  copyAgentConfig: (isolation: Isolation, executable: string) =>
-    invoke<{ copied: string[]; skipped: string[] }>("copy_agent_config", { isolation, executable }),
   signInAgent: (isolation: Isolation, executable: string, onLog: (line: LogLine) => void) => {
     const channel = new Channel<LogLine>();
     channel.onmessage = onLog;

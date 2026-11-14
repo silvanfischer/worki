@@ -1,23 +1,22 @@
 import { useQueryClient } from "@tanstack/react-query";
-import clsx from "clsx";
-import { LoaderCircle, MessageSquare, RefreshCw, SquareTerminal } from "lucide-react";
+import { LoaderCircle, RefreshCw } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
 import { api, errorMessage } from "../lib/api";
 import { keys, useIsolationSettings } from "../lib/queries";
 import { useUi } from "../lib/store";
 import { checkForUpdates, useUpdates } from "../lib/updates";
-import { Button, Checkbox, ErrorText, Field } from "./ui";
+import { Button, Checkbox, ErrorText } from "./ui";
 
 export function GeneralSettings() {
   const qc = useQueryClient();
-  const agentView = useUi((s) => s.agentView);
-  const setAgentView = useUi((s) => s.setAgentView);
   const autoUpdate = useUi((s) => s.autoUpdate);
   const setAutoUpdate = useUi((s) => s.setAutoUpdate);
   const updates = useUpdates();
   const reopen = useUi((s) => s.reopenSessions);
   const setReopen = useUi((s) => s.setReopenSessions);
+  const keepAwake = useUi((s) => s.keepAwake);
+  const setKeepAwake = useUi((s) => s.setKeepAwake);
   const { data: isolation } = useIsolationSettings();
   const [error, setError] = useState<string | null>(null);
 
@@ -36,32 +35,14 @@ export function GeneralSettings() {
     <section className="flex min-h-0 flex-1 flex-col">
       <h2 className="px-6 pt-5 pb-3 text-[15px] font-semibold">General</h2>
       <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-6 pb-6">
-        <Group title="Agents">
-          <Field
-            label="Open agents as"
-            hint="⌘T and the start buttons use this. The + menu offers both. Claude Code and Codex can run as a chat; other agents always open in a terminal."
-          >
-            <div className="flex w-fit rounded-md border border-line p-0.5">
-              {(
-                [
-                  ["terminal", "Terminal", <SquareTerminal key="t" size={13} />],
-                  ["chat", "Chat", <MessageSquare key="c" size={13} />],
-                ] as const
-              ).map(([id, label, icon]) => (
-                <button
-                  key={id}
-                  onClick={() => setAgentView(id)}
-                  className={clsx(
-                    "flex h-7 items-center gap-1.5 rounded px-3 text-[13px]",
-                    agentView === id ? "bg-selected font-medium text-fg" : "text-muted hover:text-fg",
-                  )}
-                >
-                  {icon}
-                  {label}
-                </button>
-              ))}
-            </div>
-          </Field>
+        <Group title="Power">
+          <Checkbox checked={keepAwake} onChange={setKeepAwake}>
+            <span className="text-[13px]">Keep the Mac awake while agents work</span>
+            <span className="block text-xs text-faint">
+              The Mac doesn't go to sleep while an agent is working, so long tasks finish when you step away. The
+              display can still turn off, and closing the lid still sleeps. The cup next to Settings toggles it too.
+            </span>
+          </Checkbox>
         </Group>
 
         <Group title="Updates">
