@@ -362,6 +362,17 @@ impl ProjectService {
         self.store.set_setting(SAVED_SESSIONS_KEY, &saved)
     }
 
+    /// Forgets the sessions saved for `worktree`, so a new worktree at the same path starts fresh.
+    pub fn forget_sessions_in(&self, worktree: &Path) -> Result<()> {
+        let mut saved = self.saved_sessions()?;
+        let before = saved.len();
+        saved.retain(|s| s.worktree_path != worktree);
+        if saved.len() == before {
+            return Ok(());
+        }
+        self.store.set_setting(SAVED_SESSIONS_KEY, &saved)
+    }
+
     pub fn ssh_hosts(&self) -> Result<Vec<SshHost>> {
         self.setting(SSH_HOSTS_KEY)
     }
@@ -959,6 +970,7 @@ impl ProjectService {
         git::set_branch_base(host, repo, branch, base).await?;
 
         let worktree = find_worktree(host, repo, &path).await?;
+        self.forget_sessions_in(&worktree.path)?;
         if req.isolation != ProjectIsolation::Inherit {
             self.set_worktree_choice(&worktree.path, req.isolation)?;
         }
@@ -1028,6 +1040,8 @@ impl ProjectService {
         })
         .await?;
         git::remove_worktree(host, repo, &wt.path, req.force).await?;
+        self.forget_sessions_in(&wt.path)?;
+        self.forget_sessions_in(&req.path)?;
         self.set_worktree_choice(&wt.path, ProjectIsolation::Inherit)?;
         if let (true, Some(branch)) = (req.delete_branch, wt.branch.as_deref()) {
             git::delete_branch(host, repo, branch, req.force).await?;

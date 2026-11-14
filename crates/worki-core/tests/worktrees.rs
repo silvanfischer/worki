@@ -338,3 +338,62 @@ async fn lists_newest_worktree_first_after_the_main_checkout() {
         .collect();
     assert_eq!(branches, ["main", "newer", "older", "oldest"]);
 }
+
+#[tokio::test]
+async fn a_worktree_made_again_starts_without_the_old_sessions() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("app");
+    std::fs::create_dir(&repo).unwrap();
+    init_repo(&repo);
+    let svc = ProjectService::new(Store::in_memory().unwrap());
+    let project = svc.add_project(&repo).await.unwrap();
+    let project = svc
+        .update_project(
+            &project.id,
+            ProjectPatch {
+                worktree_root: Some(tmp.path().join("worktrees")),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let create = || {
+        svc.create_worktree(
+            &project.id,
+            CreateWorktree {
+                name: "fix".into(),
+                base: "main".into(),
+                run_setup: false,
+                isolation: Default::default(),
+            },
+            |_| {},
+        )
+    };
+    let save = |path: &Path| {
+        svc.save_session(SavedSession {
+            id: "s1".into(),
+            project_id: project.id.clone(),
+            worktree_path: path.into(),
+            profile_id: "claude".into(),
+            chat: true,
+        })
+        .unwrap()
+    };
+
+    let path = create().await.unwrap().worktree.path;
+    save(&path);
+    svc.remove_worktree(
+        &project.id,
+        RemoveWorktree {
+            path: path.clone(),
+            force: true,
+            delete_branch: true,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(svc.saved_sessions().unwrap().is_empty());
+
+    save(&path);
+    create().await.unwrap();
+    assert!(svc.saved_sessions().unwrap().is_empty());
+}
